@@ -18,14 +18,31 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/b3vet/mockulus/internal/handlebars"
 	"github.com/b3vet/mockulus/internal/stub"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
+// Renderer renders the templated parts of a response. It is nil for a
+// deployment with templating off, and unused by any stub that has no templates.
+type Renderer interface {
+	Render(tpl *handlebars.Template, ctx map[string]any) (string, error)
+}
+
+// Options carry what writing a response needs beyond the response itself.
+type Options struct {
+	WriteSlack time.Duration
+	// Renderer and Context are supplied only when the stub is templated.
+	Renderer Renderer
+	Context  map[string]any
+	// OnRenderError counts a serve-time render failure.
+	OnRenderError func()
+}
+
 // Write emits a compiled response and reports the status it sent, which the
 // caller records as a metric. A fault reports the status as 0: nothing that
 // could be called a status ever reached the client.
-func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, writeSlack time.Duration) int {
+func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, opts Options) int {
 	applyDelay(r, resp)
 
 	if resp.Fault != "" {
@@ -41,10 +58,30 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 		return wmcompat.StatusFor(wmcompat.CodeBodyFileMissing)
 	}
 
-	setDeadline(w, resp, writeSlack)
+	setDeadline(w, resp, opts.WriteSlack)
+
+	body := resp.Body
+	headers := resp.Headers
+
+	if resp.Templated && opts.Renderer != nil {
+		rendered, renderedHeaders, err := render(resp, opts)
+		if err != nil {
+			// WireMock renders the error text into the response body rather
+			// than failing the request, so a template bug is visible to
+			// whoever is looking at the response (SPEC §10.4).
+			if opts.OnRenderError != nil {
+				opts.OnRenderError()
+			}
+			w.Header().Set("Content-Type", "text/plain;charset=UTF-8")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("Template render error: " + err.Error()))
+			return http.StatusInternalServerError
+		}
+		body, headers = rendered, renderedHeaders
+	}
 
 	header := w.Header()
-	for _, h := range resp.Headers {
+	for _, h := range headers {
 		header.Add(h.Name, h.Value)
 	}
 	if _, declared := header["Content-Type"]; !declared {
@@ -55,15 +92,42 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 		header["Content-Type"] = nil
 	}
 
-	if resp.Dribble != nil && len(resp.Body) > 0 {
-		return dribble(w, resp)
+	if resp.Dribble != nil && len(body) > 0 {
+		return dribble(w, resp, body)
 	}
 
 	w.WriteHeader(resp.Status)
-	if len(resp.Body) > 0 {
-		_, _ = w.Write(resp.Body)
+	if len(body) > 0 {
+		_, _ = w.Write(body)
 	}
 	return resp.Status
+}
+
+// render evaluates the stub's templates. Only the parts that carry template
+// syntax were compiled, so an untemplated header costs a slice copy at most.
+func render(resp *stub.CompiledResponse, opts Options) ([]byte, []stub.Header, error) {
+	body := resp.Body
+	if resp.BodyTemplate != nil {
+		out, err := opts.Renderer.Render(resp.BodyTemplate, opts.Context)
+		if err != nil {
+			return nil, nil, err
+		}
+		body = []byte(out)
+	}
+
+	headers := resp.Headers
+	if len(resp.HeaderTemplates) > 0 {
+		headers = make([]stub.Header, len(resp.Headers))
+		copy(headers, resp.Headers)
+		for _, ht := range resp.HeaderTemplates {
+			out, err := opts.Renderer.Render(ht.Template, opts.Context)
+			if err != nil {
+				return nil, nil, err
+			}
+			headers[ht.Index].Value = out
+		}
+	}
+	return body, headers, nil
 }
 
 // applyDelay waits out the stub's configured delay. A timer is used rather than
@@ -135,12 +199,12 @@ func setDeadline(w http.ResponseWriter, resp *stub.CompiledResponse, slack time.
 
 // dribble spreads the body across several writes over a total duration, which
 // is how a slow or trickling upstream is simulated (SPEC §12.6).
-func dribble(w http.ResponseWriter, resp *stub.CompiledResponse) int {
+func dribble(w http.ResponseWriter, resp *stub.CompiledResponse, body []byte) int {
 	chunks := resp.Dribble.NumberOfChunks
-	if chunks > len(resp.Body) {
+	if chunks > len(body) {
 		// More chunks than bytes would mean empty writes; one byte per chunk is
 		// the finest division that still transmits something each time.
-		chunks = len(resp.Body)
+		chunks = len(body)
 	}
 	if chunks < 1 {
 		chunks = 1
@@ -153,7 +217,7 @@ func dribble(w http.ResponseWriter, resp *stub.CompiledResponse) int {
 
 	rc := http.NewResponseController(w)
 
-	size := len(resp.Body) / chunks
+	size := len(body) / chunks
 	for i := range chunks {
 		if gap > 0 {
 			time.Sleep(gap)
@@ -164,9 +228,9 @@ func dribble(w http.ResponseWriter, resp *stub.CompiledResponse) int {
 		start := i * size
 		end := start + size
 		if i == chunks-1 {
-			end = len(resp.Body)
+			end = len(body)
 		}
-		if _, err := w.Write(resp.Body[start:end]); err != nil {
+		if _, err := w.Write(body[start:end]); err != nil {
 			return resp.Status
 		}
 		_ = rc.Flush()

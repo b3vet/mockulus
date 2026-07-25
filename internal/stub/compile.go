@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b3vet/mockulus/internal/handlebars"
 	"github.com/b3vet/mockulus/internal/matchers"
 )
 
@@ -149,11 +150,14 @@ type CompiledResponse struct {
 	Dribble    *ChunkedDribble
 	Fault      string
 
-	// Templated records that this stub asked for response templating. The
-	// engine that renders it lands in M3; until then the field carries the
-	// author's intent through compilation unchanged.
-	Templated             bool
-	TransformerParameters json.RawMessage
+	// Templated records that this stub asked for response templating.
+	Templated bool
+	// BodyTemplate and HeaderTemplates are the parsed templates, compiled at
+	// registration so the request path only ever renders (SPEC §10.1).
+	BodyTemplate    *handlebars.Template
+	HeaderTemplates []HeaderTemplate
+	// TransformerParameters are exposed to templates as `parameters`.
+	TransformerParameters map[string]any
 }
 
 // Header is one response header, kept as an ordered pair so repeated names and
@@ -161,6 +165,15 @@ type CompiledResponse struct {
 type Header struct {
 	Name  string
 	Value string
+}
+
+// HeaderTemplate is a response header whose value carries template syntax. It
+// is held separately so a response with no templated headers costs nothing to
+// render.
+type HeaderTemplate struct {
+	// Index is the position in Headers this template renders into.
+	Index    int
+	Template *handlebars.Template
 }
 
 // MatchesMethod reports whether the stub accepts the given method. An empty

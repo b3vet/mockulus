@@ -12,6 +12,7 @@ import (
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/response"
+	"github.com/b3vet/mockulus/internal/template"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
@@ -37,6 +38,9 @@ type Engine struct {
 	snapshot atomic.Pointer[Snapshot]
 	metrics  *metrics.Metrics
 	cfg      config.Config
+	// renderer is nil when templating is off; a stub with no templates never
+	// consults it either way.
+	renderer response.Renderer
 
 	// gate is consulted for stubs in a scenario. It is nil until the scenario
 	// client is wired in, and nil means scenario-gated stubs match on their
@@ -45,8 +49,8 @@ type Engine struct {
 }
 
 // NewEngine returns an engine serving an empty snapshot.
-func NewEngine(cfg config.Config, m *metrics.Metrics) *Engine {
-	e := &Engine{metrics: m, cfg: cfg}
+func NewEngine(cfg config.Config, m *metrics.Metrics, renderer response.Renderer) *Engine {
+	e := &Engine{metrics: m, cfg: cfg, renderer: renderer}
 	e.snapshot.Store(EmptySnapshot())
 	return e
 }
@@ -92,7 +96,16 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	status := http.StatusNotFound
 	if cs != nil {
-		status = response.Write(w, r, &cs.Response, e.cfg.WriteSlack.D())
+		opts := response.Options{WriteSlack: e.cfg.WriteSlack.D()}
+		if cs.Response.Templated && e.renderer != nil {
+			// The context is built only for a stub that actually templates, so
+			// an ordinary stub never pays for assembling the request model.
+			opts.Renderer = e.renderer
+			opts.Context = template.BuildContext(r, body, pr.PathVars(),
+				cs.Response.TransformerParameters)
+			opts.OnRenderError = e.metrics.TemplateRenderErrors.Inc
+		}
+		status = response.Write(w, r, &cs.Response, opts)
 	} else {
 		writeUnmatched(w, snap.Len() == 0)
 	}
