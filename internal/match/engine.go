@@ -3,6 +3,7 @@
 package match
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/response"
+	"github.com/b3vet/mockulus/internal/stub"
 	"github.com/b3vet/mockulus/internal/template"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
@@ -46,6 +48,8 @@ type Engine struct {
 	// client is wired in, and nil means scenario-gated stubs match on their
 	// other criteria alone.
 	gate atomic.Pointer[ScenarioGate]
+	// transitioner advances a scenario after a stub with newScenarioState served.
+	transitioner atomic.Pointer[Transitioner]
 }
 
 // NewEngine returns an engine serving an empty snapshot.
@@ -70,6 +74,24 @@ func (e *Engine) Swap(s *Snapshot) {
 // SetScenarioGate installs the scenario state check.
 func (e *Engine) SetScenarioGate(gate ScenarioGate) { e.gate.Store(&gate) }
 
+// Transitioner advances a scenario after a stub has served.
+type Transitioner interface {
+	Transition(ctx context.Context, name, requiredState, newState string) error
+}
+
+// SetTransitioner installs the scenario transition path.
+func (e *Engine) SetTransitioner(t Transitioner) { e.transitioner.Store(&t) }
+
+func (e *Engine) transition(ctx context.Context, ref *stub.ScenarioRef) {
+	t := e.transitioner.Load()
+	if t == nil {
+		return
+	}
+	if err := (*t).Transition(ctx, ref.Name, ref.RequiredState, ref.NewState); err != nil {
+		e.metrics.StoreErrors.WithLabelValues("scenario_transition").Inc()
+	}
+}
+
 // ServeHTTP is the mock-port handler: read the body, one atomic load, one
 // match, one write.
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +115,13 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	candidates := 0
 	cs := snap.Match(pr, gate, &candidates)
+
+	if cs != nil && cs.Scenario != nil && cs.Scenario.NewState != "" {
+		// The transition follows the match and precedes the response, so a test
+		// that serves then immediately re-requests sees the new state. It never
+		// fails the response: what was matched is served either way.
+		e.transition(r.Context(), cs.Scenario)
+	}
 
 	status := http.StatusNotFound
 	if cs != nil {
