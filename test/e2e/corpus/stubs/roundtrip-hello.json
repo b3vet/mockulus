@@ -1,0 +1,15 @@
+{
+  "id": "e2e0001a-0000-4000-8000-000000000001",
+  "name": "e2e stub round trip",
+  "request": {
+    "method": "GET",
+    "urlPath": "/e2e/stub-roundtrip-001/hello"
+  },
+  "response": {
+    "status": 200,
+    "body": "world",
+    "headers": {
+      "Content-Type": "text/plain"
+    }
+  }
+}

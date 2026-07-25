@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: stub-roundtrip-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+  - B-ADMIN-MAPPINGS-GET
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-ADMIN-MAPPINGS-ID-DELETE
+  - B-STUB-ID-UUID
+  - B-STUB-NAME
+  - B-REQ-METHOD
+  - B-REQ-URLPATH
+  - B-RESP-STATUS
+  - B-RESP-HEADERS
+  - B-CFG-PORT
+wm: verified
+steps:
+  # Register a stub carrying its own id, so later steps can address it.
+  - admin: {method: POST, path: /__admin/mappings, body_file: stubs/roundtrip-hello.json}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "e2e0001a-0000-4000-8000-000000000001"
+        uuid: "e2e0001a-0000-4000-8000-000000000001"
+        name: "e2e stub round trip"
+        request: {method: GET, urlPath: /e2e/stub-roundtrip-001/hello}
+        response: {status: 200}
+
+  # The stub serves on the mock port immediately: a single-pod flow sees no
+  # staleness, because the writing pod swaps its own snapshot in place.
+  - request: {port: mock, method: GET, path: /e2e/stub-roundtrip-001/hello}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "world"
+
+  # urlPath matches the path only, so a different path does not match.
+  - request: {port: mock, method: GET, path: /e2e/stub-roundtrip-001/goodbye}
+    expect: {status: 404}
+
+  # A specific method matches only itself.
+  - request: {port: mock, method: POST, path: /e2e/stub-roundtrip-001/hello}
+    expect: {status: 404}
+
+  # It reads back by id, byte-identical in the fields that were registered.
+  - admin: {method: GET, path: /__admin/mappings/e2e0001a-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "e2e0001a-0000-4000-8000-000000000001"
+        response: {body: "world"}
+
+  # And it is listed in the WireMock envelope.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_regex: '"meta"\s*:\s*\{"total"'
+
+  # Deleting it takes it out of the snapshot too.
+  - admin: {method: DELETE, path: /__admin/mappings/e2e0001a-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/stub-roundtrip-001/hello}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/e2e0001a-0000-4000-8000-000000000001}
+    expect: {status: 404}

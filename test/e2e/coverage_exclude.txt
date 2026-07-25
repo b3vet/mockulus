@@ -1,0 +1,2 @@
+# Lines excluded from the E2E coverage floor. Each entry needs a justification
+# and review; this list should stay near-empty (SPEC §19.2).

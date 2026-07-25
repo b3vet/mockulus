@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+id: startup-log-001
+behaviors: [B-CFG-LOG-LEVEL-LOG-FORMAT]
+wm: n/a
+steps:
+  # SPEC §4.4 step 6: exactly one startup summary line, structured, on stdout.
+  - logprobe:
+      json_fields:
+        level: INFO
+        msg: mockulus started
+        store: memory
+
+  # Stub bodies and headers are never logged at info level, because teams put
+  # real credentials in their mocks (SPEC §14.2).
+  - logprobe: {contains: '"msg":"mockulus started"'}

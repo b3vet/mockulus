@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+id: metrics-exposition-001
+behaviors:
+  - B-CFG-METRICS-ENABLED
+  - B-METRIC-BUILD-INFO
+  - B-METRIC-HTTP-REQUESTS-TOTAL
+  - B-METRIC-HTTP-REQUEST-DURATION-SECONDS
+  - B-METRIC-ADMIN-REQUESTS-TOTAL
+  - B-METRIC-SNAPSHOT-STUBS
+  - B-METRIC-SNAPSHOT-EPOCH
+  - B-METRIC-SNAPSHOT-RELOADS-TOTAL
+  - B-METRIC-SNAPSHOT-RELOAD-DURATION-SECONDS
+  - B-METRIC-MATCH-CANDIDATES
+wm: n/a
+steps:
+  # Generate one mock request and one admin request so the request-scoped
+  # counters have a child series to expose.
+  - request: {method: GET, path: /e2e/metrics-exposition-001/ping}
+    expect: {status: 404}
+  - admin: {method: GET, path: /__admin/version}
+    expect: {status: 200}
+
+  # The endpoint itself serves the Prometheus exposition format.
+  - admin: {port: admin, method: GET, path: /metrics}
+    expect:
+      status: 200
+      body_regex: '(?m)^# HELP mockulus_build_info'
+
+  - metricsprobe: {series: 'mockulus_build_info', at_least: 1}
+  - metricsprobe: {series: 'mockulus_http_requests_total{matched="false",code="404"}', at_least: 1}
+  - metricsprobe: {series: 'mockulus_http_request_duration_seconds_count', at_least: 1}
+  - metricsprobe: {series: 'mockulus_admin_requests_total', at_least: 1}
+  - metricsprobe: {series: 'mockulus_snapshot_stubs'}
+  - metricsprobe: {series: 'mockulus_snapshot_epoch'}
+  - metricsprobe: {series: 'mockulus_snapshot_reloads_total{trigger="resync"}', at_least: 1}
+  - metricsprobe: {series: 'mockulus_snapshot_reload_duration_seconds_count', at_least: 1}
+  - metricsprobe: {series: 'mockulus_match_candidates_count', at_least: 1}
+
+  # No per-stub labels: a 10k-stub deployment must not mint 10k series.
+  - admin: {port: admin, method: GET, path: /metrics}
+    expect:
+      status: 200
+      body_regex: '(?m)^mockulus_http_requests_total\{(code|matched)='

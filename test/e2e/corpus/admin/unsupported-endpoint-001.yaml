@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+id: unsupported-endpoint-001
+behaviors: [B-ADMIN-RECORDINGS-PROXY-CERTIFICATES-MAPPINGS-UNMATCHED, B-ERR-1001]
+wm: n/a
+steps:
+  # Recording is deferred, and says so: fail loudly, never silently 404 blank.
+  - admin: {method: GET, path: /__admin/recordings/status}
+    expect:
+      status: 404
+      headers_contain: {Content-Type: application/json}
+      body_json_subset: {errors: [{code: 1001, title: "Unsupported endpoint"}]}
+      body_regex: 'ROADMAP\.md'
+
+  - admin: {method: POST, path: /__admin/proxy/anything}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+
+  - admin: {method: GET, path: /__admin/certificates}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+
+  # An admin path that is not in the matrix at all answers the same way.
+  - admin: {method: GET, path: /__admin/no-such-endpoint}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
