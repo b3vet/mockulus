@@ -366,7 +366,10 @@ func (h *Handler) metadataMatch(w http.ResponseWriter, r *http.Request) ([]*stub
 		return nil, false
 	}
 
-	matcher, problems := matchers.Compile(raw, "", matchers.Options{CompileRegex: h.stubOpts.CompileRegex})
+	matcher, problems := matchers.Compile(raw, "", matchers.Options{
+		CompileRegex:    h.stubOpts.CompileRegex,
+		CompileJSONPath: h.stubOpts.CompileJSONPath,
+	})
 	if len(problems) > 0 {
 		errs := &wmcompat.ErrorList{}
 		for _, p := range problems {

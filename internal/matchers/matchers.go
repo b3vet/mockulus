@@ -388,6 +388,98 @@ func arrayEqualUnordered(expected, actual []any, ignoreArrayOrder, ignoreExtra b
 	return true
 }
 
+// JSONPathEvaluator is the compiled-path capability this package needs,
+// declared at the point of use so the matchers do not depend on the engine.
+type JSONPathEvaluator interface {
+	// Match implements the bare form: does the expression select anything
+	// non-empty?
+	Match(doc any) bool
+	// Select returns the selected values for the nested form, and whether the
+	// expression selected anything at all.
+	Select(doc any) ([]any, bool)
+	// Source is the expression as written, for diagnostics.
+	Source() string
+}
+
+// MatchesJSONPath applies a JSONPath expression to the subject's JSON.
+//
+// Two forms, and they mean different things. The BARE form asks whether the
+// expression selects anything non-empty. The NESTED form applies an inner
+// matcher to what was selected, and is ANY-OF: the criterion holds when at
+// least one selected value satisfies it.
+type MatchesJSONPath struct {
+	Path JSONPathEvaluator
+	// Inner is nil for the bare form.
+	Inner Matcher
+	// Negate turns this into doesNotMatchJsonPath.
+	Negate bool
+}
+
+// Match implements Matcher.
+func (m *MatchesJSONPath) Match(s Subject) bool {
+	matched := m.evaluate(s)
+	if m.Negate {
+		return !matched
+	}
+	return matched
+}
+
+func (m *MatchesJSONPath) evaluate(s Subject) bool {
+	if !s.Present() {
+		return false
+	}
+	doc, ok := s.JSON()
+	if !ok {
+		// A body that is not JSON is a plain non-match, never an error.
+		return false
+	}
+
+	if m.Inner == nil {
+		return m.Path.Match(doc)
+	}
+
+	values, found := m.Path.Select(doc)
+	if !found {
+		return false
+	}
+	for _, v := range values {
+		// A directly-selected null never satisfies an inner matcher, whatever
+		// the matcher says — absence is absence.
+		if v == nil {
+			continue
+		}
+		if m.Inner.Match(NewKeyValues(renderSelected(v))) {
+			return true
+		}
+	}
+	return false
+}
+
+// renderSelected converts a selected value to the text an inner matcher sees.
+// Strings pass through raw; everything else renders as JSON.
+func renderSelected(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+// Describe implements Matcher.
+func (m *MatchesJSONPath) Describe() string {
+	name := "matchesJsonPath"
+	if m.Negate {
+		name = "doesNotMatchJsonPath"
+	}
+	if m.Inner == nil {
+		return name + " " + quote(m.Path.Source())
+	}
+	return name + " " + quote(m.Path.Source()) + " -> " + m.Inner.Describe()
+}
+
 // And requires every child matcher to be satisfied.
 type And struct{ Matchers []Matcher }
 
