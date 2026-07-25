@@ -34,8 +34,10 @@ const (
 type placeholderKind uint8
 
 const (
-	// phAny accepts any value at all, of any type.
+	// phAny accepts any value at all, of any type, but the member must be there.
 	phAny placeholderKind = iota
+	// phAnyOrAbsent additionally allows the member to be missing entirely.
+	phAnyOrAbsent
 	// phAnyString accepts any JSON string.
 	phAnyString
 	// phAnyNumber accepts any JSON number.
@@ -57,7 +59,7 @@ type jsonPlaceholder struct {
 // matches reports whether an actual JSON value satisfies the placeholder.
 func (p *jsonPlaceholder) matches(actual any) bool {
 	switch p.kind {
-	case phAny:
+	case phAny, phAnyOrAbsent:
 		return true
 	case phAnyString:
 		_, ok := actual.(string)
@@ -77,6 +79,10 @@ func (p *jsonPlaceholder) matches(actual any) bool {
 }
 
 func (p *jsonPlaceholder) describe() string { return p.source }
+
+// optional reports whether the placeholder also stands in for a member that is
+// not there at all.
+func (p *jsonPlaceholder) optional() bool { return p.kind == phAnyOrAbsent }
 
 // HasPlaceholder reports whether a value written into an expected document is a
 // json-unit placeholder.
@@ -132,8 +138,13 @@ func resolvePlaceholders(expected any, compileRegex RegexCompiler, pointer strin
 // compilePlaceholder turns a placeholder string into a matcher node.
 func compilePlaceholder(s string, compileRegex RegexCompiler) (*jsonPlaceholder, error) {
 	switch s {
-	case placeholderIgnore, placeholderIgnoreElement:
+	case placeholderIgnore:
 		return &jsonPlaceholder{kind: phAny, source: s}, nil
+	case placeholderIgnoreElement:
+		// Not a synonym for ignore, despite the name: probing shows `ignore`
+		// requires the member to be present while `ignore-element` also accepts
+		// its absence. Expected {"a": ignore} rejects {}; ignore-element accepts it.
+		return &jsonPlaceholder{kind: phAnyOrAbsent, source: s}, nil
 	case placeholderAnyString:
 		return &jsonPlaceholder{kind: phAnyString, source: s}, nil
 	case placeholderAnyNumber:
