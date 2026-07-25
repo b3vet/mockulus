@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+id: unsupported-stub-field-001
+behaviors: [B-ERR-1000, B-STUB-POSTSERVEACTIONS, B-DEV-DEVIATION-14]
+wm: n/a
+steps:
+  # Fail loudly: a deferred feature is rejected at registration, naming the
+  # offending JSON pointer, and nothing is persisted.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/unsupported-stub-field-001/x"},
+         "response": {"status": 200},
+         "postServeActions": [{"name": "webhook"}]}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            title: "Unsupported feature"
+            source: {pointer: "/postServeActions"}
+      body_regex: 'ROADMAP\.md'
+
+  # Nothing was persisted, so the URL still does not match.
+  - request: {method: GET, path: /e2e/unsupported-stub-field-001/x}
+    expect: {status: 404}
+
+  # Every problem is reported in one response, so a CI user fixes them all in
+  # one round rather than one restart per mistake.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/unsupported-stub-field-001/y",
+                     "multipartPatterns": [{"name": "part"}]},
+         "response": {"status": 200, "proxyBaseUrl": "http://upstream"}}
+    expect:
+      status: 422
+      body_regex: '"pointer":"/request/multipartPatterns".*"pointer":"/response/proxyBaseUrl"|"pointer":"/response/proxyBaseUrl".*"pointer":"/request/multipartPatterns"'

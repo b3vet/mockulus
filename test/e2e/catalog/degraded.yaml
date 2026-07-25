@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Degraded-mode contract (SPEC §4.6).
+# Generated from the spec, then completed by hand. Regenerate skeletons
+# for new spec rows with: make e2e-catalog-generate
+
+behaviors:
+  - id: "B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED"
+    spec_row: "spec:4.6:degraded-modes|CB down, snapshot loaded"
+    spec_hash: "efcb441248d3cbd1"
+    spec: "#46-degraded-modes-explicit-contract"
+    kind: "degraded"
+    impl_milestone: "M2"
+    summary: "CB down, snapshot loaded"
+    evidence: "mock traffic keeps being served while admin writes return 503 code 1020"
+    evidence_tokens: ["1020", "stop_store"]
+    status: "ok"
+  - id: "B-DEGRADED-CB-DOWN-AT-BOOT"
+    spec_row: "spec:4.6:degraded-modes|CB down at boot"
+    spec_hash: "a695cd24ad7ea7e7"
+    spec: "#46-degraded-modes-explicit-contract"
+    kind: "degraded"
+    impl_milestone: "M2"
+    summary: "CB down at boot"
+    evidence: "the pod stays live but not ready, and retries rather than exiting"
+    evidence_tokens: ["/readyz", "503"]
+    status: "ok"
+  - id: "B-DEGRADED-STORE-READ-FAILS-DURING-REBUILD-LOADALL-ERROR"
+    spec_row: "spec:4.6:degraded-modes|Store read fails during rebuild (LoadAll error)"
+    spec_hash: "f6b99410610d16a8"
+    spec: "#46-degraded-modes-explicit-contract"
+    kind: "degraded"
+    impl_milestone: "M2"
+    summary: "Store read fails during rebuild (LoadAll error)"
+    evidence: "the previous snapshot keeps serving and the reload-failure counter rises"
+    evidence_tokens: ["mockulus_snapshot_reload_failures_total"]
+    status: "ok"
+  - id: "B-DEGRADED-JOURNAL-QUEUE-FULL"
+    spec_row: "spec:4.6:degraded-modes|Journal queue full"
+    spec_hash: "98a15995909f2c4a"
+    spec: "#46-degraded-modes-explicit-contract"
+    kind: "degraded"
+    impl_milestone: "M5"
+    summary: "Journal queue full"
+    evidence: "entries are dropped and counted rather than blocking the hot path"
+    evidence_tokens: ["mockulus_journal_dropped_total", "tiny-journal"]
+    status: "ok"

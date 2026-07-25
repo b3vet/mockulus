@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+id: version-endpoint-001
+behaviors: [B-ADMIN-VERSION-GET]
+wm: verified
+steps:
+  - admin: {method: GET, path: /__admin/version}
+    expect:
+      status: 200
+      headers_contain: {Content-Type: application/json}
+      # guessedWireMockVersion is what a WireMock client probes for; our own
+      # additive fields are a catalogued extension, so subset semantics apply.
+      body_json_subset: {guessedWireMockVersion: "3.x-subset"}
+      body_regex: '"version"'

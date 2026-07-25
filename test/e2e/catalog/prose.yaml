@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Prose contracts: behaviors the spec states in prose rather than in a
+# structured table, so they cannot be machine-derived (SPEC §19.2).
+#
+# This manifest is MANUALLY SYNCED. Each entry pins the hash of its section's
+# body text; when that section is edited the gate fails and a human re-reads the
+# prose and re-syncs the entry. The "single source of the universe" claim is
+# scoped to the structured blocks — this file is the deliberate exception.
+
+contracts:
+  - id: "B-PROSE-SYNC-PROPAGATION"
+    section: "8"
+    section_hash: "f09a134f19ba09a3"
+    spec: "#8-cluster-synchronization"
+    kind: "distributed"
+    impl_milestone: "M2"
+    summary: "Epoch polling propagates stub changes to every replica, level-triggered and coalesced"
+    evidence: "a stub registered on one pod serves on another within the bound, and the writing pod serves it immediately"
+    evidence_tokens: ["expect_eventually", "multi-pod"]
+    status: "ok"
+
+  - id: "B-PROSE-SCENARIO-SEMANTICS"
+    section: "9"
+    section_hash: "ba57e937d23bffa3"
+    spec: "#9-scenarios-stateful-mocks"
+    kind: "distributed"
+    impl_milestone: "M4"
+    summary: "Scenario state is distributed, starts at Started, gates matching and transitions under CAS"
+    evidence: "a scenario walk crosses pods: one serves state 1, another transitions, the first then serves state 2"
+    evidence_tokens: ["Started", "requiredScenarioState"]
+    status: "ok"
+
+  - id: "B-PROSE-JOURNAL-CONSISTENCY"
+    section: "11"
+    section_hash: "67ecface6bd34f38"
+    spec: "#11-request-journal--verification"
+    kind: "distributed"
+    impl_milestone: "M5"
+    summary: "Journal entries become visible to verification eventually, and never block the request path"
+    evidence: "a verification call finds the entry within a bounded polling window, not immediately"
+    evidence_tokens: ["expect_eventually", "/__admin/requests"]
+    status: "ok"

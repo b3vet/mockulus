@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// A corpus case is the unit of the E2E gate: a sequence of steps against a real
+// mockulus instance, with explicit expected outcomes (SPEC §19.3). Cases are
+// data, not code, so the same file can be replayed deterministically on every
+// PR and re-derived against pinned WireMock in topology T5.
+
+// WireMock verification tags.
+const (
+	// WMVerified marks a case whose expectations are re-derived from pinned
+	// WireMock; it participates in differential runs.
+	WMVerified = "verified"
+	// WMNotApplicable marks mockulus-specific behavior — deviations,
+	// distributed behavior — that has no single-node WireMock oracle.
+	WMNotApplicable = "n/a"
+)
+
+// Case is one corpus case.
+type Case struct {
+	ID string `yaml:"id"`
+	// Behaviors lists the catalog ids this case provides evidence for. A case
+	// referencing none is an orphan and fails completeness gate (b).
+	Behaviors []string `yaml:"behaviors"`
+	// Requires lists topology capabilities: couchbase, multi-pod, exclusive.
+	Requires []string `yaml:"requires,omitempty"`
+	// Config names the instance variant to run against (SPEC §19.4).
+	Config string `yaml:"config,omitempty"`
+	WM     string `yaml:"wm"`
+	// Skip, when set, must carry a linked issue and an expiry the runner
+	// enforces — an expired skip fails the gate (SPEC §19.1).
+	Skip  *Skip  `yaml:"skip,omitempty"`
+	Steps []Step `yaml:"steps"`
+
+	// Path is where the case was loaded from, for error messages.
+	Path string `yaml:"-"`
+}
+
+// Skip records a temporary exclusion with its justification and expiry.
+type Skip struct {
+	Reason  string `yaml:"reason"`
+	Issue   string `yaml:"issue"`
+	Expires string `yaml:"expires"`
+}
+
+// Step is one action plus its expectations. Exactly one action field is set.
+type Step struct {
+	Request      *HTTPStep     `yaml:"request,omitempty"`
+	Admin        *HTTPStep     `yaml:"admin,omitempty"`
+	Pause        string        `yaml:"pause,omitempty"`
+	MetricsProbe *MetricsProbe `yaml:"metricsprobe,omitempty"`
+	LogProbe     *LogProbe     `yaml:"logprobe,omitempty"`
+
+	Expect           *Expect `yaml:"expect,omitempty"`
+	ExpectEventually *Expect `yaml:"expect_eventually,omitempty"`
+}
+
+// HTTPStep is a request to the mock port or the admin port.
+type HTTPStep struct {
+	// Pod selects a replica in multi-pod topologies; "any" round-robins.
+	Pod     string            `yaml:"pod,omitempty"`
+	Method  string            `yaml:"method"`
+	Path    string            `yaml:"path"`
+	Headers map[string]string `yaml:"headers,omitempty"`
+	Body    string            `yaml:"body,omitempty"`
+	// BodyFile reads the body from test/e2e/corpus/<file>.
+	BodyFile string `yaml:"body_file,omitempty"`
+	// Port selects which listener to use for a `request` step; admin steps
+	// default to the admin port.
+	Port string `yaml:"port,omitempty"`
+}
+
+// MetricsProbe asserts on a series exposed by /metrics.
+type MetricsProbe struct {
+	// Series is the metric name, optionally with a label selector:
+	// mockulus_http_requests_total{matched="true",code="200"}
+	Series string `yaml:"series"`
+	// Present asserts the series exists (default true when nothing else is set).
+	Present *bool `yaml:"present,omitempty"`
+	// AtLeast asserts a minimum value, which is what makes a counter assertion
+	// stable under concurrent cases sharing an instance.
+	AtLeast *float64 `yaml:"at_least,omitempty"`
+}
+
+// LogProbe asserts on the instance's captured stdout.
+type LogProbe struct {
+	// Contains requires a substring in some captured log line.
+	Contains string `yaml:"contains,omitempty"`
+	// JSONFields requires a single JSON log line carrying all these fields.
+	JSONFields map[string]string `yaml:"json_fields,omitempty"`
+}
+
+// Expect is the assertion set applied to a step's response.
+type Expect struct {
+	Status  int               `yaml:"status,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
+	// HeadersContain matches a header value by substring.
+	HeadersContain map[string]string `yaml:"headers_contain,omitempty"`
+	HeaderAbsent   []string          `yaml:"header_absent,omitempty"`
+
+	Body      *string `yaml:"body,omitempty"`
+	BodyRegex string  `yaml:"body_regex,omitempty"`
+	// BodyJSON compares the whole document structurally.
+	BodyJSON any `yaml:"body_json,omitempty"`
+	// BodyJSONSubset requires every field given to be present and equal,
+	// ignoring anything else in the response.
+	BodyJSONSubset any `yaml:"body_json_subset,omitempty"`
+
+	// Within turns the assertion into bounded polling, for behaviors whose
+	// contract is eventual (SPEC §8, §11.4). Never a bare sleep.
+	Within string `yaml:"within,omitempty"`
+}
+
+// WithinDuration returns the polling window, defaulting to the generous
+// propagation-class window of SPEC §19.3.
+func (e *Expect) WithinDuration() (time.Duration, error) {
+	if e.Within == "" {
+		return defaultEventuallyWindow, nil
+	}
+	return time.ParseDuration(e.Within)
+}
+
+// defaultEventuallyWindow is deliberately generous: the E2E gate asserts
+// eventual correctness only, never latency (SPEC §19.3).
+const defaultEventuallyWindow = 15 * time.Second
+
+// LoadCorpus reads every case file under dir.
+func LoadCorpus(dir string) ([]*Case, error) {
+	var paths []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if ext := filepath.Ext(path); ext == ".yaml" || ext == ".yml" {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+
+	seen := map[string]string{}
+	cases := make([]*Case, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var c Case
+		if err := yaml.Unmarshal(data, &c); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		c.Path = path
+		if err := c.validate(); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if prev, dup := seen[c.ID]; dup {
+			return nil, fmt.Errorf("%s: case id %q is already used by %s", path, c.ID, prev)
+		}
+		seen[c.ID] = path
+		cases = append(cases, &c)
+	}
+	return cases, nil
+}
+
+func (c *Case) validate() error {
+	if c.ID == "" {
+		return fmt.Errorf("case has no id")
+	}
+	if len(c.Behaviors) == 0 {
+		return fmt.Errorf("case %s references no catalog behavior (completeness gate b)", c.ID)
+	}
+	if c.WM != WMVerified && c.WM != WMNotApplicable {
+		return fmt.Errorf("case %s: wm must be %q or %q, got %q",
+			c.ID, WMVerified, WMNotApplicable, c.WM)
+	}
+	if len(c.Steps) == 0 {
+		return fmt.Errorf("case %s has no steps", c.ID)
+	}
+	for i, s := range c.Steps {
+		if err := s.validate(); err != nil {
+			return fmt.Errorf("case %s step %d: %w", c.ID, i+1, err)
+		}
+	}
+	if c.Skip != nil {
+		if c.Skip.Issue == "" {
+			return fmt.Errorf("case %s: a skip must link the issue tracking it", c.ID)
+		}
+		if _, err := time.Parse("2006-01-02", c.Skip.Expires); err != nil {
+			return fmt.Errorf("case %s: skip expires must be YYYY-MM-DD, got %q", c.ID, c.Skip.Expires)
+		}
+	}
+	return nil
+}
+
+func (s Step) validate() error {
+	actions := 0
+	for _, set := range []bool{s.Request != nil, s.Admin != nil, s.Pause != "",
+		s.MetricsProbe != nil, s.LogProbe != nil} {
+		if set {
+			actions++
+		}
+	}
+	if actions != 1 {
+		return fmt.Errorf("a step must carry exactly one action, found %d", actions)
+	}
+	if s.Expect != nil && s.ExpectEventually != nil {
+		return fmt.Errorf("a step may carry expect or expect_eventually, not both")
+	}
+	if s.Pause != "" {
+		if _, err := time.ParseDuration(s.Pause); err != nil {
+			return fmt.Errorf("pause: %w", err)
+		}
+	}
+	return nil
+}
+
+// RequiresCapability reports whether the case needs a topology capability.
+func (c *Case) RequiresCapability(capability string) bool {
+	for _, r := range c.Requires {
+		if r == capability {
+			return true
+		}
+	}
+	return false
+}
+
+// Variant returns the instance variant the case runs against.
+func (c *Case) Variant() string {
+	if c.Config == "" {
+		return VariantDefault
+	}
+	return c.Config
+}
+
+// SkipExpired reports whether a skip annotation has passed its expiry, which
+// the runner treats as a gate failure rather than a silent pass (SPEC §19.1).
+func (c *Case) SkipExpired(now time.Time) bool {
+	if c.Skip == nil {
+		return false
+	}
+	expiry, err := time.Parse("2006-01-02", c.Skip.Expires)
+	if err != nil {
+		return true
+	}
+	return now.After(expiry.Add(24 * time.Hour))
+}
+
+// Namespace is the URL prefix a case's mock traffic must stay inside, so cases
+// can run concurrently against a shared instance (SPEC §19.3).
+func (c *Case) Namespace() string { return "/e2e/" + c.ID + "/" }
+
+// UsesNamespace reports whether a mock-port path respects the case namespace.
+// Admin paths and deliberately global probes are exempt.
+func (c *Case) UsesNamespace(path string) bool {
+	return strings.HasPrefix(path, c.Namespace())
+}

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+id: unmatched-404-001
+behaviors: [B-CFG-DIAGNOSTICS-ON-UNMATCHED, B-DEV-DEVIATION-2]
+wm: n/a
+steps:
+  # The default unmatched response is a fast plain-text 404 with no near-miss
+  # computation at all — WireMock computes near misses on every unmatched
+  # request, and we deliberately do not (deviation #2).
+  - request: {method: GET, path: /e2e/unmatched-404-001/nothing-here}
+    expect:
+      status: 404
+      headers_contain: {Content-Type: text/plain}
+
+  - request: {method: POST, path: /e2e/unmatched-404-001/nothing-here}
+    expect: {status: 404}

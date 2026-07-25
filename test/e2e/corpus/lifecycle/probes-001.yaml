@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+id: probes-001
+behaviors: [B-CFG-ADMIN-PORT]
+wm: n/a
+steps:
+  # Liveness never consults the store, so it answers as soon as the process is up.
+  - admin: {port: admin, method: GET, path: /healthz}
+    expect: {status: 200}
+
+  # Readiness is 200 only once a valid snapshot is loaded.
+  - admin: {port: admin, method: GET, path: /readyz}
+    expect: {status: 200}
+
+  # The operational surface is not exposed on the mock port.
+  - request: {port: mock, method: GET, path: /healthz}
+    expect: {status: 404}

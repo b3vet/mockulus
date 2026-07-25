@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-auth-001
+behaviors: [B-CFG-ADMIN-AUTH-TOKEN]
+config: authed
+wm: n/a
+steps:
+  # With a token configured, an unauthenticated admin call is refused.
+  - admin:
+      method: GET
+      path: /__admin/mappings
+      headers: {Authorization: ""}
+    expect: {status: 401}
+
+  # So is a wrong one.
+  - admin:
+      method: GET
+      path: /__admin/mappings
+      headers: {Authorization: "Token wrong-token"}
+    expect: {status: 401}
+
+  # The documented form is accepted.
+  - admin:
+      method: GET
+      path: /__admin/mappings
+      headers: {Authorization: "Token e2e-admin-token"}
+    expect: {status: 200}
+
+  # Mock traffic is unaffected: the token guards the admin API, not the mocks.
+  - request: {port: mock, method: GET, path: /e2e/admin-auth-001/anything}
+    expect: {status: 404}
