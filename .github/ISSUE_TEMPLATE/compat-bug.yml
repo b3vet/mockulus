@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Compatibility bug
+description: mockulus behaves differently from WireMock for a feature it claims to support
+labels: ["compat-bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Compatibility is the promise of this project, so a difference in
+        behavior for a supported feature is a bug — not a documentation issue.
+
+        Every confirmed compat bug lands together with a new `wm: verified`
+        corpus case, so it can never regress. That case is built from what you
+        write here, which is why the reproduction matters more than the prose.
+
+        **Not this template if:** the feature is rejected with a 422 or a 404
+        pointing at ROADMAP.md. That is deliberate — it is deferred, not broken.
+        Open a feature request instead, or add a 👍 to the roadmap item.
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: mockulus version, and the WireMock version you compared against
+      placeholder: "mockulus 0.3.1, wiremock/wiremock:3.13.2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: stub
+    attributes:
+      label: The stub mapping
+      description: The exact JSON you registered.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: request
+    attributes:
+      label: The request
+      description: Method, path, headers and body — a curl command is ideal.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: wiremock
+    attributes:
+      label: What WireMock did
+      description: Status, headers and body.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: mockulus
+    attributes:
+      label: What mockulus did
+      description: Status, headers and body.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: deviations
+    attributes:
+      label: Have you checked the documented deviations?
+      description: |
+        SPEC §5.5 lists every deliberate difference. If your case is one of
+        them, say which and why it is still a problem for you — that is useful
+        signal about whether the deviation is drawn in the right place.
+    validations:
+      required: false
