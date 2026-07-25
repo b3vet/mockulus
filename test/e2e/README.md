@@ -84,6 +84,31 @@ Rules that keep the suite honest and fast:
 - **Namespace your mock traffic** under `/e2e/<case-id>/`. Cases run
   concurrently against shared instances, which dogfoods the shared-deployment
   pattern the docs recommend to users.
+- **Assert on a global listing by identity, never by position or count.** A case
+  shares its instance with every other case, so `GET /__admin/mappings` returns
+  their stubs too: the index of your own mapping and the value of `meta.total`
+  depend on run order and on which cases happened to be selected. Find your
+  mapping by its id with `body_json_contains`, and assert on that.
+
+  ```yaml
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match: {id: "…", response: {status: 200}}
+  ```
+
+  The differential diff has the same problem from the other side — the oracle is
+  reset per case and holds only your stub, so the two lists cannot agree — and a
+  `wm: verified` case declares `wm_ignore: ["$global-listing"]` to have the
+  collection compared entry by entry instead of position by position. Every entry
+  WireMock listed must still be in yours and match in full; only the order and
+  the size stop being claims.
+
+  A case that owns the instance — `requires: [exclusive]`, for the global resets
+  and imports whose whole point is the deployment-wide count — may assert the
+  envelope exactly. That declaration is what earns it the right to.
 - **Never sleep.** Use `expect_eventually` with a `within:` window for anything
   whose contract is eventual. The gate asserts eventual *correctness*; timing is
   asserted only by the perf suite on the reference rig.
@@ -109,6 +134,40 @@ Topology shape cannot express start-time configuration, so each topology hosts
 named instance variants (`journal`, `authed`, `fast-clock`, `h2c`, `tls`, …).
 mockulus starts in well under a second, so variants multiply cheap processes
 rather than containers.
+
+## Go-native cases
+
+Some behavior is not observable through an HTTP client at all. A fault that
+closes the socket mid-body has no status to check, an h2c upgrade is a property
+of the connection rather than the exchange, and a drain window only exists
+between SIGTERM and process exit. Those live in `gotests/` and talk to the raw
+socket and the process.
+
+They count for coverage exactly as a YAML case does, which is the point: if a
+Go-native case did not satisfy the catalog, the gate would report a hole where
+there is a test, and the pressure would be to write a weaker YAML case instead
+of the real one.
+
+`gotests/gotests.yaml` is the join:
+
+```yaml
+tests:
+  - name: TestFaultEmptyResponse        # the Go test function, matched exactly
+    behaviors: [B-RESP-FAULT]
+    why: net/http hides a zero-byte close behind a generic transport error
+```
+
+Every entry needs a `why`. The escape hatch has to stay deliberate, or it
+becomes the easy path.
+
+One rule differs. A YAML case's evidence contract is checked against its
+rendered steps; a Go-native case has no steps, so **its evidence is its own
+source text** — the catalog's `evidence_tokens` must appear in the test
+function. That is a stronger check than the YAML one, since the tokens have to
+appear in the code that does the asserting.
+
+The runner hands the binary under test to the suite in `MOCKULUS_E2E_BINARY`,
+so `go test ./test/e2e/gotests/` also works on its own.
 
 ## Black-box, with one sanctioned exception
 

@@ -51,6 +51,11 @@ type Case struct {
 
 	// Path is where the case was loaded from, for error messages.
 	Path string `yaml:"-"`
+
+	// evidence overrides the text the evidence-token check searches. A corpus
+	// case leaves it empty and is checked against its rendered steps; a
+	// Go-native case has no steps and supplies its own source instead.
+	evidence string `yaml:"-"`
 }
 
 // Skip records a temporary exclusion with its justification and expiry.
@@ -109,8 +114,12 @@ type LogProbe struct {
 
 // Expect is the assertion set applied to a step's response.
 type Expect struct {
-	Status  int               `yaml:"status,omitempty"`
-	Headers map[string]string `yaml:"headers,omitempty"`
+	Status int `yaml:"status,omitempty"`
+	// StatusMessage asserts the HTTP/1.1 reason phrase. Go's client keeps the
+	// status line's text verbatim in Response.Status, which makes this the one
+	// way a black-box case can observe `statusMessage` at all (SPEC §5.2).
+	StatusMessage string            `yaml:"status_message,omitempty"`
+	Headers       map[string]string `yaml:"headers,omitempty"`
 	// HeadersContain matches a header value by substring.
 	HeadersContain map[string]string `yaml:"headers_contain,omitempty"`
 	HeaderAbsent   []string          `yaml:"header_absent,omitempty"`
@@ -122,10 +131,25 @@ type Expect struct {
 	// BodyJSONSubset requires every field given to be present and equal,
 	// ignoring anything else in the response.
 	BodyJSONSubset any `yaml:"body_json_subset,omitempty"`
+	// BodyJSONContains searches an array in the response for an element, which
+	// is the only way to assert on a deployment-global listing: cases share one
+	// instance, so a case's own entry sits at an index nothing can predict.
+	BodyJSONContains []JSONContains `yaml:"body_json_contains,omitempty"`
 
 	// Within turns the assertion into bounded polling, for behaviors whose
 	// contract is eventual (SPEC §8, §11.4). Never a bare sleep.
 	Within string `yaml:"within,omitempty"`
+}
+
+// JSONContains names an array in the response document and the entry that must
+// be somewhere in it.
+type JSONContains struct {
+	// Path is a dotted path to the array — "mappings", "meta.items". A leading
+	// "$." is accepted, so a path can be spelled the way a diff reports one.
+	Path string `yaml:"path"`
+	// Match is what one element has to satisfy, under the subset semantics of
+	// body_json_subset: fields the case does not name are not compared.
+	Match any `yaml:"match"`
 }
 
 // WithinDuration returns the polling window, defaulting to the generous
@@ -232,6 +256,29 @@ func (s Step) validate() error {
 	if s.Pause != "" {
 		if _, err := time.ParseDuration(s.Pause); err != nil {
 			return fmt.Errorf("pause: %w", err)
+		}
+	}
+	for _, e := range []*Expect{s.Expect, s.ExpectEventually} {
+		if e == nil {
+			continue
+		}
+		if err := e.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Expect) validate() error {
+	// A half-written contains clause would search the whole document, or match
+	// every element, and report a pass — the vacuous assertion the gate exists
+	// to prevent. Reject it at load instead.
+	for i, c := range e.BodyJSONContains {
+		if c.Path == "" {
+			return fmt.Errorf("body_json_contains[%d]: path names the array to search and is required", i)
+		}
+		if c.Match == nil {
+			return fmt.Errorf("body_json_contains[%d]: match is what an element must satisfy and is required", i)
 		}
 	}
 	return nil

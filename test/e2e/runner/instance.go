@@ -5,6 +5,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,7 +47,17 @@ const (
 	// reachable from a corpus case. The default cap is 10 MiB, which no case can
 	// exercise without committing a 10 MiB fixture.
 	VariantTinyBody = "tiny-body"
+	// VariantAccessLog turns on per-request logging with no sampling, so a
+	// logprobe can assert one line per request.
+	VariantAccessLog = "access-log"
+	// VariantSampledLog logs every second request, which is what makes the
+	// sampling observable at all.
+	VariantSampledLog = "sampled-log"
 )
+
+// tlsFixtureDir is where the generated certificate lands. It sits under the
+// artifacts directory so a run leaves nothing in the source tree.
+const tlsFixtureDir = "test/e2e/.artifacts/tls"
 
 // AdminToken is the token the `authed` variant requires. It is a fixture, not a
 // secret: the harness needs no secrets by design (SPEC §22.4).
@@ -62,7 +74,26 @@ var variantEnv = map[string]map[string]string{
 	VariantTemplatingOff: {"MOCKULUS_TEMPLATING_ENABLED": "off"},
 	VariantDiagnostics:   {"MOCKULUS_DIAGNOSTICS_ON_UNMATCHED": "true"},
 	VariantH2C:           {"MOCKULUS_H2C_ENABLED": "true"},
-	VariantTinyBody:      {"MOCKULUS_MAX_BODY_BYTES": "1KiB"},
+	// The TLS variant's cert and key are filled in per run by TLSFixture, since
+	// they do not exist until the run generates them.
+	VariantTLS:      {},
+	VariantTinyBody: {"MOCKULUS_MAX_BODY_BYTES": "1KiB"},
+	VariantAccessLog: {
+		"MOCKULUS_LOG_REQUESTS":         "true",
+		"MOCKULUS_LOG_REQUEST_SAMPLE_N": "1",
+		// Debug for the same reason as the sampled variant below: it is where
+		// the resolved configuration is echoed against the key that set it.
+		"MOCKULUS_LOG_LEVEL": "debug",
+	},
+	VariantSampledLog: {
+		"MOCKULUS_LOG_REQUESTS":         "true",
+		"MOCKULUS_LOG_REQUEST_SAMPLE_N": "2",
+		// Debug because the startup config dump — the one place the resolved
+		// value is echoed next to the key that carries it — is logged at debug
+		// (SPEC §14.2). Without it a case can see the sampling happen but not
+		// that `log.request_sample_n` is what steers it.
+		"MOCKULUS_LOG_LEVEL": "debug",
+	},
 	VariantFastClock: {
 		"MOCKULUS_EPHEMERAL_STUB_TTL": "3s",
 		"MOCKULUS_RESYNC_INTERVAL":    "2s",
@@ -103,6 +134,19 @@ func StartInstance(ctx context.Context, binary, topology, variant string) (*Inst
 		return nil, fmt.Errorf("unknown config variant %q", variant)
 	}
 
+	var fixture *tlsFixture
+	if variant == VariantTLS {
+		var err error
+		fixture, err = TLSFixture(tlsFixtureDir)
+		if err != nil {
+			return nil, fmt.Errorf("generate the TLS fixture: %w", err)
+		}
+		env = map[string]string{
+			"MOCKULUS_TLS_CERT_FILE": fixture.CertFile,
+			"MOCKULUS_TLS_KEY_FILE":  fixture.KeyFile,
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, binary)
 	cmd.Env = append(os.Environ(),
 		"MOCKULUS_PORT=0",
@@ -128,16 +172,28 @@ func StartInstance(ctx context.Context, binary, topology, variant string) (*Inst
 		return nil, fmt.Errorf("start mockulus: %w", err)
 	}
 
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: 32,
+		DisableCompression:  true,
+	}
+	if fixture != nil {
+		// The fixture certificate is trusted explicitly rather than by skipping
+		// verification: a harness that accepts any certificate could not tell a
+		// working TLS listener from a broken one.
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(fixture.CertPEM) {
+			return nil, fmt.Errorf("the generated TLS fixture is not a usable certificate")
+		}
+		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	}
+
 	inst := &Instance{
 		Variant:  variant,
 		Topology: topology,
 		cmd:      cmd,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConnsPerHost: 32,
-				DisableCompression:  true,
-			},
+			Timeout:   30 * time.Second,
+			Transport: transport,
 		},
 	}
 
@@ -146,7 +202,12 @@ func StartInstance(ctx context.Context, binary, topology, variant string) (*Inst
 
 	select {
 	case line := <-started:
-		inst.MockAddr = "http://" + normalizeAddr(line.MockAddr)
+		scheme := "http://"
+		if fixture != nil {
+			scheme = "https://"
+		}
+		inst.MockAddr = scheme + normalizeAddr(line.MockAddr)
+		// The admin listener is never TLS-wrapped, only the mock port is.
 		inst.AdminAddr = "http://" + normalizeAddr(line.AdminAddr)
 	case <-time.After(30 * time.Second):
 		_ = inst.Stop()

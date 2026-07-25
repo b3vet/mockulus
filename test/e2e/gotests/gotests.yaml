@@ -1,0 +1,90 @@
+# The join between the Go-native cases and the behavior catalog.
+#
+# Every entry names a test function that exists, the behaviors it proves, and
+# why a corpus case could not prove them. The last field is the one that keeps
+# this file honest: without it the escape hatch becomes the easy path.
+tests:
+  - name: TestH2CEnabledGatesCleartextHTTP2
+    behaviors: [B-CFG-H2C-ENABLED]
+    why: >-
+      The observable is how the connection is established, not what came back
+      over it. A corpus case reaches mockulus through an HTTP/1.1 client that
+      has already made that choice, so it can neither send a prior-knowledge
+      preface down a plain socket nor drive an Upgrade: h2c handshake and read
+      the answer frame by frame.
+  - name: TestFaultFidelityDegradesOverH2C
+    behaviors: [B-DEV-DEVIATION-15]
+    why: >-
+      Deviation #15 is a difference between two layers: on HTTP/1.1 the socket
+      ends with zero bytes on it, on h2c the stream is reset while its
+      connection keeps serving. Neither half has a response for a corpus case to
+      assert on, and proving the reset is stream-scoped needs two requests
+      pinned to one connection the case dialed itself.
+  - name: TestTLSMockPortServesTLSAndAdminStaysCleartext
+    behaviors: [B-CFG-TLS-CERT-FILE-TLS-KEY-FILE]
+    why: >-
+      TLS is a property of the connection rather than of the exchange. A corpus
+      case sees only a response, by which point its client has negotiated,
+      verified and hidden the whole handshake; no YAML expectation can assert
+      that the certificate presented was the configured one, or that the admin
+      port stayed cleartext while the mock port did not.
+  - name: TestTLSMockPortRefusesCleartext
+    behaviors: [B-CFG-TLS-CERT-FILE-TLS-KEY-FILE]
+    why: >-
+      The assertion is that a request is not served at all. A corpus case
+      addresses one instance through one client with one scheme, so it cannot
+      put the cleartext half of the question to a TLS listener.
+  - name: TestTLSMisconfigurationRefusesToStart
+    behaviors: [B-CFG-TLS-CERT-FILE-TLS-KEY-FILE]
+    why: >-
+      What is asserted is that no serving process exists: an unusable
+      certificate must exit non-zero rather than leave a live, ready pod with
+      nothing behind its mock port. A corpus case needs a started instance
+      before it can assert anything at all.
+  - name: TestShutdownDrainKeepsServingWhileUnready
+    behaviors: [B-CFG-SHUTDOWN-DRAIN-SHUTDOWN-TIMEOUT]
+    why: >-
+      The drain window exists only between SIGTERM and process exit. Corpus
+      cases share a pooled instance per variant and no YAML step can signal a
+      process — signalling the shared one would end the run for every other case
+      using it.
+  - name: TestShutdownTimeoutBoundsAnOpenConnection
+    behaviors: [B-CFG-SHUTDOWN-DRAIN-SHUTDOWN-TIMEOUT]
+    why: >-
+      The bound is the time between a signal and a process exit while a raw
+      socket is held open — nothing a corpus case can hold, send or measure.
+  - name: TestFaultEmptyResponse
+    behaviors: [B-RESP-FAULT]
+    why: >-
+      EMPTY_RESPONSE and a 200 with an empty body are the same event to an
+      HTTP client, and only one of them is the fault. Telling them apart means
+      counting the bytes on the socket and seeing how the connection ended,
+      neither of which survives net/http.
+  - name: TestFaultRandomDataThenClose
+    behaviors: [B-RESP-FAULT]
+    why: >-
+      The contract is that what arrives is not a response. A corpus case's
+      client reports that as one generic protocol error, so it cannot assert
+      what actually came back — that there were bytes, that they parse as
+      nothing, and that two requests do not produce the same ones.
+  - name: TestFaultConnectionResetByPeer
+    behaviors: [B-RESP-FAULT]
+    why: >-
+      A reset and an orderly close both surface as a transport failure to an
+      HTTP client, so the one thing this fault promises — an RST rather than a
+      FIN — is invisible above the socket. Read directly, they separate:
+      ECONNRESET against io.EOF, with EMPTY_RESPONSE as the control.
+  - name: TestFaultMalformedResponseChunk
+    behaviors: [B-RESP-FAULT]
+    why: >-
+      Half of this is a client-visible failure and half is the exact byte
+      sequence that causes it: a status line valid enough to commit to,
+      followed by garbage. A corpus case sees only the failure, and could not
+      tell this fault from any of the other three.
+  - name: TestFaultWithBodyRejected
+    behaviors: [B-RESP-FAULT]
+    why: >-
+      The 422 bounds the four cases above by fixing where fault handling stops.
+      Its second half is the socket one: proving the rejected stub left nothing
+      that hijacks the connection means finding a well-formed HTTP response on
+      a raw socket, on the path where every other case here finds none.

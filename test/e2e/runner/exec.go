@@ -184,7 +184,7 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, inst *Instance,
 		if _, err := do(); err != nil {
 			return err
 		}
-		return e.diffAgainstOracle(ctx, c, hs, body, ourResponse, res)
+		return e.diffAgainstOracle(ctx, c, hs, body, ourResponse, base == inst.MockAddr, res)
 	}
 
 	window, err := expect.WithinDuration()
@@ -219,7 +219,7 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, inst *Instance,
 // corpus claims is compatible, which is the one thing topology T5 exists to
 // catch.
 func (e *Executor) diffAgainstOracle(ctx context.Context, c *Case, hs *HTTPStep,
-	body string, ours *NormalizedResponse, res *Result) error {
+	body string, ours *NormalizedResponse, mockPort bool, res *Result) error {
 
 	if !e.differential(c) || ours == nil {
 		return nil
@@ -251,7 +251,7 @@ func (e *Executor) diffAgainstOracle(ctx context.Context, c *Case, hs *HTTPStep,
 	}
 	theirs := Normalize(resp, raw)
 
-	if diffs := DiffResponses(theirs, ours, c.WMIgnore); len(diffs) > 0 {
+	if diffs := DiffResponses(theirs, ours, c.WMIgnore, mockPort); len(diffs) > 0 {
 		res.Transcript = append(res.Transcript, fmt.Sprintf(
 			"DIFFERENTIAL %s %s\n  WireMock: %d %s\n  mockulus: %d %s",
 			strings.ToUpper(hs.Method), hs.Path,
@@ -283,6 +283,11 @@ func assertResponse(e *Expect, resp *http.Response, body []byte) error {
 
 	if e.Status != 0 && resp.StatusCode != e.Status {
 		problems = append(problems, fmt.Sprintf("status: got %d, want %d", resp.StatusCode, e.Status))
+	}
+	if e.StatusMessage != "" {
+		if got := reasonPhraseOf(resp.Status); got != e.StatusMessage {
+			problems = append(problems, fmt.Sprintf("status_message: got %q, want %q", got, e.StatusMessage))
+		}
 	}
 	for name, want := range e.Headers {
 		if got := resp.Header.Get(name); got != want {
@@ -323,11 +328,23 @@ func assertResponse(e *Expect, resp *http.Response, body []byte) error {
 			problems = append(problems, "body_json_subset: "+err.Error())
 		}
 	}
+	for _, want := range e.BodyJSONContains {
+		if err := assertJSONContains(want, body); err != nil {
+			problems = append(problems, "body_json_contains: "+err.Error())
+		}
+	}
 
 	if len(problems) == 0 {
 		return nil
 	}
 	return fmt.Errorf("%s", strings.Join(problems, "; "))
+}
+
+// reasonPhraseOf pulls the phrase out of Go's "<code> <phrase>" status text.
+// A status line with no phrase at all yields the empty string.
+func reasonPhraseOf(status string) string {
+	_, phrase, _ := strings.Cut(status, " ")
+	return phrase
 }
 
 func assertJSONEqual(want any, body []byte) error {
@@ -352,6 +369,58 @@ func assertJSONSubset(want any, body []byte) error {
 		return fmt.Errorf("response is not JSON: %v", err)
 	}
 	return jsonSubset(normalizeYAMLValue(want), got, "$")
+}
+
+// assertJSONContains requires an array in the response to hold at least one
+// element matching the wanted subset.
+//
+// The admin listings are deployment-global and corpus cases share an instance,
+// so "my stub is in the list" is the strongest claim a case can make about one:
+// its index depends on what every other case happened to register, and the size
+// of the list is not the case's to know.
+func assertJSONContains(want JSONContains, body []byte) error {
+	var doc any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return fmt.Errorf("response is not JSON: %v", err)
+	}
+	node, err := jsonLookup(doc, want.Path)
+	if err != nil {
+		return err
+	}
+	items, ok := node.([]any)
+	if !ok {
+		return fmt.Errorf("%s: got %s, want an array", want.Path, compactJSON(node))
+	}
+
+	subset := normalizeYAMLValue(want.Match)
+	for _, item := range items {
+		if jsonSubset(subset, item, "$") == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("none of the %d elements of %s matches %s",
+		len(items), want.Path, compactJSON(subset))
+}
+
+// jsonLookup walks a dotted path into a decoded document.
+func jsonLookup(doc any, path string) (any, error) {
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(path, "$"), ".")
+	if trimmed == "" {
+		return doc, nil
+	}
+	node := doc
+	for _, field := range strings.Split(trimmed, ".") {
+		obj, ok := node.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s: %s is not inside an object", path, field)
+		}
+		next, present := obj[field]
+		if !present {
+			return nil, fmt.Errorf("%s: the response has no %s", path, field)
+		}
+		node = next
+	}
+	return node, nil
 }
 
 func jsonSubset(want, got any, path string) error {
@@ -567,11 +636,36 @@ func seriesValue(line string) (float64, bool) {
 	return v, true
 }
 
+// logProbeWait bounds how long a probe waits for a line to appear.
+//
+// A log line is not part of the response. An access-log line in particular is
+// written *after* the body has gone out, so the step that sent the request has
+// already returned by the time the line reaches the capture goroutine. Reading
+// the buffer once therefore fails on timing rather than on behavior — the
+// classic flaky-by-construction assertion. Waiting for a bounded window turns
+// it back into a statement about the product: the line either appears or it
+// does not.
+const logProbeWait = 3 * time.Second
+
 // logProbe asserts on the instance's captured stdout.
 func (e *Executor) logProbe(inst *Instance, step Step) error {
 	probe := step.LogProbe
-	logs := inst.Logs()
 
+	var err error
+	deadline := time.Now().Add(logProbeWait)
+	for {
+		if err = matchLogs(inst.Logs(), probe); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// matchLogs is one pass over the captured lines.
+func matchLogs(logs []string, probe *LogProbe) error {
 	if probe.Contains != "" {
 		for _, line := range logs {
 			if strings.Contains(line, probe.Contains) {

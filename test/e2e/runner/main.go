@@ -46,6 +46,9 @@ type options struct {
 	// against pinned WireMock and the answers diffed (SPEC §5.6).
 	differential bool
 	wiremockFile string
+	// gotests is the directory of Go-native cases, which cover behavior that is
+	// not observable through an HTTP client.
+	gotests string
 }
 
 func run() error {
@@ -63,6 +66,8 @@ func run() error {
 		"also replay wm:verified cases against pinned WireMock and diff (topology T5)")
 	flag.StringVar(&opt.wiremockFile, "wiremock-version", "test/e2e/WIREMOCK_VERSION",
 		"file naming the pinned WireMock image")
+	flag.StringVar(&opt.gotests, "gotests", "test/e2e/gotests",
+		"directory of Go-native cases for behavior a corpus case cannot express")
 	flag.Parse()
 
 	spec, err := loadSpec(opt.spec)
@@ -104,8 +109,16 @@ func run() error {
 		cases = filterCases(cases, opt.filter)
 	}
 
+	gotests, err := LoadGoTests(opt.gotests)
+	if err != nil {
+		return err
+	}
+
 	if problems := staticGates(catalog, cases); len(problems) > 0 {
 		failures = append(failures, section("static completeness gates failed", problems))
+	}
+	if problems := goTestGates(catalog, gotests); len(problems) > 0 {
+		failures = append(failures, section("go-native case gates failed", problems))
 	}
 
 	var results []*Result
@@ -122,6 +135,15 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		// The Go-native results join the corpus results before any gate runs, so
+		// coverage, failure reporting and the artifact matrix see one suite.
+		if opt.filter == "" {
+			goResults, err := RunGoTests(opt.gotests, binary, gotests)
+			if err != nil {
+				return err
+			}
+			results = append(results, goResults...)
+		}
 		if problems := coverageGates(catalog, results); len(problems) > 0 {
 			failures = append(failures, section("behavior coverage gates failed", problems))
 		}
@@ -133,7 +155,7 @@ func run() error {
 		}
 	}
 
-	summarize(catalog, cases, results, opt.checkOnly)
+	summarize(catalog, cases, gotests, results, opt.checkOnly)
 
 	if len(failures) > 0 {
 		return report(failures)
@@ -376,7 +398,7 @@ func execute(opt options, cases []*Case, binary string) ([]*Result, error) {
 	return results, nil
 }
 
-func summarize(catalog *Catalog, cases []*Case, results []*Result, checkOnly bool) {
+func summarize(catalog *Catalog, cases []*Case, gotests []*GoTest, results []*Result, checkOnly bool) {
 	inScope, exempt := 0, 0
 	for _, b := range catalog.Behaviors {
 		if b.Exempt != "" {
@@ -392,6 +414,9 @@ func summarize(catalog *Catalog, cases []*Case, results []*Result, checkOnly boo
 	fmt.Printf("catalog:          %d behaviors (%d in scope, %d exempt), %d prose contracts\n",
 		len(catalog.Behaviors), inScope, exempt, len(catalog.Prose))
 	fmt.Printf("corpus:           %d cases\n", len(cases))
+	if len(gotests) > 0 {
+		fmt.Printf("go-native:        %d cases\n", len(gotests))
+	}
 
 	if checkOnly {
 		fmt.Println("mode:             check-only (no cases executed)")

@@ -21,6 +21,9 @@ import (
 // renderCaseAssertions flattens a case's steps to text, which is what the
 // evidence-token check searches.
 func renderCaseAssertions(c *Case) string {
+	if c.evidence != "" {
+		return c.evidence
+	}
 	data, err := yaml.Marshal(c.Steps)
 	if err != nil {
 		return ""
