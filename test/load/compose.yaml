@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The local load rig of SPEC §16.2. It approximates the reference rig by
+# holding mockulus to the same 2 vCPU / 512Mi budget the SLOs are stated
+# against, so a local number is comparable with a CI one.
+#
+#   docker compose -f test/load/compose.yaml up --build -d
+#   k6 run test/load/s1.js
+#   docker compose -f test/load/compose.yaml down
+
+name: mockulus-load
+
+services:
+  mockulus:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      # Zero-config start: memory store, journal off, no templating work.
+      MOCKULUS_LOG_LEVEL: warn
+      MOCKULUS_LOG_FORMAT: json
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+    healthcheck:
+      # The image has no shell and no curl by design, so readiness is polled
+      # from outside rather than in-container.
+      disable: true

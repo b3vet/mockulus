@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Defaults are the zero-config start: one replica serving from memory, no
+# Couchbase, nothing to configure. Adding couchbase.connstr turns on
+# persistence and cross-replica sync, and is what makes replicas worth having.
+#
+# For the locked-down posture of SPEC §17, see values-hardened.yaml.
+
+# One replica is the default because the default store is in-memory, and the
+# two go together: stubs registered through the Service must be served by
+# whichever pod handles the next request. Set couchbase.connstr to make the
+# replicas interchangeable, and then raise this. The chart refuses the
+# incoherent combination rather than letting it fail at request time.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/b3vet/mockulus
+  tag: ""          # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  mockPort: 8080
+  adminPort: 9090
+  annotations: {}
+
+# Every key here maps to a MOCKULUS_* environment variable (SPEC §13).
+config:
+  # Mock traffic listener.
+  port: 8080
+  # Admin and operations listener.
+  adminPort: 9090
+  # Serve /__admin on the mock port too. WireMock clients default to this;
+  # turn it off when the mock port is exposed beyond the namespace.
+  adminOnMockPort: true
+  # auto | couchbase | memory | file
+  store: auto
+  # Journal is off by default: always-on journaling at 50k RPS recreates the
+  # collapse mockulus exists to avoid. Turn it on for suites that verify().
+  journalEnabled: false
+  # Near-miss diagnostics in unmatched 404s. Debugging aid, costs CPU.
+  diagnosticsOnUnmatched: false
+  templatingEnabled: wm-compat
+  syncInterval: 1s
+  resyncInterval: 5m
+  ephemeralStubTtl: 24h
+  maxBodyBytes: 10MiB
+  logLevel: info
+  logFormat: json
+  # Any additional MOCKULUS_* settings, as key: value.
+  extraEnv: {}
+
+couchbase:
+  connstr: ""
+  bucket: mockulus
+  scope: _default
+  durability: none
+  manageBucket: true
+  # Credentials come from a Secret. Set existingSecret to bring your own;
+  # otherwise username/password below are used to create one.
+  existingSecret: ""
+  usernameKey: username
+  passwordKey: password
+  username: ""
+  password: ""
+
+# Optional static bearer token for the admin API. Left empty the API is open,
+# which assumes the in-cluster posture described in SECURITY.md.
+adminAuth:
+  token: ""
+  existingSecret: ""
+  tokenKey: token
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "2"
+    memory: 512Mi
+
+# Requires a shared store: see the note on replicaCount.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  # For latency-driven scaling, run Prometheus Adapter over
+  # mockulus_http_request_duration_seconds and use a custom metric instead:
+  #
+  # metrics:
+  #   - type: Pods
+  #     pods:
+  #       metric: {name: mockulus_http_requests_per_second}
+  #       target: {type: AverageValue, averageValue: "15000"}
+  metrics: []
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+networkPolicy:
+  # Expose the mock port broadly and keep the ops port to the namespace and
+  # the monitoring namespace.
+  enabled: false
+  monitoringNamespace: monitoring
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+# A large stub set can take a while to load; the startup probe covers it so a
+# slow first load is not mistaken for a crash loop.
+probes:
+  startup:
+    periodSeconds: 5
+    failureThreshold: 12
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    failureThreshold: 3
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+topologySpreadConstraints:
+  enabled: true
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+podAnnotations: {}
+podLabels: {}
+
+# Seconds to keep serving after SIGTERM so endpoint removal can propagate.
+# Pairs with the shutdown_drain setting inside mockulus.
+preStopSleepSeconds: 3
+terminationGracePeriodSeconds: 30

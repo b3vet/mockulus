@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The hardened preset of SPEC §17. Use it when the mock port is reachable from
+# outside the namespace, which is exactly when the default open admin API stops
+# being an acceptable posture.
+#
+#   helm install mockulus deploy/chart \
+#     -f deploy/chart/values-hardened.yaml \
+#     --set adminAuth.existingSecret=mockulus-admin-token
+#
+# What it changes:
+#   - the admin API is removed from the mock port, so an exposed mock port
+#     cannot be used to rewrite what every replica serves
+#   - the admin API requires a bearer token
+#   - a NetworkPolicy keeps the ops port (admin, metrics, pprof) inside the
+#     namespace and the monitoring namespace
+#
+# Supply the token through adminAuth.existingSecret rather than adminAuth.token
+# so it never lands in a values file or a release history.
+
+config:
+  adminOnMockPort: false
+
+adminAuth:
+  existingSecret: ""   # set this; the release fails closed without a token
+  tokenKey: token
+
+networkPolicy:
+  enabled: true
+  monitoringNamespace: monitoring
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]

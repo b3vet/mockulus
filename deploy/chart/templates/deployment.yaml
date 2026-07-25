@@ -1,0 +1,160 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- include "mockulus.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mockulus.fullname" . }}
+  labels:
+    {{- include "mockulus.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mockulus.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mockulus.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: mockulus
+          image: {{ include "mockulus.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: mock
+              containerPort: {{ .Values.config.port }}
+              protocol: TCP
+            - name: admin
+              containerPort: {{ .Values.config.adminPort }}
+              protocol: TCP
+          env:
+            - name: MOCKULUS_PORT
+              value: {{ .Values.config.port | quote }}
+            - name: MOCKULUS_ADMIN_PORT
+              value: {{ .Values.config.adminPort | quote }}
+            - name: MOCKULUS_ADMIN_ON_MOCK_PORT
+              value: {{ .Values.config.adminOnMockPort | quote }}
+            - name: MOCKULUS_STORE
+              value: {{ .Values.config.store | quote }}
+            - name: MOCKULUS_JOURNAL_ENABLED
+              value: {{ .Values.config.journalEnabled | quote }}
+            - name: MOCKULUS_DIAGNOSTICS_ON_UNMATCHED
+              value: {{ .Values.config.diagnosticsOnUnmatched | quote }}
+            - name: MOCKULUS_TEMPLATING_ENABLED
+              value: {{ .Values.config.templatingEnabled | quote }}
+            - name: MOCKULUS_SYNC_INTERVAL
+              value: {{ .Values.config.syncInterval | quote }}
+            - name: MOCKULUS_RESYNC_INTERVAL
+              value: {{ .Values.config.resyncInterval | quote }}
+            - name: MOCKULUS_EPHEMERAL_STUB_TTL
+              value: {{ .Values.config.ephemeralStubTtl | quote }}
+            - name: MOCKULUS_MAX_BODY_BYTES
+              value: {{ .Values.config.maxBodyBytes | quote }}
+            - name: MOCKULUS_LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: MOCKULUS_LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
+            {{- if .Values.couchbase.connstr }}
+            - name: MOCKULUS_COUCHBASE_CONNSTR
+              value: {{ .Values.couchbase.connstr | quote }}
+            - name: MOCKULUS_COUCHBASE_BUCKET
+              value: {{ .Values.couchbase.bucket | quote }}
+            - name: MOCKULUS_COUCHBASE_SCOPE
+              value: {{ .Values.couchbase.scope | quote }}
+            - name: MOCKULUS_COUCHBASE_DURABILITY
+              value: {{ .Values.couchbase.durability | quote }}
+            - name: MOCKULUS_COUCHBASE_MANAGE_BUCKET
+              value: {{ .Values.couchbase.manageBucket | quote }}
+            - name: MOCKULUS_COUCHBASE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mockulus.couchbaseSecret" . }}
+                  key: {{ .Values.couchbase.usernameKey }}
+            - name: MOCKULUS_COUCHBASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mockulus.couchbaseSecret" . }}
+                  key: {{ .Values.couchbase.passwordKey }}
+            {{- end }}
+            {{- if or .Values.adminAuth.token .Values.adminAuth.existingSecret }}
+            - name: MOCKULUS_ADMIN_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mockulus.adminAuthSecret" . }}
+                  key: {{ .Values.adminAuth.tokenKey }}
+            {{- end }}
+            {{- range $key, $value := .Values.config.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          # Liveness never depends on Couchbase: an outage there must not
+          # restart pods, because the loaded snapshot is still servable.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          # Covers a slow first load of a large stub set.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              # Closes the window where the kubelet has begun termination but
+              # endpoint removal has not yet reached every proxy.
+              sleep:
+                seconds: {{ .Values.preStopSleepSeconds }}
+      {{- if .Values.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew }}
+          topologyKey: {{ .Values.topologySpreadConstraints.topologyKey }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "mockulus.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

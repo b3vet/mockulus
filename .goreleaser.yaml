@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Static binaries for the release artifacts of SPEC §22.5. Images, the Helm
+# chart, the SBOM and signing are handled by the release workflow; this covers
+# the binaries and the changelog.
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mockulus
+    main: ./cmd/mockulus
+    binary: mockulus
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: mockulus
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - THIRD_PARTY_LICENSES
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# Keep-a-Changelog form is maintained by hand in CHANGELOG.md; this grouping is
+# the generated supplement in the GitHub release body.
+changelog:
+  sort: asc
+  groups:
+    - title: Compatibility
+      regexp: '(?i)compat|wiremock'
+      order: 0
+    - title: Features
+      regexp: '(?i)^add|^implement|^support'
+      order: 1
+    - title: Fixes
+      regexp: '(?i)^fix|^correct'
+      order: 2
+    - title: Performance
+      regexp: '(?i)perf|latency|throughput|alloc'
+      order: 3
+    - title: Other
+      order: 99
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  prerelease: auto
+  footer: |
+    ---
+    Mockulus is not affiliated with, endorsed by, or sponsored by the WireMock
+    project or WireMock Inc. The WireMock name is used solely to describe API
+    compatibility.
