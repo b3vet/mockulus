@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: Apache-2.0
+
+// Package server owns mockulus' two listeners, the routing between them, and
+// the startup and shutdown sequences of SPEC §4.4 and §4.5.
+//
+// The mock listener carries all stub traffic and — unless `admin_on_mock_port`
+// is turned off — also the admin API, because WireMock clients default to
+// same-port `/__admin` (SPEC D10). The admin listener additionally carries the
+// operational surface: health, readiness, metrics and pprof, none of which are
+// ever exposed on the mock port.
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/pprof"
+	"strconv"
+	"sync/atomic"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/b3vet/mockulus/internal/config"
+	"github.com/b3vet/mockulus/internal/metrics"
+)
+
+// adminPrefix is the path prefix the WireMock admin API lives under.
+const adminPrefix = "/__admin"
+
+// Options carries everything a Server needs; every handler is supplied by the
+// caller so this package stays transport-only.
+type Options struct {
+	Config  config.Config
+	Logger  *slog.Logger
+	Metrics *metrics.Metrics
+
+	// Mock handles stub traffic on the mock port.
+	Mock http.Handler
+	// Admin handles /__admin/** on both ports.
+	Admin http.Handler
+}
+
+// Server runs the mock and admin listeners.
+type Server struct {
+	cfg     config.Config
+	log     *slog.Logger
+	metrics *metrics.Metrics
+
+	mock  *http.Server
+	admin *http.Server
+
+	ready atomic.Bool
+
+	mockLn  net.Listener
+	adminLn net.Listener
+}
+
+// New wires the listeners and their routing. It binds nothing; call Start.
+func New(opts Options) *Server {
+	s := &Server{
+		cfg:     opts.Config,
+		log:     opts.Logger,
+		metrics: opts.Metrics,
+	}
+
+	s.mock = &http.Server{
+		Handler:           s.mockRouter(opts.Mock, opts.Admin),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       75 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+		// No WriteTimeout on the mock port: stub delays are legitimate, and the
+		// per-response deadline is applied by the renderer (SPEC §12.1).
+		ErrorLog: slog.NewLogLogger(opts.Logger.With("listener", "mock").Handler(), slog.LevelDebug),
+	}
+
+	s.admin = &http.Server{
+		Handler:           s.adminRouter(opts.Admin),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       75 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+		WriteTimeout:      60 * time.Second,
+		ErrorLog:          slog.NewLogLogger(opts.Logger.With("listener", "admin").Handler(), slog.LevelDebug),
+	}
+	return s
+}
+
+// mockRouter is the mock port's single catch-all handler. It does one prefix
+// comparison before dispatching, with no router framework on the hot path
+// (SPEC §12.2).
+func (s *Server) mockRouter(mock, admin http.Handler) http.Handler {
+	if !s.cfg.AdminOnMockPort {
+		return mock
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(r.URL.Path) >= len(adminPrefix) && r.URL.Path[:len(adminPrefix)] == adminPrefix {
+			admin.ServeHTTP(w, r)
+			return
+		}
+		mock.ServeHTTP(w, r)
+	})
+}
+
+// adminRouter serves the admin API alongside the operational endpoints. Go
+// 1.22 ServeMux pattern routing is used here; this is not the hot path.
+func (s *Server) adminRouter(admin http.Handler) http.Handler {
+	mux := http.NewServeMux()
+
+	mux.Handle(adminPrefix, admin)
+	mux.Handle(adminPrefix+"/", admin)
+
+	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
+
+	if s.cfg.MetricsEnabled {
+		mux.Handle("GET /metrics", promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{
+			ErrorLog: slog.NewLogLogger(s.log.With("component", "metrics").Handler(), slog.LevelWarn),
+		}))
+	}
+
+	// pprof lives on the admin port only, never on the mock port (SPEC §14.3).
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+
+	return recoverMiddleware(s.log, mux)
+}
+
+// handleHealthz reports process liveness. It never consults the store: a
+// Couchbase outage must not restart pods (SPEC §15.2).
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok\n"))
+}
+
+// handleReadyz reports whether this pod can serve mock traffic: it stays 200
+// through a store outage, because the loaded snapshot is still servable
+// (SPEC §4.6, §15.2).
+func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if !s.ready.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("not ready\n"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ready\n"))
+}
+
+// SetReady flips readiness. Startup calls it once the first snapshot is loaded;
+// shutdown clears it before draining (SPEC §4.4, §4.5).
+func (s *Server) SetReady(ready bool) { s.ready.Store(ready) }
+
+// Ready reports the current readiness state.
+func (s *Server) Ready() bool { return s.ready.Load() }
+
+// StartAdmin binds and serves the admin listener. It is called before the store
+// connects so that health and readiness are observable during a slow boot
+// (SPEC §4.4 step 2).
+func (s *Server) StartAdmin() error {
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(s.cfg.AdminPort))
+	if err != nil {
+		return fmt.Errorf("bind admin port %d: %w", s.cfg.AdminPort, err)
+	}
+	s.adminLn = ln
+	go s.serve(s.admin, ln, "admin")
+	return nil
+}
+
+// StartMock binds and serves the mock listener.
+func (s *Server) StartMock() error {
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(s.cfg.Port))
+	if err != nil {
+		return fmt.Errorf("bind mock port %d: %w", s.cfg.Port, err)
+	}
+	s.mockLn = ln
+	go func() {
+		if s.cfg.TLSEnabled() {
+			s.serveTLS(s.mock, ln)
+			return
+		}
+		s.serve(s.mock, ln, "mock")
+	}()
+	return nil
+}
+
+func (s *Server) serve(srv *http.Server, ln net.Listener, name string) {
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		s.log.Error("listener stopped", "listener", name, "error", err)
+	}
+}
+
+func (s *Server) serveTLS(srv *http.Server, ln net.Listener) {
+	err := srv.ServeTLS(ln, s.cfg.TLSCertFile, s.cfg.TLSKeyFile)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		s.log.Error("listener stopped", "listener", "mock", "error", err)
+	}
+}
+
+// MockAddr reports the address the mock listener bound to, which lets tests and
+// the E2E harness run on port 0.
+func (s *Server) MockAddr() string { return addrOf(s.mockLn) }
+
+// AdminAddr reports the address the admin listener bound to.
+func (s *Server) AdminAddr() string { return addrOf(s.adminLn) }
+
+func addrOf(ln net.Listener) string {
+	if ln == nil {
+		return ""
+	}
+	return ln.Addr().String()
+}
+
+// Shutdown performs the drain sequence of SPEC §4.5: readiness is dropped
+// first, the drain window lets endpoint removal propagate through Kubernetes,
+// and only then are the listeners closed.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.SetReady(false)
+
+	if drain := s.cfg.ShutdownDrain.D(); drain > 0 {
+		s.log.Info("draining", "duration", drain.String())
+		timer := time.NewTimer(drain)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.ShutdownTimeout.D())
+	defer cancel()
+
+	var errs []error
+	if err := s.mock.Shutdown(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("mock listener: %w", err))
+	}
+	if err := s.admin.Shutdown(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("admin listener: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+// recoverMiddleware turns a panic in an admin handler into a 500 rather than
+// taking the process down with it.
+func recoverMiddleware(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				log.Error("panic serving admin request", "path", r.URL.Path, "panic", v)
+				http.Error(w, `{"errors":[{"code":10,"title":"Internal error"}]}`, http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
