@@ -15,10 +15,19 @@ import (
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
-// UnmatchedBody is the plain-text body returned when no stub matched. Its exact
-// wording is pending differential verification (SPEC §5.4); the corpus pins it
-// the moment topology T5 resolves it.
-const UnmatchedBody = "Request was not matched\n"
+// The unmatched-request bodies mirror WireMock's shape and Content-Type, with
+// one deliberate change: mockulus names itself rather than claiming to be
+// WireMock in its own diagnostics. Diagnostic text sits outside the strict
+// compatibility surface (SPEC §5.4, §6.8, deviation #18).
+const (
+	// UnmatchedNoStubsBody is returned when the instance holds no stubs at all,
+	// which is nearly always a misconfiguration worth saying out loud.
+	UnmatchedNoStubsBody = "No response could be served as there are no stub mappings in this mockulus instance."
+	// UnmatchedBody is returned when stubs exist but none matched. WireMock
+	// renders a near-miss diff here; mockulus does not compute near misses on
+	// the request path unless diagnostics_on_unmatched is set (deviation #2).
+	UnmatchedBody = "Request was not matched"
+)
 
 // Engine serves mock traffic from the current snapshot. It holds that snapshot
 // in an atomic pointer, so a request reads it with one load and no lock, and a
@@ -85,7 +94,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if cs != nil {
 		status = response.Write(w, r, &cs.Response, e.cfg.WriteSlack.D())
 	} else {
-		writeUnmatched(w)
+		writeUnmatched(w, snap.Len() == 0)
 	}
 
 	e.observe(cs != nil, status, candidates, time.Since(start))
@@ -119,11 +128,15 @@ func (e *Engine) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool)
 	return body, true
 }
 
-func writeUnmatched(w http.ResponseWriter) {
+func writeUnmatched(w http.ResponseWriter, noStubs bool) {
 	// The charset spelling has no space after the semicolon, matching the
 	// pinned WireMock byte for byte.
 	w.Header().Set("Content-Type", "text/plain;charset=UTF-8")
 	w.WriteHeader(http.StatusNotFound)
+	if noStubs {
+		_, _ = w.Write([]byte(UnmatchedNoStubsBody))
+		return
+	}
 	_, _ = w.Write([]byte(UnmatchedBody))
 }
 

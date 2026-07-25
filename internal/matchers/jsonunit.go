@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package matchers
+
+import (
+	"fmt"
+	"strings"
+)
+
+// json-unit placeholders let an expected document say "any string here" rather
+// than a literal value. WireMock interprets them inside equalToJson by default,
+// with no opt-in flag — verified against the pinned version.
+//
+// They are resolved at compile time: the expected document is walked once and
+// every placeholder string is replaced by a node that knows how to match. The
+// comparison then costs the same as a literal one, and an unparseable
+// placeholder is a registration error rather than a stub that quietly matches
+// nothing.
+
+// Placeholder prefixes recognised inside an expected document.
+const (
+	placeholderIgnore        = "${json-unit.ignore}"
+	placeholderIgnoreElement = "${json-unit.ignore-element}"
+	placeholderAnyString     = "${json-unit.any-string}"
+	placeholderAnyNumber     = "${json-unit.any-number}"
+	placeholderAnyBoolean    = "${json-unit.any-boolean}"
+	placeholderRegexPrefix   = "${json-unit.regex}"
+	// placeholderPrefix identifies any json-unit placeholder, including ones
+	// this build does not implement.
+	placeholderPrefix = "${json-unit."
+)
+
+// placeholderKind selects what a resolved placeholder accepts.
+type placeholderKind uint8
+
+const (
+	// phAny accepts any value at all, of any type.
+	phAny placeholderKind = iota
+	// phAnyString accepts any JSON string.
+	phAnyString
+	// phAnyNumber accepts any JSON number.
+	phAnyNumber
+	// phAnyBoolean accepts any JSON boolean.
+	phAnyBoolean
+	// phRegex accepts a string fully matching a pattern.
+	phRegex
+)
+
+// jsonPlaceholder is a compiled placeholder standing in for an expected value.
+type jsonPlaceholder struct {
+	kind    placeholderKind
+	pattern PatternMatcher
+	// source is the placeholder as written, for diagnostics.
+	source string
+}
+
+// matches reports whether an actual JSON value satisfies the placeholder.
+func (p *jsonPlaceholder) matches(actual any) bool {
+	switch p.kind {
+	case phAny:
+		return true
+	case phAnyString:
+		_, ok := actual.(string)
+		return ok
+	case phAnyNumber:
+		_, ok := actual.(float64)
+		return ok
+	case phAnyBoolean:
+		_, ok := actual.(bool)
+		return ok
+	case phRegex:
+		s, ok := actual.(string)
+		return ok && p.pattern.MatchString(s)
+	default:
+		return false
+	}
+}
+
+func (p *jsonPlaceholder) describe() string { return p.source }
+
+// HasPlaceholder reports whether a value written into an expected document is a
+// json-unit placeholder.
+func hasPlaceholder(s string) bool { return strings.HasPrefix(s, placeholderPrefix) }
+
+// resolvePlaceholders walks an expected document and replaces every placeholder
+// string with a compiled placeholder node. It returns the rewritten document,
+// whether anything was replaced, and any problem found.
+//
+// compileRegex may be nil, in which case a regex placeholder is a problem
+// rather than being silently downgraded to a literal comparison.
+func resolvePlaceholders(expected any, compileRegex RegexCompiler, pointer string) (any, bool, []Problem) {
+	switch v := expected.(type) {
+	case string:
+		if !hasPlaceholder(v) {
+			return v, false, nil
+		}
+		ph, err := compilePlaceholder(v, compileRegex)
+		if err != nil {
+			return nil, false, []Problem{{Pointer: pointer, Detail: err.Error()}}
+		}
+		return ph, true, nil
+
+	case map[string]any:
+		found := false
+		var problems []Problem
+		out := make(map[string]any, len(v))
+		for key, child := range v {
+			resolved, childFound, probs := resolvePlaceholders(child, compileRegex, pointer)
+			problems = append(problems, probs...)
+			found = found || childFound
+			out[key] = resolved
+		}
+		return out, found, problems
+
+	case []any:
+		found := false
+		var problems []Problem
+		out := make([]any, len(v))
+		for i, child := range v {
+			resolved, childFound, probs := resolvePlaceholders(child, compileRegex, pointer)
+			problems = append(problems, probs...)
+			found = found || childFound
+			out[i] = resolved
+		}
+		return out, found, problems
+
+	default:
+		return expected, false, nil
+	}
+}
+
+// compilePlaceholder turns a placeholder string into a matcher node.
+func compilePlaceholder(s string, compileRegex RegexCompiler) (*jsonPlaceholder, error) {
+	switch s {
+	case placeholderIgnore, placeholderIgnoreElement:
+		return &jsonPlaceholder{kind: phAny, source: s}, nil
+	case placeholderAnyString:
+		return &jsonPlaceholder{kind: phAnyString, source: s}, nil
+	case placeholderAnyNumber:
+		return &jsonPlaceholder{kind: phAnyNumber, source: s}, nil
+	case placeholderAnyBoolean:
+		return &jsonPlaceholder{kind: phAnyBoolean, source: s}, nil
+	}
+
+	if pattern, found := strings.CutPrefix(s, placeholderRegexPrefix); found {
+		if compileRegex == nil {
+			return nil, fmt.Errorf("no regex engine is configured for %s", placeholderRegexPrefix)
+		}
+		// json-unit applies the pattern as a full match, verified against the
+		// pinned WireMock: [a-z]+ accepts "abc" and rejects "abc1".
+		compiled, err := compileRegex(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("the pattern in %q does not compile: %w", s, err)
+		}
+		return &jsonPlaceholder{kind: phRegex, pattern: compiled, source: s}, nil
+	}
+
+	// An unrecognised placeholder is refused rather than compared literally:
+	// comparing it as text would mean the stub silently never matches, which is
+	// the failure mode the whole fail-loud contract exists to prevent.
+	return nil, fmt.Errorf("unknown json-unit placeholder %q", s)
+}
