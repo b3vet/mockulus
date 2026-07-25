@@ -33,6 +33,7 @@ type Builder struct {
 	log      *slog.Logger
 	metrics  *metrics.Metrics
 	stubOpts stub.Options
+	cache    *compileCache
 
 	mu sync.Mutex
 	// dirty records that a change arrived while a rebuild was already running,
@@ -45,7 +46,14 @@ type Builder struct {
 // rebuilds alike — uses exactly the same one.
 func NewBuilder(st store.StubStore, engine *Engine, log *slog.Logger,
 	m *metrics.Metrics, stubOpts stub.Options) *Builder {
-	return &Builder{store: st, engine: engine, log: log, metrics: m, stubOpts: stubOpts}
+	return &Builder{
+		store:    st,
+		engine:   engine,
+		log:      log,
+		metrics:  m,
+		stubOpts: stubOpts,
+		cache:    newCompileCache(),
+	}
 }
 
 // Rebuild reloads every document from the store, compiles them and swaps the
@@ -92,25 +100,82 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 	}
 
 	compiled := make([]*stub.CompiledStub, 0, len(stored))
+	live := make(map[string]bool, len(stored))
+
 	for _, doc := range stored {
-		cs, reason := b.compile(doc)
+		live[doc.ID] = true
+		cs, reason := b.compile(doc, byName)
 		if cs == nil {
 			b.metrics.SnapshotQuarantined.WithLabelValues(reason).Inc()
 			continue
 		}
-		resolveBodyFile(cs, byName, b.log)
 		compiled = append(compiled, cs)
 	}
+
+	// A deleted stub must not keep its compiled form — and its inlined response
+	// body — alive in the cache.
+	b.cache.retain(live)
 
 	b.engine.Swap(BuildSnapshot(compiled, epoch))
 
 	took := time.Since(start)
+	hits, misses := b.cache.stats()
 	b.metrics.SnapshotReloads.WithLabelValues(trigger).Inc()
 	b.metrics.SnapshotReloadDuration.Observe(took.Seconds())
 	b.log.Debug("snapshot rebuilt",
 		"trigger", trigger, "epoch", epoch, "stubs", len(compiled),
-		"quarantined", len(stored)-len(compiled), "took", took.String())
+		"quarantined", len(stored)-len(compiled),
+		"recompiled", misses, "reused", hits, "took", took.String())
 	return nil
+}
+
+// compile turns one stored document into a compiled stub, or reports why it was
+// quarantined. An unchanged document reuses its previous compilation.
+func (b *Builder) compile(doc store.StoredStub, files map[string][]byte) (*stub.CompiledStub, string) {
+	if doc.SchemaVersion > store.SchemaVersion {
+		b.log.Warn("stub quarantined: document schema is newer than this build",
+			"id", doc.ID, "schemaVersion", doc.SchemaVersion)
+		return nil, quarantineSchema
+	}
+	if len(doc.Mapping) == 0 || !json.Valid(doc.Mapping) {
+		b.log.Warn("stub quarantined: mapping is not valid JSON", "id", doc.ID)
+		return nil, quarantineDecode
+	}
+
+	if cached, ok := b.cache.get(doc.ID, doc.Mapping); ok {
+		// The compiled form is reused pointer and all, but the body file may
+		// have appeared or vanished since, so that reference is re-resolved.
+		// Copying first keeps the cached stub immutable, which matters because
+		// an older snapshot may still be serving from it.
+		if cached.Response.BodyFileName != "" {
+			refreshed := *cached
+			resolveBodyFile(&refreshed, files, b.log)
+			return &refreshed, ""
+		}
+		return cached, ""
+	}
+
+	cs, errs := stub.Compile(doc.Mapping, doc.Seq, b.stubOpts)
+	if errs != nil {
+		b.log.Warn("stub quarantined: mapping does not compile",
+			"id", doc.ID, "problems", len(errs.Errors()))
+		return nil, quarantineStub
+	}
+	if cs.ID == "" {
+		cs.ID = doc.ID
+	}
+	cs.Persistent = doc.Persistent
+
+	// Cached before the body file is resolved, so the cached form stays the
+	// pure compilation of the document and file changes are picked up above.
+	b.cache.put(doc.ID, doc.Mapping, cs)
+
+	if cs.Response.BodyFileName != "" {
+		resolved := *cs
+		resolveBodyFile(&resolved, files, b.log)
+		return &resolved, ""
+	}
+	return cs, ""
 }
 
 // resolveBodyFile inlines a file-backed response body into the snapshot, so the
@@ -136,28 +201,6 @@ func resolveBodyFile(cs *stub.CompiledStub, files map[string][]byte, log *slog.L
 	cs.Response.Body = data
 }
 
-// compile turns one stored document into a compiled stub, or reports why it was
-// quarantined.
-func (b *Builder) compile(doc store.StoredStub) (*stub.CompiledStub, string) {
-	if doc.SchemaVersion > store.SchemaVersion {
-		b.log.Warn("stub quarantined: document schema is newer than this build",
-			"id", doc.ID, "schemaVersion", doc.SchemaVersion)
-		return nil, quarantineSchema
-	}
-	if len(doc.Mapping) == 0 || !json.Valid(doc.Mapping) {
-		b.log.Warn("stub quarantined: mapping is not valid JSON", "id", doc.ID)
-		return nil, quarantineDecode
-	}
-
-	cs, errs := stub.Compile(doc.Mapping, doc.Seq, b.stubOpts)
-	if errs != nil {
-		b.log.Warn("stub quarantined: mapping does not compile",
-			"id", doc.ID, "problems", len(errs.Errors()))
-		return nil, quarantineStub
-	}
-	if cs.ID == "" {
-		cs.ID = doc.ID
-	}
-	cs.Persistent = doc.Persistent
-	return cs, ""
-}
+// CacheSize reports how many compiled stubs are held for reuse, which is what
+// makes the cache's effect observable rather than assumed.
+func (b *Builder) CacheSize() int { return b.cache.size() }

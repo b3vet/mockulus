@@ -85,7 +85,13 @@ func (h *Handler) createMapping(w http.ResponseWriter, r *http.Request) {
 		h.storeError(w, "bump_epoch", err)
 		return
 	}
-	h.rebuild(r, "created stub")
+
+	// Splice rather than reload: the stub is already compiled and its position
+	// follows from priority and sequence, so this pod serves it before the
+	// write returns without a store round trip (SPEC §4.3 step 5).
+	compiled.ID = id
+	compiled.Seq = seq
+	h.builder.SpliceStub(compiled)
 
 	h.log.Info("stub registered", "id", id, "name", compiled.Name, "seq", seq)
 	wmcompat.WriteJSON(w, http.StatusCreated, json.RawMessage(doc))
@@ -165,7 +171,7 @@ func (h *Handler) deleteMapping(w http.ResponseWriter, r *http.Request) {
 		h.storeError(w, "bump_epoch", err)
 		return
 	}
-	h.rebuild(r, "deleted stub")
+	h.builder.SpliceDelete(id)
 
 	h.log.Info("stub deleted", "id", id)
 	wmcompat.WriteJSON(w, http.StatusOK, struct{}{})

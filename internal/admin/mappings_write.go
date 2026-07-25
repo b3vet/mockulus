@@ -82,7 +82,9 @@ func (h *Handler) updateMapping(w http.ResponseWriter, r *http.Request) {
 		h.storeError(w, "bump_epoch", err)
 		return
 	}
-	h.rebuild(r, "updated stub")
+	compiled.ID = id
+	compiled.Seq = existing.Seq
+	h.builder.SpliceStub(compiled)
 
 	h.log.Info("stub updated", "id", id, "seq", existing.Seq)
 	wmcompat.WriteJSON(w, http.StatusOK, json.RawMessage(doc))
