@@ -10,6 +10,7 @@ package metrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"time"
 )
 
 // Trigger values for the snapshot reload counter (SPEC §8).
@@ -195,3 +196,13 @@ func New(version, goVersion string, enabled bool) *Metrics {
 
 // Registry exposes the registry backing the /metrics endpoint.
 func (m *Metrics) Registry() *prometheus.Registry { return m.registry }
+
+// ObserveStoreOperation records one store call's duration and whether it
+// failed. It is the store package's Recorder, kept here so that package depends
+// on a one-method interface rather than on the whole registry.
+func (m *Metrics) ObserveStoreOperation(op string, d time.Duration, err error) {
+	m.StoreOperationDuration.WithLabelValues(op).Observe(d.Seconds())
+	if err != nil {
+		m.StoreErrors.WithLabelValues(op).Inc()
+	}
+}

@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+id: store-couchbase-durability-001
+behaviors: [B-CFG-COUCHBASE-DURABILITY]
+requires: [couchbase]
+config: cb-majority
+# n/a: WireMock stores nothing to be durable about. The contract is SPEC §7.2.
+wm: n/a
+steps:
+  # The default is `none`, which is the right trade for a mock server used as
+  # test scaffolding. This deployment is the other kind: teams that treat mocks
+  # as long-lived environment configuration ask for `majority` and pay the
+  # replication round trip on every admin write to get it.
+  - logprobe: {contains: "couchbase.durability=majority"}
+
+  # A durability level is a condition attached to the mutation rather than a
+  # field in the answer, so on a cluster that can satisfy it there is nothing to
+  # see: the write returns 201 either way. This lane cannot satisfy it — T2 is a
+  # single node and the bucket is configured with a replica that has nowhere to
+  # live — and that is what makes the level observable at all. The server
+  # refuses the write outright, which no write at `none` does, so the failure
+  # here is the level having been requested.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"2e000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/store-couchbase-durability-001/settlement"},
+         "response":{"status":200,"body":"never replicated"}}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  # Named, not inferred. A 503 from the admin write path is the §4.6 answer to
+  # any store that could not take a write, so without the reason in the log an
+  # operator could not tell "your cluster cannot do majority" from "your cluster
+  # is down" — and the two have opposite fixes.
+  - logprobe: {contains: "durability impossible"}
+
+  # The write was not applied, on either side. A mutation the store refused must
+  # not be spliced into the serving snapshot: a stub that matched traffic on the
+  # pod that took the request while being absent from the store — and from every
+  # other pod — is the split-brain the 503 exists to prevent.
+  - admin: {method: GET, path: /__admin/mappings/2e000001-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/store-couchbase-durability-001/settlement}
+    expect: {status: 404}

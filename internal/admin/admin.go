@@ -134,6 +134,10 @@ func New(opts Options) *Handler {
 	mux.HandleFunc("POST /__admin/scenarios/reset", h.resetScenarios)
 	mux.HandleFunc("PUT /__admin/scenarios/{name}/state", h.setScenarioState)
 
+	// Global settings: the deployment-wide response delay (SPEC §5.1).
+	mux.HandleFunc("GET /__admin/settings", h.getSettings)
+	mux.HandleFunc("POST /__admin/settings", h.putSettings)
+
 	mux.HandleFunc("GET /__admin/health", h.health)
 	mux.HandleFunc("GET /__admin/version", h.versionInfo)
 

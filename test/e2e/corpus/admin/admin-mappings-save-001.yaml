@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-mappings-save-001
+behaviors:
+  - B-ADMIN-MAPPINGS-SAVE-POST
+  # The endpoint and the deviation are the same observation from two sides: what
+  # save does here is set a flag, and the absence of any file it could have
+  # written is why there is a deviation to record at all.
+  - B-DEV-DEVIATION-4
+# Save marks every mapping in the deployment persistent, which would quietly
+# make every other case's fixtures durable. It owns the instance.
+requires: [exclusive]
+# n/a: what "saved" means is the deviation itself — WireMock writes files to the
+# node's disk, mockulus clears the TTL on documents a whole cluster shares
+# (§5.5 deviation #4). The `persistent: true` the mapping reads back with was
+# re-derived from pinned WireMock 3.13.2, which stamps the same field.
+wm: n/a
+steps:
+  # A known-empty starting point: the claim at the end is deployment-wide, so it
+  # cannot be made on top of whatever ran before.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  # Registered as explicitly ephemeral, which is the state save exists to change.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5a7e0001-0000-4000-8000-000000000001",
+         "persistent": false,
+         "request": {"method": "GET", "urlPath": "/e2e/admin-mappings-save-001/fixture"},
+         "response": {"status": 200, "body": "fixture"}}
+    expect:
+      status: 201
+      body_json_subset: {persistent: false}
+
+  - admin: {method: GET, path: /__admin/mappings/5a7e0001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset: {persistent: false}
+
+  - admin: {method: POST, path: /__admin/mappings/save}
+    expect: {status: 200}
+
+  # The flag is in the mapping the client reads back, not only in an envelope it
+  # cannot see. A stub that behaved durably but reported itself ephemeral would
+  # be un-persisted by the next PUT that echoed what a GET returned.
+  - admin: {method: GET, path: /__admin/mappings/5a7e0001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "5a7e0001-0000-4000-8000-000000000001"
+        persistent: true
+
+  # And in the listing, by identity: the list is deployment-global.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match: {id: "5a7e0001-0000-4000-8000-000000000001", persistent: true}
+
+  # The durability is real and not only cosmetic: reset sweeps ephemeral
+  # mappings, and this one is no longer among them.
+  - admin: {method: POST, path: /__admin/mappings/reset}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-save-001/fixture}
+    expect: {status: 200, body: "fixture"}
+
+  # Saving again is a no-op rather than an error, which is what makes it safe to
+  # put in a suite's setup.
+  - admin: {method: POST, path: /__admin/mappings/save}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/5a7e0001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset: {persistent: true}
+
+  # Cleanup: a persistent stub is exactly the thing reset will not take away, so
+  # leaving it behind would hand it to every exclusive case that follows.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/5a7e0001-0000-4000-8000-000000000001}
+    expect: {status: 404}

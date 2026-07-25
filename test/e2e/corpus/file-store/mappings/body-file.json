@@ -1,0 +1,37 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/config-file-store-body-file-002/greeting"
+      },
+      "response": {
+        "status": 200,
+        "bodyFileName": "greeting.json",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/config-file-store-body-file-002/nested"
+      },
+      "response": {
+        "status": 200,
+        "bodyFileName": "nested/deep.txt"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/config-file-store-body-file-002/absent"
+      },
+      "response": {
+        "status": 200,
+        "bodyFileName": "never-shipped.json"
+      }
+    }
+  ]
+}

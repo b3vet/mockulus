@@ -142,7 +142,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	status := http.StatusNotFound
 	if cs != nil {
-		opts := response.Options{WriteSlack: e.cfg.WriteSlack.D()}
+		opts := response.Options{WriteSlack: e.cfg.WriteSlack.D(), Settings: snap.Settings}
 		if cs.Response.Templated && e.renderer != nil {
 			// The context is built only for a stub that actually templates, so
 			// an ordinary stub never pays for assembling the request model.

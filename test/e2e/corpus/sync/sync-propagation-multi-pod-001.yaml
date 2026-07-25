@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: sync-propagation-multi-pod-001
+behaviors:
+  - B-PROSE-SYNC-PROPAGATION
+  # Deviation #11 is the two-speed guarantee these steps separate: the writing
+  # replica is immediate, the others are bounded by sync_interval.
+  - B-DEV-DEVIATION-11
+requires: [couchbase, multi-pod]
+# n/a: there is no single-node WireMock to diff a cluster against. The
+# expectations come from SPEC §8 instead.
+wm: n/a
+steps:
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"3b000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/sync-propagation-multi-pod-001/order"},
+         "response":{"status":200,"body":"registered on pod 0"}}
+    expect: {status: 201}
+
+  # The pod that handled the write serves it with no staleness at all: it
+  # splices the stub into its own snapshot on the write path rather than waiting
+  # for its poller to notice the epoch move (§4.3 step 5, §8). This is a plain
+  # `expect` on purpose — an `expect_eventually` here would pass just as happily
+  # if the writing pod took a whole sync interval, and the `stub → call → verify`
+  # flow that every test written against a mock server does is exactly the thing
+  # that would break.
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/sync-propagation-multi-pod-001/order}
+    expect: {status: 200, body: "registered on pod 0"}
+
+  # The other two replicas converge within the bound. Nothing was registered
+  # against either: they poll the epoch, see it move, and reload (§8). Both are
+  # asserted rather than one, because "some replica caught up" is not what a
+  # client behind the Service depends on — its next request can land anywhere,
+  # and a deployment where two pods in three answer is a flaky suite, not a
+  # working mock. The window is generous because the gate asserts eventual
+  # correctness only; propagation timing belongs to the perf suite (§19.3).
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-propagation-multi-pod-001/order}
+    expect_eventually: {status: 200, body: "registered on pod 0", within: 10s}
+
+  - request: {pod: 2, port: mock, method: GET, path: /e2e/sync-propagation-multi-pod-001/order}
+    expect_eventually: {status: 200, body: "registered on pod 0", within: 10s}
+
+  # What converged is the whole document, not just enough of it to match: pod 2
+  # lists the mapping as it was registered. The listing is the right observable
+  # for that claim because it is rendered from the pod's own snapshot, whereas a
+  # GET by id falls back to the store when the snapshot has no such stub — it
+  # would answer identically from a replica that had converged on nothing.
+  #
+  # By identity, never by position: the listing is deployment-global and holds
+  # every concurrent case's stubs too (§19.3).
+  - admin: {pod: 2, method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match:
+            id: "3b000001-0000-4000-8000-000000000001"
+            response: {status: 200, body: "registered on pod 0"}
+
+  # A delete travels the same road, and the pod that handles it splices the stub
+  # out of its own snapshot exactly as a write splices one in (§4.3 step 5) —
+  # so read-your-writes covers unregistering too, not only registering.
+  - admin: {pod: 1, method: DELETE, path: /__admin/mappings/3b000001-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-propagation-multi-pod-001/order}
+    expect: {status: 404}
+
+  # Convergence is level-triggered on a full reload, so a stub that went away has
+  # to go away everywhere. This is the half people actually get bitten by: a
+  # replica that only ever added what it was told about keeps serving a deleted
+  # stub until something restarts it, and the suite that deleted it goes green
+  # against a mock that is still answering.
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/sync-propagation-multi-pod-001/order}
+    expect_eventually: {status: 404, within: 10s}
+
+  - request: {pod: 2, port: mock, method: GET, path: /e2e/sync-propagation-multi-pod-001/order}
+    expect_eventually: {status: 404, within: 10s}

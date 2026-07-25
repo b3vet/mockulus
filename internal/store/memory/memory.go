@@ -32,9 +32,12 @@ type Store struct {
 	files     map[string][]byte
 	scenarios map[string]scenarioEntry
 	journal   map[string]store.JournalEntry
-	epoch     uint64
-	seq       uint64
-	casSeq    uint64
+	// settings is nil until one is written, which is how the zero-config start
+	// reads back as "nothing configured" rather than as a default (P4).
+	settings *store.StoredSettings
+	epoch    uint64
+	seq      uint64
+	casSeq   uint64
 }
 
 type entry struct {
@@ -162,11 +165,24 @@ func (s *Store) DeleteEphemeralStubs(_ context.Context) error {
 	return nil
 }
 
-// MarkAllPersistent makes every mapping durable and clears its expiry.
+// MarkAllPersistent makes every mapping durable and clears its expiry. The
+// mapping document is rewritten too, so the stub reads back as persistent
+// rather than only behaving that way (SPEC §5.1, deviation #4).
 func (s *Store) MarkAllPersistent(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, e := range s.stubs {
+		if e.stub.Persistent {
+			continue
+		}
+		mapping, err := store.PersistentMapping(e.stub.Mapping)
+		if err != nil {
+			// A document this build cannot read is already quarantined from
+			// serving; failing the whole save for it would let one bad stub
+			// block every good one (SPEC §6.9).
+			continue
+		}
+		e.stub.Mapping = mapping
 		e.stub.Persistent = true
 		e.expiresAt = time.Time{}
 	}
@@ -233,6 +249,24 @@ func (s *Store) BumpEpoch(_ context.Context) (uint64, error) {
 	defer s.mu.Unlock()
 	s.epoch++
 	return s.epoch, nil
+}
+
+// GetSettings reads the global settings document.
+func (s *Store) GetSettings(_ context.Context) (store.StoredSettings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.settings == nil {
+		return store.StoredSettings{}, store.ErrNotFound
+	}
+	return *s.settings, nil
+}
+
+// PutSettings replaces the global settings document.
+func (s *Store) PutSettings(_ context.Context, settings store.StoredSettings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.settings = &settings
+	return nil
 }
 
 // Close releases resources; the in-memory driver holds none.

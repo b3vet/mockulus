@@ -5,6 +5,7 @@ package match
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -94,6 +95,14 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 		return fmt.Errorf("load store state: %w", err)
 	}
 
+	settings, err := b.loadSettings(ctx)
+	if err != nil {
+		b.metrics.SnapshotReloadFailures.Inc()
+		b.log.Error("settings reload failed; keeping previous snapshot",
+			"trigger", trigger, "error", err)
+		return fmt.Errorf("load settings: %w", err)
+	}
+
 	byName := make(map[string][]byte, len(files))
 	for _, f := range files {
 		byName[f.Name] = f.Data
@@ -116,7 +125,12 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 	// body — alive in the cache.
 	b.cache.retain(live)
 
-	b.engine.Swap(BuildSnapshot(compiled, epoch))
+	// Assigned rather than passed to BuildSnapshot: settings take no part in
+	// selection, so they belong to the snapshot without belonging to the ordering
+	// and indexing BuildSnapshot exists to do.
+	snapshot := BuildSnapshot(compiled, epoch)
+	snapshot.Settings = settings
+	b.engine.Swap(snapshot)
 
 	took := time.Since(start)
 	hits, misses := b.cache.stats()
@@ -127,6 +141,45 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 		"quarantined", len(stored)-len(compiled),
 		"recompiled", misses, "reused", hits, "took", took.String())
 	return nil
+}
+
+// loadSettings reads the deployment's global settings and compiles them into
+// the form the serve path uses.
+//
+// It is a second store read on the reload path, and deliberately not folded
+// into LoadAll: settings are one small meta key, and widening the bulk-state
+// call to carry it would put a knob into the interface whose whole shape is
+// "everything that serves traffic". A read failure is reported to the caller,
+// which abandons the rebuild — the same treatment LoadAll's failure gets, and
+// for the same reason: half a snapshot is worse than a stale one (SPEC §4.6).
+func (b *Builder) loadSettings(ctx context.Context) (*stub.Settings, error) {
+	doc, err := b.store.GetSettings(ctx)
+	if errors.Is(err, store.ErrNotFound) {
+		// Nobody has configured anything, which is the normal state (P4).
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if doc.SchemaVersion > store.SchemaVersion {
+		b.log.Warn("settings ignored: the document schema is newer than this build",
+			"schemaVersion", doc.SchemaVersion)
+		return nil, nil
+	}
+
+	compiled, errs := stub.CompileSettings(doc.Settings)
+	if errs != nil {
+		// Quarantined the way a bad mapping is: the admin API already refuses
+		// an invalid settings write, so a stored document that will not compile
+		// came from elsewhere and must not freeze propagation (SPEC §6.9).
+		b.log.Warn("settings ignored: the stored document does not compile",
+			"problems", len(errs.Errors()))
+		return nil, nil
+	}
+	if compiled.IsZero() {
+		return nil, nil
+	}
+	return &compiled, nil
 }
 
 // compile turns one stored document into a compiled stub, or reports why it was

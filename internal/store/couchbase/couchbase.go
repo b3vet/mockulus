@@ -554,6 +554,13 @@ func (s *Store) MarkAllPersistent(ctx context.Context) error {
 		if doc.Persistent {
 			continue
 		}
+		mapping, err := store.PersistentMapping(doc.Mapping)
+		if err != nil {
+			// Undecodable documents are quarantined from serving anyway, and
+			// failing the save for one would block it for every other stub.
+			continue
+		}
+		doc.Mapping = mapping
 		doc.Persistent = true
 		if _, err := s.mappings.Upsert(id, doc, &gocb.UpsertOptions{
 			Context: ctx, Timeout: s.kvTimeout, DurabilityLevel: s.durability,
@@ -644,8 +651,8 @@ func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 	return epoch, nil
 }
 
-// BumpEpoch records that mappings or files changed. Convergence keys off
-// inequality rather than counting steps, so a lost increment costs nothing.
+// BumpEpoch records that mappings, files or settings changed. Convergence keys
+// off inequality rather than counting steps, so a lost increment costs nothing.
 func (s *Store) BumpEpoch(ctx context.Context) (uint64, error) {
 	res, err := s.meta.Binary().Increment(keyEpoch, &gocb.IncrementOptions{
 		Context: ctx, Timeout: s.kvTimeout, Initial: 1, Delta: 1,
@@ -654,6 +661,29 @@ func (s *Store) BumpEpoch(ctx context.Context) (uint64, error) {
 		return 0, wrap(err)
 	}
 	return res.Content(), nil
+}
+
+// GetSettings reads the global settings document.
+func (s *Store) GetSettings(ctx context.Context) (store.StoredSettings, error) {
+	res, err := s.meta.Get(keySettings, &gocb.GetOptions{Context: ctx, Timeout: s.kvTimeout})
+	if err != nil {
+		return store.StoredSettings{}, wrap(err)
+	}
+	var doc store.StoredSettings
+	if err := res.Content(&doc); err != nil {
+		return store.StoredSettings{}, err
+	}
+	return doc, nil
+}
+
+// PutSettings replaces the global settings document. It is written at the
+// configured durability like every other admin write: a settings change every
+// replica is about to converge on must survive the node that accepted it.
+func (s *Store) PutSettings(ctx context.Context, settings store.StoredSettings) error {
+	_, err := s.meta.Upsert(keySettings, settings, &gocb.UpsertOptions{
+		Context: ctx, Timeout: s.kvTimeout, DurabilityLevel: s.durability,
+	})
+	return wrap(err)
 }
 
 // wrap translates SDK errors into the store package's sentinel errors, so

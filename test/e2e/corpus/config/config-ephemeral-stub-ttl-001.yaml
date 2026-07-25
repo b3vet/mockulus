@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-ephemeral-stub-ttl-001
+behaviors:
+  - B-CFG-EPHEMERAL-STUB-TTL
+  - B-CFG-RESYNC-INTERVAL
+  - B-STUB-PERSISTENT
+  # Deviation #3 is the TTL itself — WireMock keeps a non-persistent stub
+  # until the process restarts — and deviation #17 is the staleness bound the
+  # last steps measure: an expiry mutates nothing, so no epoch moves and only
+  # the full resync can drop it.
+  - B-DEV-DEVIATION-3
+  - B-DEV-DEVIATION-17
+# The deployment-wide reset below is what `persistent` is defined against, and
+# the case has to start from a known-empty store to make the survivor claim at
+# all. Both need the instance to itself.
+requires: [couchbase, exclusive]
+# The fast-clock variant is a seconds-scale ephemeral_stub_ttl and resync
+# interval. The production defaults are 24 h and 5 min, so this behavior is not
+# reachable from a case at all without them (SPEC §19.4).
+config: fast-clock
+# n/a: this is deviation #3 — WireMock keeps a non-persistent stub until the
+# process restarts and has no TTL to expire it, so there is no oracle answer to
+# diff against.
+wm: n/a
+steps:
+  # A known-empty starting point: what survives at the end is a claim about the
+  # whole store, not about this case's corner of it.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"2f000001-0000-4000-8000-000000000001",
+         "persistent": true,
+         "request":{"method":"GET","urlPath":"/e2e/config-ephemeral-stub-ttl-001/durable"},
+         "response":{"status":200,"body":"durable"}}
+    expect: {status: 201}
+
+  # No `persistent` flag at all, which is the default and the common case: a
+  # stub some CI job registered and will never come back to clean up.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"2f000001-0000-4000-8000-000000000002",
+         "request":{"method":"GET","urlPath":"/e2e/config-ephemeral-stub-ttl-001/ephemeral"},
+         "response":{"status":200,"body":"ephemeral"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/durable}
+    expect: {status: 200, body: "durable"}
+
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/ephemeral}
+    expect: {status: 200, body: "ephemeral"}
+
+  # The explicit half of the contract: reset is the "start the next test from a
+  # clean slate" button, and the two stubs differ by one field in what it does
+  # to them (§7.4).
+  - admin: {method: POST, path: /__admin/mappings/reset}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/ephemeral}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/durable}
+    expect: {status: 200, body: "durable"}
+
+  # The implicit half, and the reason the TTL exists: nobody has to call reset.
+  # This stub is registered and then simply abandoned, the way a cancelled CI
+  # job abandons one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"2f000001-0000-4000-8000-000000000003",
+         "request":{"method":"GET","urlPath":"/e2e/config-ephemeral-stub-ttl-001/abandoned"},
+         "response":{"status":200,"body":"abandoned"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/abandoned}
+    expect: {status: 200, body: "abandoned"}
+
+  # It stops matching once its TTL passes, with nothing having deleted it.
+  #
+  # This is also the whole of resync_interval: an expiry is not a mutation, so
+  # it bumps no epoch and the poller of §8 has nothing to notice. The only thing
+  # that can take the stub out of the serving snapshot is the unconditional full
+  # reload, which is why the deviation of §7.4 bounds the staleness by
+  # resync_interval rather than by sync_interval. The window is generous because
+  # the gate asserts eventual correctness and never latency (§19.3).
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/abandoned}
+    expect_eventually: {status: 404, within: 30s}
+
+  # And the persistent stub sat through every sweep. `persistent: true` clears
+  # the TTL rather than lengthening it, so a fixture a team marked durable is
+  # the one thing neither reset nor expiry can take away.
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/durable}
+    expect: {status: 200, body: "durable"}
+
+  - admin: {method: GET, path: /__admin/mappings/2f000001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "2f000001-0000-4000-8000-000000000001"
+        persistent: true
+
+  # Cleanup: a persistent stub is exactly what reset will not remove, so leaving
+  # it behind would hand it to every exclusive case that runs after this one.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/config-ephemeral-stub-ttl-001/durable}
+    expect: {status: 404}

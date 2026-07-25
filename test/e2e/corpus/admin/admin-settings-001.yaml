@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-settings-001
+behaviors:
+  - B-ADMIN-SETTINGS-POST-SETTINGS-GET
+# Settings are one document for the whole deployment, so a case that writes them
+# is writing every other case's response delay. It can only run alone.
+requires: [exclusive]
+# n/a: WireMock's settings object carries proxyPassThrough and the extended
+# block alongside the two delay keys, and mockulus refuses those by name rather
+# than accepting knobs it does not implement (§5.1). The delay semantics asserted
+# here were re-derived from pinned WireMock 3.13.2 by probe; it is the envelope
+# that differs, not the behavior.
+wm: n/a
+steps:
+  # Zero-config first: an instance nobody has configured answers with an empty
+  # settings object rather than a 404 or an invented default.
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 200
+      body_json: {settings: {}}
+
+  # Both supported keys, written together and read back as written.
+  - admin:
+      method: POST
+      path: /__admin/settings
+      body: '{"fixedDelay":30,"delayDistribution":{"type":"uniform","lower":5,"upper":20}}'
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 200
+      body_json:
+        settings:
+          fixedDelay: 30
+          delayDistribution: {type: uniform, lower: 5, upper: 20}
+
+  # A stub that asks for no delay of its own inherits the global one. The
+  # assertion is on the response and not on elapsed time — latency belongs to the
+  # perf suite (§19.3) — so what this proves is that the global delay is applied
+  # without breaking the response, which is where a compiled-into-the-snapshot
+  # delay would break it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"5e771465-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/admin-settings-001/global"},
+         "response":{"status":200,"body":"global"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-settings-001/global}
+    expect: {status: 200, body: "global"}
+
+  # A stub with its own delay composes with the global one: within each part the
+  # stub's value replaces the global, and the two parts are summed (§12.4).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"5e771465-0000-4000-8000-000000000002",
+         "request":{"method":"GET","urlPath":"/e2e/admin-settings-001/own"},
+         "response":{"status":200,"body":"own","fixedDelayMilliseconds":10}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-settings-001/own}
+    expect: {status: 200, body: "own"}
+
+  # An unmatched request is never delayed: the global delay decorates a response,
+  # and there is no response to decorate.
+  - request: {port: mock, method: GET, path: /e2e/admin-settings-001/absent}
+    expect: {status: 404}
+
+  # A key mockulus does not implement is refused with the pointer at it, rather
+  # than accepted and then ignored — a global delay that silently did not apply
+  # would be indistinguishable from a mock server that is merely fast.
+  - admin:
+      method: POST
+      path: /__admin/settings
+      body: '{"proxyPassThrough":true}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1005
+            source: {pointer: /proxyPassThrough}
+
+  # And the rejected write changed nothing.
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 200
+      body_json_subset:
+        settings: {fixedDelay: 30}
+
+  # A malformed value is a 422 too, and for the same reason.
+  - admin:
+      method: POST
+      path: /__admin/settings
+      body: '{"fixedDelay":-1}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: /fixedDelay}
+
+  # POST replaces the whole document, so an empty object is how a suite puts the
+  # deployment back the way it found it. This is also the cleanup: a global delay
+  # left behind would be inherited by every case that runs after this one.
+  - admin: {method: POST, path: /__admin/settings, body: '{}'}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 200
+      body_json: {settings: {}}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-settings-001/global}
+    expect: {status: 200, body: "global"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/5e771465-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/5e771465-0000-4000-8000-000000000002}
+    expect: {status: 200}

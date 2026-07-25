@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+id: metrics-store-latency-001
+behaviors: [B-METRIC-STORE-OPERATION-DURATION-SECONDS]
+# The metric only means anything against a real store: the memory driver's
+# operations are map lookups, and a histogram of those measures nothing an
+# operator would act on.
+requires: [couchbase]
+# n/a: mockulus' own operational surface. WireMock has no store to time.
+wm: n/a
+steps:
+  # An admin write is the operation the histogram is for. Store latency is the
+  # thing that turns a healthy-looking pod into a slow one, and it is invisible
+  # from the mock port — the hot path serves from a snapshot and never touches
+  # Couchbase, so a store that has become slow shows up here first and in
+  # nothing else until a write times out (SPEC §14.1).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"5c000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/metrics-store-latency-001/order"},
+         "response":{"status":200,"body":"ordered"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/metrics-store-latency-001/order}
+    expect: {status: 200, body: "ordered"}
+
+  # The series is labelled per operation, so a slow read and a slow write are
+  # distinguishable rather than averaged into one number that says only "the
+  # store is unhappy".
+  - metricsprobe:
+      series: 'mockulus_store_operation_duration_seconds_count{op="put_stub"}'
+      at_least: 1
+
+  # The exposition carries the histogram's own metadata, which is what makes it
+  # usable for a quantile rather than just a mean.
+  - admin: {port: admin, method: GET, path: /metrics}
+    expect:
+      status: 200
+      body_regex: '(?m)^# TYPE mockulus_store_operation_duration_seconds histogram'
+
+  # A successful operation is timed and NOT counted as an error. The two share
+  # one code path, so a decorator that counted every call would make the error
+  # rate track traffic instead of failures — and this is the healthy half of
+  # that pair. The outage case asserts the other half.
+  - metricsprobe:
+      series: 'mockulus_store_errors_total{op="put_stub"}'
+      present: false
+
+  - admin: {method: DELETE, path: /__admin/mappings/5c000001-0000-4000-8000-000000000001}
+    expect: {status: 200}

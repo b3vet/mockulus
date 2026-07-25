@@ -1,0 +1,3 @@
+{
+  "request": {"method": "GET", "urlPath": "/e2e/config-file-store-quarantine-003/broken"},
+  "response": {"status": 200, "body": "unreachable"

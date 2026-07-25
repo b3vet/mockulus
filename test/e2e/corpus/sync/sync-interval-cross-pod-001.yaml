@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+id: sync-interval-cross-pod-001
+behaviors: [B-CFG-SYNC-INTERVAL]
+requires: [couchbase, multi-pod]
+# The default variant is deliberate. `sync_interval` is 1 s here and
+# `resync_interval` is 5 min, so nothing that converges inside the windows below
+# can have come from the unconditional sweep: the epoch poll is the only
+# mechanism left, which is what makes this case about the key it names rather
+# than about convergence in general.
+config: default
+# n/a: there is no cluster in a single WireMock to diff a poll interval against.
+wm: n/a
+steps:
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"3c000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/sync-interval-cross-pod-001/quote"},
+         "response":{"status":200,"body":"first version"}}
+    expect: {status: 201}
+
+  # Pod 1 registered nothing. It reads the epoch counter once per interval, sees
+  # it move, and rebuilds (§8) — so the stub arriving there is the interval
+  # doing its job. The window is many intervals wide because the gate asserts
+  # eventual correctness only; timing belongs to the perf suite (§19.3).
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-interval-cross-pod-001/quote}
+    expect_eventually: {status: 200, body: "first version", within: 10s}
+
+  # An edit converges the same way, and it is the case a delta-based scheme
+  # would be most likely to get wrong: the id is already in pod 2's snapshot, so
+  # "have I seen this stub" is not the question — the reload is level-triggered
+  # and replaces what is there rather than reconciling against it.
+  - admin:
+      pod: 0
+      method: PUT
+      path: /__admin/mappings/3c000001-0000-4000-8000-000000000001
+      body: |
+        {"id":"3c000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/sync-interval-cross-pod-001/quote"},
+         "response":{"status":200,"body":"second version"}}
+    expect: {status: 200}
+
+  - request: {pod: 2, port: mock, method: GET, path: /e2e/sync-interval-cross-pod-001/quote}
+    expect_eventually: {status: 200, body: "second version", within: 10s}
+
+  # Cleanup, and the third shape of change: a stub that went away has to go away
+  # everywhere, or a pod that only ever added what it saw would serve a deleted
+  # stub until it restarted.
+  - admin: {pod: 1, method: DELETE, path: /__admin/mappings/3c000001-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {pod: 2, port: mock, method: GET, path: /e2e/sync-interval-cross-pod-001/quote}
+    expect_eventually: {status: 404, within: 10s}

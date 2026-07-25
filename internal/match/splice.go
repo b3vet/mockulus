@@ -71,7 +71,12 @@ func (b *Builder) SpliceStub(ctx context.Context, cs *stub.CompiledStub) {
 	// The epoch is carried forward unchanged: this pod's snapshot now reflects
 	// a write the counter has already recorded, and claiming the new epoch here
 	// would make the poller skip the reload that reconciles concurrent writes.
-	b.engine.Swap(BuildSnapshot(ordered, current.Epoch))
+	next := BuildSnapshot(ordered, current.Epoch)
+	// Carried forward for the same reason: a stub write says nothing about the
+	// deployment's global delay, and dropping it here would make every
+	// registration silently switch the setting off until the next reload.
+	next.Settings = current.Settings
+	b.engine.Swap(next)
 }
 
 // spliceBodyFile resolves one stub's body file from the store.
@@ -118,5 +123,7 @@ func (b *Builder) SpliceDelete(id string) {
 		// Nothing to do; avoid churning the snapshot pointer for a no-op.
 		return
 	}
-	b.engine.Swap(BuildSnapshot(ordered, current.Epoch))
+	next := BuildSnapshot(ordered, current.Epoch)
+	next.Settings = current.Settings
+	b.engine.Swap(next)
 }

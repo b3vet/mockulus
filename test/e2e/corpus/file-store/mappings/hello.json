@@ -1,0 +1,10 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/e2e/config-file-store-001/hello"
+  },
+  "response": {
+    "status": 200,
+    "body": "served from mappings/hello.json"
+  }
+}

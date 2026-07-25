@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-unknown-setting-001
+behaviors:
+  - B-ERR-1005
+# No `exclusive`: a rejected settings write changes nothing, which is the whole
+# claim being made here. If this case ever needed the instance to itself, the
+# rejection would not be a rejection.
+wm: n/a
+steps:
+  # WireMock's own extended settings are the keys a migrating team is most likely
+  # to send, so they are the ones worth naming in the error rather than dropping.
+  - admin:
+      method: POST
+      path: /__admin/settings
+      body: '{"extended":{"recordRequestHeaders":true}}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1005
+            title: "Unknown setting"
+            source: {pointer: /extended}
+
+  # Every problem in one response, not the first one found: a caller fixes the
+  # document once (Appendix B).
+  - admin:
+      method: POST
+      path: /__admin/settings
+      body: '{"browserProxySettings":{},"snapshotRecord":true}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1005
+            source: {pointer: /browserProxySettings}
+          - code: 1005
+            source: {pointer: /snapshotRecord}
+
+  # That the rejection left the deployment alone is asserted by
+  # admin-settings-001, which owns the instance; reading the global document from
+  # a case running alongside others would be reading whatever they had done to it.

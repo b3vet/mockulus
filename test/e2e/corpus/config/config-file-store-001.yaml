@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-file-store-001
+behaviors: [B-CFG-STORE, B-CFG-FILE-ROOT]
+config: file-store
+# n/a: WireMock reads the same directory, but the oracle container is booted
+# empty and has no way to be pointed at this fixture, so there is nothing to
+# diff against. What is compatible here is the layout, and the layout is
+# asserted by reading a project written the way WireMock writes one.
+wm: n/a
+steps:
+  # The driver names itself in the startup summary, which is how an operator
+  # confirms that `store: file` was the one that took effect rather than the
+  # `auto` fallback to memory that an unset key would have produced.
+  - logprobe:
+      json_fields:
+        msg: mockulus started
+        store: file
+
+  # `mappings/hello.json` is one stub per file, WireMock's most common spelling.
+  # Nothing registered this stub over the admin API — the instance was booted
+  # against the directory and nothing else — so serving it is the whole claim of
+  # `file.root` in one request.
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-001/hello}
+    expect: {status: 200, body: "served from mappings/hello.json"}
+
+  # The other spelling: one file wrapping an array under `mappings`. A project
+  # mixes the two freely, so a driver that read only one of them would silently
+  # serve half the project.
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-001/catalog/first}
+    expect: {status: 200, body: "first of a mappings array"}
+
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-001/catalog/second}
+    expect: {status: 200, body: "second of a mappings array"}
+
+  # An id the project declared is the id the stub is addressable by: a team's
+  # existing test code holds these ids, and rewriting them would break it.
+  - admin: {method: GET, path: /__admin/mappings/99991301-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "99991301-0000-4000-8000-000000000001"
+        response: {body: "first of a mappings array"}
+
+  # A mapping that declares no id gets one derived from its place in the
+  # project, so the listing carries the field a WireMock client looks for. The
+  # value is pinned rather than merely required to exist because its stability
+  # is the contract: the same directory must produce the same ids after a
+  # restart, or a suite that recorded one yesterday is holding a dead handle.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match:
+            id: "b2f511e4-0782-5bc6-a744-3c009fbaffc9"
+            request: {urlPath: /e2e/config-file-store-001/hello}
+
+  # The directory is the source of truth, so the admin write surface answers the
+  # 503 of §4.6 — the same answer a store that cannot take a write gives
+  # anywhere else. The alternative, taking the write into process memory, would
+  # leave the running deployment disagreeing with the files an operator is
+  # editing, and the disagreement would only surface at the next restart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/config-file-store-001/rejected"},
+         "response": {"status": 200, "body": "never stored"}}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-001/rejected}
+    expect: {status: 404}

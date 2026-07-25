@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: degraded-rebuild-loadall-001
+behaviors:
+  - B-DEGRADED-STORE-READ-FAILS-DURING-REBUILD-LOADALL-ERROR
+  - B-METRIC-SNAPSHOT-RELOAD-FAILURES-TOTAL
+requires: [couchbase, exclusive]
+# fast-clock's seconds-scale resync is what makes the failing rebuild reachable
+# at all: the production interval is 5 minutes, so a case on the defaults would
+# have to outlast one to see a single attempt (SPEC §19.4).
+config: fast-clock
+# n/a: a rebuild is mockulus' convergence mechanism. WireMock has no snapshot to
+# rebuild and no store read to fail.
+wm: n/a
+steps:
+  # Persistent, because this variant expires an ephemeral stub in seconds and the
+  # case is about a reload failing rather than about a TTL.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"4e000001-0000-4000-8000-000000000001",
+         "persistent": true,
+         "request":{"method":"GET","urlPath":"/e2e/degraded-rebuild-loadall-001/catalog"},
+         "response":{"status":200,"body":"the previous snapshot"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/degraded-rebuild-loadall-001/catalog}
+    expect: {status: 200, body: "the previous snapshot"}
+
+  - stop_store: true
+
+  # The resync ticker keeps firing through the outage and its LoadAll keeps
+  # failing. Each abandoned rebuild is counted, which is the difference between
+  # a deployment that is degraded and one that is quietly serving stale stubs
+  # nobody knows are stale: this counter rising with no matching reload is the
+  # alert. The probe polls because the tick is the poller's, not the step's.
+  - metricsprobe:
+      series: mockulus_snapshot_reload_failures_total
+      at_least: 1
+      within: 60s
+
+  # An operator needs the reason, not only the count, and the line says which of
+  # the two things happened — the rebuild was abandoned, and the snapshot that
+  # was already loaded is still the one being served.
+  - logprobe: {contains: "snapshot reload failed; keeping previous snapshot"}
+
+  # The point of abandoning it. A rebuild that swapped in whatever it managed to
+  # read would empty the snapshot on the first failed read and take every stub in
+  # the deployment down with it; keeping the previous one means the outage costs
+  # freshness and nothing else.
+  - request: {port: mock, method: GET, path: /e2e/degraded-rebuild-loadall-001/catalog}
+    expect: {status: 200, body: "the previous snapshot"}
+
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match: {id: "4e000001-0000-4000-8000-000000000001"}
+
+  - start_store: true
+
+  # Retried on the next tick, with nothing having restarted and no operator
+  # having intervened. The probe is a read that has to leave the snapshot, so it
+  # answers 503 while the store is away and 404 once it is back — the cheapest
+  # call that distinguishes the two, and one a poll can safely repeat.
+  - admin: {method: GET, path: /__admin/mappings/4e000001-0000-4000-8000-0000000000ff}
+    expect_eventually: {status: 404, within: 60s}
+
+  - request: {port: mock, method: GET, path: /e2e/degraded-rebuild-loadall-001/catalog}
+    expect: {status: 200, body: "the previous snapshot"}
+
+  # Cleanup: persistent stubs are what neither reset nor expiry removes, so this
+  # one would otherwise be handed to every case that runs here afterwards. That
+  # it succeeds is also the write path reporting itself healthy again.
+  - admin: {method: DELETE, path: /__admin/mappings/4e000001-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/degraded-rebuild-loadall-001/catalog}
+    expect: {status: 404}

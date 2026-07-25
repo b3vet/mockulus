@@ -1,0 +1,10 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/e2e/config-file-store-quarantine-003/intact"
+  },
+  "response": {
+    "status": 200,
+    "body": "the neighbour of a broken file still serves"
+  }
+}

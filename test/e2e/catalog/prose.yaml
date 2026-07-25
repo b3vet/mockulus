@@ -16,8 +16,11 @@ contracts:
     kind: "distributed"
     impl_milestone: "M2"
     summary: "Epoch polling propagates stub changes to every replica, level-triggered and coalesced"
-    evidence: "a stub registered on one pod serves on another within the bound, and the writing pod serves it immediately"
-    evidence_tokens: ["expect_eventually", "multi-pod"]
+    evidence: "with replicas addressed individually: a stub registered on one pod serves on another within the bound, the writing pod serves it immediately, and a delete goes away everywhere the same way"
+    # `pod:` is a token because an unpinned case rides the round-robin: it would
+    # satisfy a propagation claim by landing on the writing replica, which is
+    # the one pod that proves nothing about propagation.
+    evidence_tokens: ["expect_eventually", "multi-pod", "pod:"]
     status: "ok"
 
   - id: "B-PROSE-SCENARIO-SEMANTICS"
