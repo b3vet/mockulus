@@ -44,6 +44,9 @@ type Options struct {
 	// Scenarios is nil when no scenario store is configured, which is the case
 	// only in degraded startup.
 	Scenarios *scenario.Client
+	// Journal is nil when journaling is off, which is the default. Every
+	// journal-dependent endpoint then reports the disabled error.
+	Journal store.JournalStore
 	// StubOptions carries the regex policy, so admin writes compile a stub
 	// exactly as a snapshot rebuild would.
 	StubOptions stub.Options
@@ -60,6 +63,7 @@ type Handler struct {
 	engine    *match.Engine
 	builder   *match.Builder
 	scenarios *scenario.Client
+	journal   store.JournalStore
 	stubOpts  stub.Options
 	// started backs the uptime the health endpoint reports.
 	started time.Time
@@ -78,6 +82,7 @@ func New(opts Options) *Handler {
 		engine:    opts.Engine,
 		builder:   opts.Builder,
 		scenarios: opts.Scenarios,
+		journal:   opts.Journal,
 		stubOpts:  opts.StubOptions,
 		started:   time.Now(),
 	}
@@ -103,6 +108,17 @@ func New(opts Options) *Handler {
 	mux.HandleFunc("GET /__admin/files/{name...}", h.getFile)
 	mux.HandleFunc("PUT /__admin/files/{name...}", h.putFile)
 	mux.HandleFunc("DELETE /__admin/files/{name...}", h.deleteFile)
+
+	// The request journal and verification.
+	mux.HandleFunc("GET /__admin/requests", h.listRequests)
+	mux.HandleFunc("DELETE /__admin/requests", h.clearRequests)
+	mux.HandleFunc("POST /__admin/requests/reset", h.clearRequests)
+	mux.HandleFunc("POST /__admin/requests/count", h.countRequests)
+	mux.HandleFunc("POST /__admin/requests/find", h.findRequests)
+	mux.HandleFunc("POST /__admin/requests/remove", h.removeRequests)
+	mux.HandleFunc("GET /__admin/requests/unmatched", h.unmatchedRequests)
+	mux.HandleFunc("GET /__admin/requests/{id}", h.getRequest)
+	mux.HandleFunc("DELETE /__admin/requests/{id}", h.deleteRequest)
 
 	// Scenarios.
 	mux.HandleFunc("GET /__admin/scenarios", h.listScenarios)
