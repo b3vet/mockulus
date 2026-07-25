@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-start-without-store-001
+behaviors: [B-CFG-START-WITHOUT-STORE]
+# The claim is about the whole snapshot being empty, which only holds on an
+# instance nothing else has written to.
+requires: [exclusive]
+# The variant points the instance at a host that cannot resolve, so the store is
+# genuinely absent at boot rather than merely slow. It is T1: a store topology
+# would hand the instance a working Couchbase and the case would prove nothing.
+config: start-without-store
+# n/a: WireMock has no store to start without.
+wm: n/a
+steps:
+  # The default for an unreachable store is the K8s-idiomatic one: stay live,
+  # stay not-ready, retry forever (§4.4), because a store outage during a
+  # rollout must not become a crash loop. This key is the escape hatch for the
+  # deployments that would rather serve their last-known-nothing than serve
+  # nothing at all, and taking it is announced rather than inferred — an
+  # operator reading "empty snapshot" needs to know which of the two modes the
+  # pod is in.
+  - logprobe: {contains: "start_without_store"}
+
+  # Ready, with the store still absent. `stubs: 0` is the empty snapshot the key
+  # promises, and `store: couchbase` is the driver a connection string alone
+  # selected under `store: auto` — the pod did not fall back to the memory
+  # driver, it came up without the store it is configured for.
+  - logprobe:
+      json_fields:
+        msg: mockulus started
+        store: couchbase
+        stubs: "0"
+
+  - admin: {method: GET, path: /readyz}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_subset:
+        meta: {total: 0}
+
+  # And the mock port is actually serving: a 404 from the matching engine is a
+  # different thing from a refused connection, and it is the difference the key
+  # exists to make. Without it this pod would be up but unroutable.
+  - request: {port: mock, method: GET, path: /e2e/config-start-without-store-001/anything}
+    expect: {status: 404}

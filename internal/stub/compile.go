@@ -151,9 +151,14 @@ type CompiledResponse struct {
 	BodyFileMissing bool
 
 	FixedDelay time.Duration
-	Delay      DelayDistribution
-	Dribble    *ChunkedDribble
-	Fault      string
+	// FixedDelaySet records that the stub spelled `fixedDelayMilliseconds` out,
+	// which is not the same as it being zero. The global settings delay composes
+	// by replacement, so a stub declaring zero opts out of it while a stub that
+	// said nothing inherits it (SPEC §12.4).
+	FixedDelaySet bool
+	Delay         DelayDistribution
+	Dribble       *ChunkedDribble
+	Fault         string
 
 	// Templated records that this stub asked for response templating.
 	Templated bool

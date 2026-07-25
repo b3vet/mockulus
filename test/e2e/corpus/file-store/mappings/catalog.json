@@ -1,0 +1,25 @@
+{
+  "mappings": [
+    {
+      "id": "99991301-0000-4000-8000-000000000001",
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/config-file-store-001/catalog/first"
+      },
+      "response": {
+        "status": 200,
+        "body": "first of a mappings array"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/config-file-store-001/catalog/second"
+      },
+      "response": {
+        "status": 200,
+        "body": "second of a mappings array"
+      }
+    }
+  ]
+}

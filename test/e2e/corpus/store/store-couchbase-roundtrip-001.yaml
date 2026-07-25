@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+id: store-couchbase-roundtrip-001
+behaviors: [B-CFG-STORE, B-CFG-COUCHBASE-CONNSTR]
+requires: [couchbase]
+# n/a: which store driver a connection string selects is a mockulus question.
+# WireMock has one store and no way to be asked about it.
+wm: n/a
+steps:
+  # The instance was handed a connection string and nothing else — `store` stays
+  # at `auto` — so the driver it names in its startup summary is the whole claim
+  # of the key. An operator who mistypes the connstr gets `memory` here and a
+  # deployment that silently forgets everything on restart, which is why the
+  # driver is reported rather than inferred.
+  - logprobe:
+      json_fields:
+        msg: mockulus started
+        store: couchbase
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"2b000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/store-couchbase-roundtrip-001/order"},
+         "response":{"status":200,"body":"stored in couchbase"}}
+    expect: {status: 201}
+
+  # The write went through Couchbase and came back through the snapshot the mock
+  # port serves from, which is the round trip that says the driver is wired up
+  # in both directions rather than merely connected.
+  - request: {port: mock, method: GET, path: /e2e/store-couchbase-roundtrip-001/order}
+    expect: {status: 200, body: "stored in couchbase"}
+
+  # And the stored document still renders as the mapping that was registered.
+  # The envelope mockulus wraps it in (§7.2) is not supposed to be visible from
+  # here: a GET returns what was written, not what it was written inside.
+  - admin: {method: GET, path: /__admin/mappings/2b000001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "2b000001-0000-4000-8000-000000000001"
+        request: {method: "GET", urlPath: "/e2e/store-couchbase-roundtrip-001/order"}
+        response: {status: 200, body: "stored in couchbase"}

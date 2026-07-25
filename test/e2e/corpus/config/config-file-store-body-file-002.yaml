@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-file-store-body-file-002
+behaviors: [B-CFG-FILE-ROOT, B-ERR-1022]
+config: file-store
+# n/a: the oracle container cannot be pointed at this fixture directory, so
+# there is nothing to diff. The compatible surface is `__files/` itself.
+wm: n/a
+steps:
+  # `__files/` is where a WireMock project keeps response bodies, and
+  # `bodyFileName` addresses them by name. Resolution happens once, when the
+  # snapshot is built, so the request path never touches the filesystem — the
+  # same rule every other driver's files obey.
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-body-file-002/greeting}
+    expect:
+      status: 200
+      headers: {Content-Type: application/json}
+      body_json: {greeting: "served from __files/greeting.json"}
+
+  # Nested fixtures resolve too, and by the name the project writes: a
+  # bodyFileName is spelled with forward slashes whatever the host uses as a
+  # path separator, because it names a file in the project rather than a path on
+  # the machine serving it.
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-body-file-002/nested}
+    expect: {status: 200, body: "nested body file"}
+
+  - admin: {method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"nested/deep\.txt"'
+
+  # A bodyFileName with no file behind it is the 1022 of §6.9 at serve time, not
+  # a quarantined stub and not an empty 200. The stub is fine; the fixture is
+  # missing, and only the request that needs it can say so.
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-body-file-002/absent}
+    expect:
+      status: 500
+      body_json_subset:
+        errors:
+          - code: 1022

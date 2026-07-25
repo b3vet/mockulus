@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +29,20 @@ const (
 	// distributed behavior — that has no single-node WireMock oracle.
 	WMNotApplicable = "n/a"
 )
+
+// Topology capabilities a case can declare. The runner schedules each case onto
+// the cheapest topology that provides everything it asks for (SPEC §19.4).
+const (
+	// CapabilityCouchbase demands a real store: persistence, TTL, counters.
+	CapabilityCouchbase = "couchbase"
+	// CapabilityMultiPod demands replicas that can be addressed individually.
+	CapabilityMultiPod = "multi-pod"
+	// CapabilityExclusive is not a topology at all but a scheduling claim: the
+	// case owns its deployment and runs when nothing else does.
+	CapabilityExclusive = "exclusive"
+)
+
+var knownCapabilities = []string{CapabilityCouchbase, CapabilityMultiPod, CapabilityExclusive}
 
 // Case is one corpus case.
 type Case struct {
@@ -73,6 +89,13 @@ type Step struct {
 	MetricsProbe *MetricsProbe `yaml:"metricsprobe,omitempty"`
 	LogProbe     *LogProbe     `yaml:"logprobe,omitempty"`
 
+	// StopStore and StartStore take the run's store away and give it back,
+	// which is the choreography the degraded modes of SPEC §4.6 are stated in.
+	// The interesting half of that contract is what keeps working, so a case
+	// asserts on the serving path between the two.
+	StopStore  bool `yaml:"stop_store,omitempty"`
+	StartStore bool `yaml:"start_store,omitempty"`
+
 	Expect           *Expect `yaml:"expect,omitempty"`
 	ExpectEventually *Expect `yaml:"expect_eventually,omitempty"`
 }
@@ -94,6 +117,11 @@ type HTTPStep struct {
 
 // MetricsProbe asserts on a series exposed by /metrics.
 type MetricsProbe struct {
+	// Pod selects a replica in multi-pod topologies, as on an HTTP step. It
+	// exists because metrics are per-process: an unpinned probe would read a
+	// replica the round-robin chose, and a case that drove one pod and read
+	// another's counters is a coin flip, not an assertion.
+	Pod string `yaml:"pod,omitempty"`
 	// Series is the metric name, optionally with a label selector:
 	// mockulus_http_requests_total{matched="true",code="200"}
 	Series string `yaml:"series"`
@@ -102,6 +130,12 @@ type MetricsProbe struct {
 	// AtLeast asserts a minimum value, which is what makes a counter assertion
 	// stable under concurrent cases sharing an instance.
 	AtLeast *float64 `yaml:"at_least,omitempty"`
+	// Within turns the probe into bounded polling, for counters a background
+	// loop moves rather than the step before them: a reload failure is recorded
+	// by the next poller tick, so reading once asserts the tick's timing instead
+	// of the product. Never a bare sleep, for the same reason `expect_eventually`
+	// is not one (SPEC §19.1).
+	Within string `yaml:"within,omitempty"`
 }
 
 // LogProbe asserts on the instance's captured stdout.
@@ -220,13 +254,29 @@ func (c *Case) validate() error {
 		return fmt.Errorf("case %s: wm must be %q or %q, got %q",
 			c.ID, WMVerified, WMNotApplicable, c.WM)
 	}
+	// A typo in a capability would schedule the case onto a topology that cannot
+	// serve it and let it pass there — the accept-and-behave-differently the
+	// gate exists to prevent. Reject it at load instead.
+	for _, capability := range c.Requires {
+		if !slices.Contains(knownCapabilities, capability) {
+			return fmt.Errorf("case %s: unknown capability %q in requires, want one of %v",
+				c.ID, capability, knownCapabilities)
+		}
+	}
 	if len(c.Steps) == 0 {
 		return fmt.Errorf("case %s has no steps", c.ID)
 	}
+	multiPod := c.RequiresCapability(CapabilityMultiPod)
 	for i, s := range c.Steps {
 		if err := s.validate(); err != nil {
 			return fmt.Errorf("case %s step %d: %w", c.ID, i+1, err)
 		}
+		if err := s.validatePods(multiPod); err != nil {
+			return fmt.Errorf("case %s step %d: %w", c.ID, i+1, err)
+		}
+	}
+	if err := c.validateStoreChoreography(); err != nil {
+		return err
 	}
 	if c.Skip != nil {
 		if c.Skip.Issue == "" {
@@ -239,16 +289,43 @@ func (c *Case) validate() error {
 	return nil
 }
 
+// validateStoreChoreography checks the declarations a store outage needs.
+//
+// The run has one store and every T2/T3 deployment shares it, so taking it away
+// takes it away from whatever else is running. A case that did that alongside
+// others would fail them for a reason that has nothing to do with what they
+// assert — and the failure would land on them, not on it. `exclusive` is the
+// declaration that stops it; `couchbase` is the one that means there is a
+// container to pause at all.
+func (c *Case) validateStoreChoreography() error {
+	if !c.TouchesStore() {
+		return nil
+	}
+	for _, needed := range []string{CapabilityCouchbase, CapabilityExclusive} {
+		if !c.RequiresCapability(needed) {
+			return fmt.Errorf(
+				"case %s choreographs a store outage, which needs requires: [%s]",
+				c.ID, needed)
+		}
+	}
+	return nil
+}
+
 func (s Step) validate() error {
 	actions := 0
 	for _, set := range []bool{s.Request != nil, s.Admin != nil, s.Pause != "",
-		s.MetricsProbe != nil, s.LogProbe != nil} {
+		s.MetricsProbe != nil, s.LogProbe != nil, s.StopStore, s.StartStore} {
 		if set {
 			actions++
 		}
 	}
 	if actions != 1 {
 		return fmt.Errorf("a step must carry exactly one action, found %d", actions)
+	}
+	if s.MetricsProbe != nil && s.MetricsProbe.Within != "" {
+		if _, err := time.ParseDuration(s.MetricsProbe.Within); err != nil {
+			return fmt.Errorf("metricsprobe within: %w", err)
+		}
 	}
 	if s.Expect != nil && s.ExpectEventually != nil {
 		return fmt.Errorf("a step may carry expect or expect_eventually, not both")
@@ -269,6 +346,39 @@ func (s Step) validate() error {
 	return nil
 }
 
+// validatePods checks every replica selector in a step. A selector past the
+// first replica only resolves in a multi-pod topology, and a case that pins one
+// without asking for the topology would fail mid-run on its third step rather
+// than at load — with a message about a missing replica instead of about the
+// declaration that is actually wrong.
+func (s Step) validatePods(multiPod bool) error {
+	selectors := map[string]string{}
+	if s.Request != nil {
+		selectors["request"] = s.Request.Pod
+	}
+	if s.Admin != nil {
+		selectors["admin"] = s.Admin.Pod
+	}
+	if s.MetricsProbe != nil {
+		selectors["metricsprobe"] = s.MetricsProbe.Pod
+	}
+
+	for kind, spec := range selectors {
+		if spec == "" || spec == PodAny {
+			continue
+		}
+		index, err := strconv.Atoi(spec)
+		if err != nil || index < 0 {
+			return fmt.Errorf("%s pod %q: want %q or a replica index", kind, spec, PodAny)
+		}
+		if index > 0 && !multiPod {
+			return fmt.Errorf("%s pins pod %d, which needs requires: [%s]",
+				kind, index, CapabilityMultiPod)
+		}
+	}
+	return nil
+}
+
 func (e *Expect) validate() error {
 	// A half-written contains clause would search the whole document, or match
 	// every element, and report a pass — the vacuous assertion the gate exists
@@ -282,6 +392,18 @@ func (e *Expect) validate() error {
 		}
 	}
 	return nil
+}
+
+// TouchesStore reports whether the case choreographs a store outage. The runner
+// puts the store back afterwards whatever the case did, so one that failed
+// halfway through cannot leave the run's store paused behind it.
+func (c *Case) TouchesStore() bool {
+	for _, s := range c.Steps {
+		if s.StopStore || s.StartStore {
+			return true
+		}
+	}
+	return false
 }
 
 // RequiresCapability reports whether the case needs a topology capability.

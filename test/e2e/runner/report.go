@@ -18,8 +18,17 @@ import (
 // coverage matrix that is the audit trail behind the 100% claim, and — on
 // failure — the transcript of the failing case.
 
-// renderCaseAssertions flattens a case's steps to text, which is what the
-// evidence-token check searches.
+// renderCaseAssertions flattens a case to the text the evidence-token check
+// searches.
+//
+// The steps are the substance, but the conditions a case runs UNDER are part of
+// what it asserts, and some behaviors are about nothing else. A config knob that
+// only exists at start-up — the `file` store driver, TLS, h2c — is proved by a
+// case running in that variant and getting the right answers; there is no step
+// that can name it, because the naming happened before the process started.
+// Those behaviors' evidence tokens are variant and capability names, so the
+// declarations have to be visible here or the tokens could only be satisfied by
+// writing them into a comment, which proves nothing at all.
 func renderCaseAssertions(c *Case) string {
 	if c.evidence != "" {
 		return c.evidence
@@ -28,7 +37,15 @@ func renderCaseAssertions(c *Case) string {
 	if err != nil {
 		return ""
 	}
-	return string(data)
+	var sb strings.Builder
+	if c.Config != "" {
+		sb.WriteString("config: " + c.Config + "\n")
+	}
+	for _, r := range c.Requires {
+		sb.WriteString("requires: " + r + "\n")
+	}
+	sb.Write(data)
+	return sb.String()
 }
 
 // CoverageMatrix is the behavior × case × topology/variant × result record.

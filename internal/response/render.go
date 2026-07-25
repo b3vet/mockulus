@@ -32,6 +32,10 @@ type Renderer interface {
 // Options carry what writing a response needs beyond the response itself.
 type Options struct {
 	WriteSlack time.Duration
+	// Settings is the deployment's global response delay, nil when nobody has
+	// set one. It comes off the snapshot, so an instance that has never had a
+	// settings write pays a nil check for the feature and nothing else (P2).
+	Settings *stub.Settings
 	// Renderer and Context are supplied only when the stub is templated.
 	Renderer Renderer
 	Context  map[string]any
@@ -43,7 +47,7 @@ type Options struct {
 // caller records as a metric. A fault reports the status as 0: nothing that
 // could be called a status ever reached the client.
 func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, opts Options) int {
-	applyDelay(r, resp)
+	applyDelay(r, resp, opts.Settings)
 
 	if resp.Fault != "" {
 		injectFault(w, resp.Fault)
@@ -138,12 +142,12 @@ func render(resp *stub.CompiledResponse, opts Options) ([]byte, []stub.Header, e
 	return body, headers, nil
 }
 
-// applyDelay waits out the stub's configured delay. A timer is used rather than
-// a sleeping worker because there is no worker pool to block: net/http's
+// applyDelay waits out the delay this response is owed. A timer is used rather
+// than a sleeping worker because there is no worker pool to block: net/http's
 // goroutine-per-connection model scales to tens of thousands of concurrent
 // sleepers, which is what makes delay simulation cheap here (SPEC §12.4).
-func applyDelay(r *http.Request, resp *stub.CompiledResponse) {
-	total := resp.FixedDelay + drawDelay(resp.Delay)
+func applyDelay(r *http.Request, resp *stub.CompiledResponse, global *stub.Settings) {
+	total := composeDelay(resp, global)
 	if total <= 0 {
 		return
 	}
@@ -155,6 +159,29 @@ func applyDelay(r *http.Request, resp *stub.CompiledResponse) {
 	case <-r.Context().Done():
 		// The client gave up; there is nothing left to delay.
 	}
+}
+
+// composeDelay resolves how long this response waits, out of the stub's own
+// delay and the deployment's global one.
+//
+// The two compose the way WireMock 3.13.2 composes them, verified by probe: the
+// fixed and the sampled part are summed, but within each part a value the stub
+// declared *replaces* the global one rather than adding to it. So
+// `fixedDelayMilliseconds: 0` is a stub opting out of the global fixed delay,
+// which is why a declared zero has to be distinguishable from an absent field
+// (SPEC §12.4). Only a matched response reaches here at all, so an unmatched
+// request still 404s immediately.
+func composeDelay(resp *stub.CompiledResponse, global *stub.Settings) time.Duration {
+	fixed, dist := resp.FixedDelay, resp.Delay
+	if global != nil {
+		if !resp.FixedDelaySet {
+			fixed = global.FixedDelay
+		}
+		if dist.Kind == stub.DelayNone {
+			dist = global.Delay
+		}
+	}
+	return fixed + drawDelay(dist)
 }
 
 // drawDelay samples the configured distribution.

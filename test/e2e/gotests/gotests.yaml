@@ -88,3 +88,12 @@ tests:
       Its second half is the socket one: proving the rejected stub left nothing
       that hijacks the connection means finding a well-formed HTTP response on
       a raw socket, on the path where every other case here finds none.
+  - name: TestStoreUnreachableAtBootStaysLiveAndUnready
+    behaviors: [B-DEGRADED-CB-DOWN-AT-BOOT]
+    why: >-
+      The instance never becomes ready, and the corpus harness starts one by
+      waiting for exactly that — so this shape cannot be booted from a case at
+      all. There is no startup summary line either, since it is written after
+      both listeners serve, so the admin port has to be chosen in advance
+      rather than read back. What is asserted is a process that keeps
+      answering: /healthz 200 and /readyz 503, continuously, while it retries.

@@ -14,14 +14,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -44,8 +48,9 @@ type options struct {
 	filter    string
 	// differential turns on topology T5: `wm: verified` cases are replayed
 	// against pinned WireMock and the answers diffed (SPEC §5.6).
-	differential bool
-	wiremockFile string
+	differential  bool
+	wiremockFile  string
+	couchbaseFile string
 	// gotests is the directory of Go-native cases, which cover behavior that is
 	// not observable through an HTTP client.
 	gotests string
@@ -66,6 +71,8 @@ func run() error {
 		"also replay wm:verified cases against pinned WireMock and diff (topology T5)")
 	flag.StringVar(&opt.wiremockFile, "wiremock-version", "test/e2e/WIREMOCK_VERSION",
 		"file naming the pinned WireMock image")
+	flag.StringVar(&opt.couchbaseFile, "couchbase-version", "test/e2e/topologies/COUCHBASE_VERSION",
+		"file naming the pinned Couchbase image topologies T2 and T3 run against")
 	flag.StringVar(&opt.gotests, "gotests", "test/e2e/gotests",
 		"directory of Go-native cases for behavior a corpus case cannot express")
 	flag.Parse()
@@ -227,14 +234,26 @@ func staticGates(catalog *Catalog, cases []*Case) []string {
 
 // coverageGates is gate (a): every in-scope behavior must be referenced by at
 // least one passing case whose assertions satisfy its evidence contract.
+//
+// Only a passing case counts. A skipped one — an annotated skip, or a lane that
+// could not start because there is no Docker here — leaves the behavior
+// uncovered and the gate red, which is the point: the run that cannot exercise
+// a behavior must say so, or "green" would mean "green on whatever happened to
+// be runnable". The skip is quoted in the failure so the reason is one line
+// away from the hole it made.
 func coverageGates(catalog *Catalog, results []*Result) []string {
 	covered := map[string][]*Result{}
+	skipped := map[string][]*Result{}
 	for _, r := range results {
-		if !r.Passed {
+		bucket := covered
+		switch {
+		case r.Skipped:
+			bucket = skipped
+		case !r.Passed:
 			continue
 		}
 		for _, id := range r.Case.Behaviors {
-			covered[id] = append(covered[id], r)
+			bucket[id] = append(bucket[id], r)
 		}
 	}
 
@@ -246,8 +265,8 @@ func coverageGates(catalog *Catalog, results []*Result) []string {
 		binding := covered[id]
 		if len(binding) == 0 {
 			problems = append(problems, fmt.Sprintf(
-				"behavior %s (milestone %s) has no passing case; its milestone has landed, so a case is required",
-				id, milestone))
+				"behavior %s (milestone %s) has no passing case; its milestone has landed, so a case is required%s",
+				id, milestone, skipNote(skipped[id])))
 			return
 		}
 		for _, r := range binding {
@@ -267,6 +286,25 @@ func coverageGates(catalog *Catalog, results []*Result) []string {
 		check(p.ID, p.Milestone, p.EvidenceTokens, "")
 	}
 	return problems
+}
+
+// skipNote names the cases that were skipped for a behavior, so an uncovered
+// behavior reads as "nothing ran it, and here is why" rather than as an
+// unexplained hole.
+func skipNote(skipped []*Result) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	notes := make([]string, 0, len(skipped))
+	for _, r := range skipped {
+		note := r.Case.ID
+		if r.SkipReason != "" {
+			note += " (" + r.SkipReason + ")"
+		}
+		notes = append(notes, note)
+	}
+	sort.Strings(notes)
+	return " — skipped: " + strings.Join(notes, ", ")
 }
 
 // satisfiesEvidence reports whether a case's steps literally contain every
@@ -319,20 +357,38 @@ func resolveBinary(path string) (string, error) {
 	return out, nil
 }
 
-// execute runs the corpus. Cases share instances per (topology, variant) and
-// stay isolated through their URL namespace; cases needing pristine global
-// state declare `requires: [exclusive]` and run serially (SPEC §19.3).
 // log prints a progress line during a run.
 func log(msg string) { fmt.Println(msg) }
 
-func execute(opt options, cases []*Case, binary string) ([]*Result, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+// topologyFor schedules a case onto the cheapest topology that provides
+// everything it declared (SPEC §19.4). `exclusive` is not part of the choice:
+// it is a claim on the deployment, not a shape.
+func topologyFor(c *Case) string {
+	switch {
+	case c.RequiresCapability(CapabilityMultiPod):
+		return TopologyT3
+	case c.RequiresCapability(CapabilityCouchbase):
+		return TopologyT2
+	default:
+		return TopologyT1
+	}
+}
 
-	pool := NewPool(binary)
+// execute runs the corpus. Cases share deployments per (topology, variant) and
+// stay isolated through their URL namespace; cases needing pristine global
+// state declare `requires: [exclusive]` and run serially (SPEC §19.3).
+func execute(opt options, cases []*Case, binary string) ([]*Result, error) {
+	// A cancelled run has containers to remove, so the signal is turned into a
+	// cancellation the run unwinds through rather than being left to the default
+	// disposition, which would take the process down with the Couchbase and
+	// WireMock containers still up.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool := NewPool(binary, opt.couchbaseFile)
 	defer pool.Close()
 
-	exec := &Executor{corpusDir: opt.corpus}
+	exec := &Executor{corpusDir: opt.corpus, pool: pool}
 
 	if opt.differential {
 		oracle, err := StartWireMock(ctx, opt.wiremockFile)
@@ -364,17 +420,40 @@ func execute(opt options, cases []*Case, binary string) ([]*Result, error) {
 	}
 
 	runOne := func(c *Case) {
+		topology, variant := topologyFor(c), c.Variant()
+
+		// A panicking case must not take the run down with it: the process would
+		// die without running a single deferred teardown, leaving the run's
+		// containers behind for a human to notice. Recovering turns it into the
+		// failure it is, and lets the teardown happen.
+		defer func() {
+			if p := recover(); p != nil {
+				record(&Result{Case: c, Topology: topology, Variant: variant,
+					Failure: fmt.Sprintf("the runner panicked: %v\n%s", p, debug.Stack())})
+			}
+		}()
+
 		if c.Skip != nil {
-			record(&Result{Case: c, Skipped: true, Topology: TopologyT1, Variant: c.Variant()})
+			record(&Result{Case: c, Skipped: true, SkipReason: c.Skip.Reason,
+				Topology: topology, Variant: variant})
 			return
 		}
-		inst, err := pool.Get(ctx, TopologyT1, c.Variant())
+		dep, err := pool.Get(ctx, topology, variant)
 		if err != nil {
-			record(&Result{Case: c, Topology: TopologyT1, Variant: c.Variant(),
-				Failure: "could not start instance: " + err.Error()})
+			if errors.Is(err, errNoDocker) {
+				// No Docker here, so the container lane cannot run at all.
+				// Skipping keeps the T1 lane usable on a machine without it; the
+				// coverage gate still reports every behavior these cases would
+				// have covered as uncovered, so the run cannot come out green.
+				record(&Result{Case: c, Skipped: true, Topology: topology, Variant: variant,
+					SkipReason: fmt.Sprintf("%s needs a container: %v", topology, err)})
+				return
+			}
+			record(&Result{Case: c, Topology: topology, Variant: variant,
+				Failure: "could not start the deployment: " + err.Error()})
 			return
 		}
-		record(exec.Run(ctx, c, inst))
+		record(exec.Run(ctx, c, dep))
 	}
 
 	sem := make(chan struct{}, max(1, opt.parallel))
@@ -435,4 +514,25 @@ func summarize(catalog *Catalog, cases []*Case, gotests []*GoTest, results []*Re
 		}
 	}
 	fmt.Printf("results:          %d passed, %d failed, %d skipped\n", passed, failed, skipped)
+	for _, reason := range skipReasons(results) {
+		fmt.Printf("skipped:          %s\n", reason)
+	}
+}
+
+// skipReasons summarizes why cases did not run, one line per distinct reason.
+// A lane that quietly skipped is the one thing a reader of a green-looking
+// summary most needs told.
+func skipReasons(results []*Result) []string {
+	counts := map[string]int{}
+	for _, r := range results {
+		if r.Skipped && r.SkipReason != "" {
+			counts[r.SkipReason]++
+		}
+	}
+	out := make([]string, 0, len(counts))
+	for reason, n := range counts {
+		out = append(out, fmt.Sprintf("%d case(s): %s", n, reason))
+	}
+	sort.Strings(out)
+	return out
 }

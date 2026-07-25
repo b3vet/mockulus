@@ -20,3 +20,8 @@ covdata/
 *.swp
 .idea/
 .vscode/
+
+# Stray binaries from `go build ./test/e2e/runner` without -o, which names the
+# output after the package directory and drops it in the working directory.
+/runner
+/mockulus

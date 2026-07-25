@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+id: sync-propagation-update-002
+behaviors: [B-PROSE-SYNC-PROPAGATION]
+requires: [couchbase, multi-pod]
+# n/a: there is no single-node WireMock to diff a cluster against. The
+# expectations come from SPEC §8 instead.
+wm: n/a
+steps:
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"3b000002-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/sync-propagation-update-002/first"},
+         "response":{"status":200,"body":"first edition"}}
+    expect: {status: 201}
+
+  # The edit is issued through pod 1, and pod 1 has to be holding the stub
+  # before it can be asked to replace it — otherwise the next steps would prove
+  # only that a pod can serve a stub it just wrote, which is a different claim.
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-propagation-update-002/first}
+    expect_eventually: {status: 200, body: "first edition", within: 10s}
+
+  # The replacement moves the stub to a different path rather than only changing
+  # its body, and that is what makes "replaced, not duplicated" observable at
+  # all. Two copies of one stub under the same path are indistinguishable
+  # through the mock port — whichever the engine picks, the answer looks right —
+  # but a surviving old copy still answers on the path the new one abandoned.
+  - admin:
+      pod: 1
+      method: PUT
+      path: /__admin/mappings/3b000002-0000-4000-8000-000000000001
+      body: |
+        {"request":{"method":"GET","urlPath":"/e2e/sync-propagation-update-002/second"},
+         "response":{"status":200,"body":"second edition"}}
+    expect: {status: 200}
+
+  # The editing pod, with no interval to wait: the splice replaces the stub with
+  # the same id rather than appending beside it (§4.3 step 5).
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-propagation-update-002/second}
+    expect: {status: 200, body: "second edition"}
+
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-propagation-update-002/first}
+    expect: {status: 404}
+
+  # Pod 0 is the interesting observer: it registered the original and spliced
+  # that copy into its own snapshot, so it is the pod whose local state the
+  # reload has to overwrite rather than merely extend. A full reload rebuilds
+  # from the store's one document per id, which is why an edit cannot arrive
+  # anywhere as a second stub.
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/sync-propagation-update-002/second}
+    expect_eventually: {status: 200, body: "second edition", within: 10s}
+
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/sync-propagation-update-002/first}
+    expect_eventually: {status: 404, within: 10s}

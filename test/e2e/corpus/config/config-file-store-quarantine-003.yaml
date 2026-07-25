@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-file-store-quarantine-003
+behaviors: [B-CFG-FILE-ROOT, B-METRIC-SNAPSHOT-QUARANTINED-TOTAL]
+config: file-store
+# n/a: WireMock's answer to a malformed file in `mappings/` is to refuse to
+# start, which is the behavior §6.9 deliberately deviates from. There is
+# nothing to diff because the disagreement is the point.
+wm: n/a
+steps:
+  # `mappings/broken.json` is truncated JSON, and it sits in the same directory
+  # as the stub below. One bad document never aborts a build (SPEC §6.9), and
+  # the file being edited is by definition the one most likely to be broken, so
+  # a project where the whole deployment goes dark because of a stray comma is
+  # unusable for the local-development story this driver exists for.
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-quarantine-003/intact}
+    expect: {status: 200, body: "the neighbour of a broken file still serves"}
+
+  # Excluded, not guessed at: the mapping the broken file was going to define
+  # does not answer.
+  - request: {port: mock, method: GET, path: /e2e/config-file-store-quarantine-003/broken}
+    expect: {status: 404}
+
+  # And it is counted under the same reason any other driver's undecodable
+  # document is counted under, which is what lets an operator find it. The
+  # assertion is a floor, not an equality: the counter is deployment-wide and a
+  # rebuild re-counts what is still broken.
+  - metricsprobe:
+      series: mockulus_snapshot_quarantined_total{reason="decode"}
+      at_least: 1

@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+id: store-couchbase-keyspace-001
+behaviors: [B-CFG-COUCHBASE-BUCKET-COUCHBASE-SCOPE, B-CFG-COUCHBASE-MANAGE-BUCKET]
+requires: [couchbase]
+config: cb-verbose
+# n/a: WireMock has no keyspace to be pointed at, so there is nothing on the
+# oracle side to diff these answers against. The contract comes from SPEC §7.2.
+wm: n/a
+steps:
+  # The driver names the keyspace it attached to, and the pair is the whole
+  # point of the two keys: a bucket is shared between teams and the scope is
+  # what keeps their deployments from serving each other's stubs. An instance
+  # that quietly fell back to `_default` would look identical to a working one
+  # right up to the moment two teams collided in it.
+  #
+  # The scope is the one the harness assigned this deployment, so the assertion
+  # is that the configured value is the value in force — a hard-coded name here
+  # would pass against a driver that ignored the key entirely.
+  - logprobe:
+      json_fields:
+        msg: connected to couchbase
+        bucket: mockulus
+        scope: t2-cb-verbose
+
+  # That scope did not exist when the run started. The harness creates the
+  # bucket and stops there, because creating one needs cluster-manager rights
+  # the product deliberately never asks for — so the scope below it, its five
+  # collections and the journal index are all boot-time DDL that mockulus issued
+  # for itself. Everything the rest of this case does is served out of it.
+  - logprobe: {contains: "couchbase.manage_bucket=true"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"2c000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/store-couchbase-keyspace-001/invoice"},
+         "response":{"status":200,"body":"kept in the configured scope"}}
+    expect: {status: 201}
+
+  # A write that reaches a collection which was never created answers 503 —
+  # keyspace DDL is not something the admin path can do on demand. So the round
+  # trip is what turns "the driver logged a scope" into "the documents are in
+  # it": the write landed, the reload found it there, and the mock port serves
+  # what the store gave back.
+  - request: {port: mock, method: GET, path: /e2e/store-couchbase-keyspace-001/invoice}
+    expect: {status: 200, body: "kept in the configured scope"}
+
+  - admin: {method: GET, path: /__admin/mappings/2c000001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "2c000001-0000-4000-8000-000000000001"
+        response: {status: 200, body: "kept in the configured scope"}
+
+  # Cleanup by identity: this deployment is shared with the other cases on the
+  # variant, so the stub is removed rather than the collection emptied.
+  - admin: {method: DELETE, path: /__admin/mappings/2c000001-0000-4000-8000-000000000001}
+    expect: {status: 200}

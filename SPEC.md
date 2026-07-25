@@ -497,7 +497,9 @@ type StubStore interface {
 }
 ```
 
-Drivers: `couchbase` (prod), `memory` (default when no CB config; also the unit-test double), `file` (WireMock `mappings/` + `__files/` directory reader for local dev; writes land in a memory overlay; `mappings/save` writes back to disk; single-replica only, documented).
+Drivers: `couchbase` (prod), `memory` (default when no CB config; also the unit-test double), `file` (WireMock `mappings/` + `__files/` directory reader for local dev and for pointing mockulus at a project a team already has; single-replica only, documented).
+
+The `file` driver is **read-only**: the directory is the source of truth, so every admin write answers the 503 `storeUnavailable` of §4.6 — the same answer any store that cannot take a write gives. An in-process overlay was the alternative and was rejected: it leaves the running deployment disagreeing with the files the operator is editing, and the disagreement only surfaces at the next restart, when the stub someone registered evaporates. Scenario state is the one exception, because it is runtime state rather than project content and the serve path has to be able to advance it. Mappings that declare no `id` are given one derived from their path within the project, so the admin listing carries the field a WireMock client looks for and it survives a restart. `Epoch` fingerprints the tree (paths, sizes, mtimes), which makes an edit converge through the same level-triggered reload as any other change, within `sync_interval`.
 
 ### 7.2 Couchbase layout
 

@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+id: sync-level-triggered-convergence-003
+behaviors: [B-PROSE-SYNC-PROPAGATION]
+requires: [couchbase, multi-pod]
+# n/a: there is no single-node WireMock to diff a cluster against. The
+# expectations come from SPEC §8 instead.
+#
+# This is the case that separates the design from a broadcast one. Four
+# mutations land back to back through three different pods, and each pod ends
+# up holding a different, individually wrong picture: pod 0 spliced in a stub
+# that has since been edited, pod 1 spliced in one that has since been deleted,
+# pod 2 spliced in the edit and handled neither the registration nor the
+# deletion of the other stub. The state they must all converge on is described
+# by no single one of those writes.
+#
+# A poller ticking once a second cannot have seen four bumps of a counter that
+# moved four times in a few milliseconds — it reads one number, several bumps
+# ahead of its snapshot, and reloads everything from the store. That is the
+# whole difference: convergence keys off the *level* of the counter, so a
+# replica that missed a bump — or every bump — still arrives, and there is no
+# missed-event class of bug to have (§8, §4.3).
+#
+# If a loaded runner ever spreads the four writes across more than one interval
+# the case proves less, but it cannot fail for that reason: what is asserted is
+# the state everything converges on, never the path it took (§19.1).
+wm: n/a
+steps:
+  # Nothing is asserted between the four writes, deliberately. A request in
+  # between would stretch the burst across poll ticks and hand the replicas the
+  # intermediate states this case exists to deny them.
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"3b000003-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/sync-level-triggered-convergence-003/alpha"},
+         "response":{"status":200,"body":"alpha, as pod 0 wrote it"}}
+    expect: {status: 201}
+
+  - admin:
+      pod: 1
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"3b000003-0000-4000-8000-000000000002",
+         "request":{"method":"GET","urlPath":"/e2e/sync-level-triggered-convergence-003/beta"},
+         "response":{"status":200,"body":"beta, as pod 1 wrote it"}}
+    expect: {status: 201}
+
+  - admin:
+      pod: 2
+      method: PUT
+      path: /__admin/mappings/3b000003-0000-4000-8000-000000000001
+      body: |
+        {"request":{"method":"GET","urlPath":"/e2e/sync-level-triggered-convergence-003/alpha"},
+         "response":{"status":200,"body":"alpha, as pod 2 edited it"}}
+    expect: {status: 200}
+
+  # Pod 0 deletes a stub it has never registered and may never have loaded. The
+  # write resolves against the store rather than against the deleting pod's
+  # snapshot, which is the only answer that works behind a Service: the DELETE
+  # a client sends lands wherever the load balancer puts it, and refusing it as
+  # unknown would make deletion a coin flip.
+  - admin: {pod: 0, method: DELETE, path: /__admin/mappings/3b000003-0000-4000-8000-000000000002}
+    expect: {status: 200}
+
+  # Read-your-writes still holds for each writer at the end of the burst.
+  - request: {pod: 2, port: mock, method: GET, path: /e2e/sync-level-triggered-convergence-003/alpha}
+    expect: {status: 200, body: "alpha, as pod 2 edited it"}
+
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/sync-level-triggered-convergence-003/beta}
+    expect: {status: 404}
+
+  # Pod 0 has to give up the copy it spliced in itself: its local knowledge is
+  # not merged with the store's, it is replaced by it.
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/sync-level-triggered-convergence-003/alpha}
+    expect_eventually: {status: 200, body: "alpha, as pod 2 edited it", within: 10s}
+
+  # Pod 1 never handled either write to this stub — not the registration and not
+  # the edit — so the body it serves can only have come from a full reload.
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-level-triggered-convergence-003/alpha}
+    expect_eventually: {status: 200, body: "alpha, as pod 2 edited it", within: 10s}
+
+  # And pod 1 has to drop the stub it registered itself, on the word of a delete
+  # it never handled, issued by a pod that never handled the registration.
+  - request: {pod: 1, port: mock, method: GET, path: /e2e/sync-level-triggered-convergence-003/beta}
+    expect_eventually: {status: 404, within: 10s}
+
+  - request: {pod: 2, port: mock, method: GET, path: /e2e/sync-level-triggered-convergence-003/beta}
+    expect_eventually: {status: 404, within: 10s}

@@ -249,11 +249,12 @@ func parseDelays(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp 
 				"fixedDelayMilliseconds must not be negative")
 		} else {
 			resp.FixedDelay = time.Duration(ms) * time.Millisecond
+			resp.FixedDelaySet = true
 		}
 	}
 
 	if v, ok := doc["delayDistribution"]; ok {
-		parseDelayDistribution(errs, v, resp)
+		resp.Delay = parseDelayDistribution(errs, v, "/response/delayDistribution")
 	}
 
 	if v, ok := doc["chunkedDribbleDelay"]; ok {
@@ -288,7 +289,11 @@ func parseDelays(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp 
 	}
 }
 
-func parseDelayDistribution(errs *wmcompat.ErrorList, raw json.RawMessage, resp *CompiledResponse) {
+// parseDelayDistribution compiles a WireMock delay distribution. The pointer is
+// a parameter because the same document appears under `/response` on a stub and
+// at the root of a settings write, and two parsers would be two answers to the
+// question of what a valid distribution is.
+func parseDelayDistribution(errs *wmcompat.ErrorList, raw json.RawMessage, pointer string) DelayDistribution {
 	var d struct {
 		Type   string   `json:"type"`
 		Lower  *int64   `json:"lower"`
@@ -297,24 +302,23 @@ func parseDelayDistribution(errs *wmcompat.ErrorList, raw json.RawMessage, resp 
 		Sigma  *float64 `json:"sigma"`
 	}
 	if err := json.Unmarshal(raw, &d); err != nil {
-		errs.Addf(wmcompat.CodeMalformed, "/response/delayDistribution",
-			"delayDistribution must be an object")
-		return
+		errs.Addf(wmcompat.CodeMalformed, pointer, "delayDistribution must be an object")
+		return DelayDistribution{}
 	}
 
 	switch d.Type {
 	case "uniform":
 		if d.Lower == nil || d.Upper == nil {
-			errs.Addf(wmcompat.CodeMalformed, "/response/delayDistribution",
+			errs.Addf(wmcompat.CodeMalformed, pointer,
 				"a uniform delayDistribution needs lower and upper")
-			return
+			return DelayDistribution{}
 		}
 		if *d.Lower < 0 || *d.Upper < *d.Lower {
-			errs.Addf(wmcompat.CodeMalformed, "/response/delayDistribution",
+			errs.Addf(wmcompat.CodeMalformed, pointer,
 				"a uniform delayDistribution needs 0 <= lower <= upper")
-			return
+			return DelayDistribution{}
 		}
-		resp.Delay = DelayDistribution{
+		return DelayDistribution{
 			Kind:  DelayUniform,
 			Lower: time.Duration(*d.Lower) * time.Millisecond,
 			Upper: time.Duration(*d.Upper) * time.Millisecond,
@@ -322,29 +326,30 @@ func parseDelayDistribution(errs *wmcompat.ErrorList, raw json.RawMessage, resp 
 
 	case "lognormal":
 		if d.Median == nil || d.Sigma == nil {
-			errs.Addf(wmcompat.CodeMalformed, "/response/delayDistribution",
+			errs.Addf(wmcompat.CodeMalformed, pointer,
 				"a lognormal delayDistribution needs median and sigma")
-			return
+			return DelayDistribution{}
 		}
 		if *d.Median < 0 || *d.Sigma < 0 {
-			errs.Addf(wmcompat.CodeMalformed, "/response/delayDistribution",
+			errs.Addf(wmcompat.CodeMalformed, pointer,
 				"a lognormal delayDistribution needs a non-negative median and sigma")
-			return
+			return DelayDistribution{}
 		}
-		resp.Delay = DelayDistribution{
+		return DelayDistribution{
 			Kind:   DelayLogNormal,
 			Median: time.Duration(*d.Median) * time.Millisecond,
 			Sigma:  *d.Sigma,
 		}
 
 	case "":
-		errs.Addf(wmcompat.CodeMalformed, "/response/delayDistribution",
+		errs.Addf(wmcompat.CodeMalformed, pointer,
 			"delayDistribution needs a type of uniform or lognormal")
 
 	default:
-		errs.Addf(wmcompat.CodeMalformed, "/response/delayDistribution",
+		errs.Addf(wmcompat.CodeMalformed, pointer,
 			fmt.Sprintf("unknown delayDistribution type %q, want uniform or lognormal", d.Type))
 	}
+	return DelayDistribution{}
 }
 
 func parseFault(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp *CompiledResponse) {

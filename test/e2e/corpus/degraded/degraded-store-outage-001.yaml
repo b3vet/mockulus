@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: Apache-2.0
+id: degraded-store-outage-001
+behaviors:
+  - B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED
+  - B-ERR-1020
+  - B-METRIC-STORE-ERRORS-TOTAL
+# The run has one Couchbase and every store deployment shares it, so taking it
+# away is a claim on the run rather than on this deployment.
+requires: [couchbase, exclusive]
+# n/a: WireMock keeps its stubs in the process that serves them, so it has no
+# store to lose and no degraded mode to answer with. The expectations come from
+# the §4.6 table.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"4d000001-0000-4000-8000-000000000001",
+         "persistent": true,
+         "request":{"method":"GET","urlPath":"/e2e/degraded-store-outage-001/order"},
+         "response":{"status":200,"body":"served from the snapshot"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/degraded-store-outage-001/order}
+    expect: {status: 200, body: "served from the snapshot"}
+
+  # The store goes away under a pod that is already serving.
+  - stop_store: true
+
+  # This is the half of §4.6 an on-call engineer is depending on. Mock traffic is
+  # served from the compiled snapshot and touches no store on the request path
+  # (P1), so a cluster outage is not a traffic outage: the suites pointed at this
+  # deployment keep passing while somebody fixes Couchbase.
+  - request: {port: mock, method: GET, path: /e2e/degraded-store-outage-001/order}
+    expect: {status: 200, body: "served from the snapshot"}
+
+  # Liveness never consults the store — an outage that restarted every pod would
+  # turn a recoverable incident into a rollout — and readiness stays 200 because
+  # readiness means "this pod can serve", which it demonstrably can. A pod pulled
+  # out of the Service here would take its own snapshot out of rotation with it.
+  - admin: {method: GET, path: /healthz}
+    expect: {status: 200}
+  - admin: {method: GET, path: /readyz}
+    expect: {status: 200}
+
+  # Admin reads the snapshot can answer keep answering, listing included: the
+  # listing is rendered from the snapshot, not re-read from the store.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match:
+            id: "4d000001-0000-4000-8000-000000000001"
+            response: {status: 200, body: "served from the snapshot"}
+
+  - admin: {method: GET, path: /__admin/mappings/4d000001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset: {id: "4d000001-0000-4000-8000-000000000001"}
+
+  # Writes are the ones that stop, and they stop loudly. 503 rather than a 500
+  # so a client retries, and code 1020 rather than a bare status so a suite can
+  # tell "the store is down" from "your stub was rejected" and wait instead of
+  # failing (Appendix B).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request":{"method":"GET","urlPath":"/e2e/degraded-store-outage-001/refused"},
+         "response":{"status":200,"body":"never registered"}}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  - admin:
+      method: PUT
+      path: /__admin/mappings/4d000001-0000-4000-8000-000000000001
+      body: |
+        {"request":{"method":"GET","urlPath":"/e2e/degraded-store-outage-001/order"},
+         "response":{"status":200,"body":"never applied"}}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - admin: {method: DELETE, path: /__admin/mappings/4d000001-0000-4000-8000-000000000001}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # Nothing the refused writes described took effect: the stub still answers with
+  # what it was registered with, which is what makes 1020 a rejection rather than
+  # a report on a partial write.
+  - request: {port: mock, method: GET, path: /e2e/degraded-store-outage-001/order}
+    expect: {status: 200, body: "served from the snapshot"}
+
+  # The failure is counted per operation, which is what tells an operator whether
+  # the store is refusing everything or only one class of call. `next_seq` is
+  # where the create above stopped: it is the first store round trip a create
+  # with a server-assigned id makes.
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="next_seq"}', at_least: 1}
+  - metricsprobe: {series: 'mockulus_store_errors_total', at_least: 3}
+
+  - start_store: true
+
+  # Recovery is asserted with a read rather than a write, because a poll that
+  # writes cannot be retried: a create that reached the store and failed on the
+  # epoch bump afterwards would answer 409 on the next attempt and never come
+  # back green. An unknown id is the cheapest call that has to leave the snapshot
+  # — 503 while the store is away, 404 once it answers again.
+  - admin: {method: GET, path: /__admin/mappings/4d000001-0000-4000-8000-0000000000ff}
+    expect_eventually: {status: 404, within: 60s}
+
+  # And writes come back on their own, with nothing having restarted: the mode
+  # buffers nothing, so there is no reconciliation to get wrong (§4.4).
+  - admin: {method: DELETE, path: /__admin/mappings/4d000001-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/degraded-store-outage-001/order}
+    expect: {status: 404}

@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -44,6 +45,33 @@ type StoredStub struct {
 type StoredFile struct {
 	Name string
 	Data []byte
+}
+
+// StoredSettings is the envelope the deployment's global settings are persisted
+// in — the `meta::settings` document of SPEC §7.2. The settings JSON is kept
+// verbatim for the same reason a mapping is: a GET must return what was
+// written, not this build's idea of it.
+type StoredSettings struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
+	Settings      json.RawMessage `json:"settings"`
+}
+
+// PersistentMapping returns a stub mapping with its `persistent` field set to
+// true, which is half of what `POST /__admin/mappings/save` records.
+//
+// The envelope flag alone would not do. It is what the TTL keys off, but it is
+// not what a client sees: a GET returns the mapping document, and WireMock's
+// save writes the flag into that document. Leaving the two out of step means a
+// saved stub reads back as ephemeral, and a later PUT echoing what it read
+// silently un-persists it (SPEC §5.1, deviation #4).
+func PersistentMapping(mapping json.RawMessage) (json.RawMessage, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(mapping, &doc); err != nil {
+		return nil, fmt.Errorf("stub mapping is not a JSON object: %w", err)
+	}
+	doc["persistent"] = json.RawMessage("true")
+	return json.Marshal(doc)
 }
 
 // StubStore is the persistence interface the snapshot builder and the admin API
@@ -86,8 +114,18 @@ type StubStore interface {
 	// Epoch reads the change counter; this is the one call the poller makes
 	// every sync_interval, so it must stay cheap (SPEC §8).
 	Epoch(ctx context.Context) (uint64, error)
-	// BumpEpoch records that mappings or files changed.
+	// BumpEpoch records that mappings, files or settings changed.
 	BumpEpoch(ctx context.Context) (uint64, error)
+
+	// GetSettings reads the global settings document, or ErrNotFound when the
+	// deployment has never written one.
+	GetSettings(ctx context.Context) (StoredSettings, error)
+	// PutSettings replaces the global settings document. It sits beside the
+	// epoch rather than inside LoadAll because it is one small meta key, not
+	// part of the bulk state that serves traffic; the caller bumps the epoch
+	// after it, and that is what carries the change to the other replicas
+	// (SPEC §5.1, §8).
+	PutSettings(ctx context.Context, settings StoredSettings) error
 
 	// Close releases driver resources.
 	Close(ctx context.Context) error

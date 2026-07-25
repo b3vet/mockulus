@@ -28,6 +28,7 @@ import (
 
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/metrics"
+	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
 // adminPrefix is the path prefix the WireMock admin API lives under.
@@ -42,7 +43,9 @@ type Options struct {
 
 	// Mock handles stub traffic on the mock port.
 	Mock http.Handler
-	// Admin handles /__admin/** on both ports.
+	// Admin handles /__admin/** on both ports. It may be nil at construction
+	// and installed later with SetAdmin, which is what lets the admin listener
+	// bind before the store has connected (SPEC §4.4 step 2).
 	Admin http.Handler
 }
 
@@ -54,6 +57,11 @@ type Server struct {
 
 	mock  *http.Server
 	admin *http.Server
+
+	// adminAPI is swapped in once the store is connected. Until then the
+	// listener is already serving, and /__admin/** answers 503 rather than 404
+	// — the endpoints exist, the deployment just cannot reach its store yet.
+	adminAPI atomic.Pointer[http.Handler]
 
 	ready atomic.Bool
 
@@ -69,8 +77,12 @@ func New(opts Options) *Server {
 		metrics: opts.Metrics,
 	}
 
+	if opts.Admin != nil {
+		s.adminAPI.Store(&opts.Admin)
+	}
+
 	s.mock = &http.Server{
-		Handler:           s.mockHandler(s.mockRouter(opts.Mock, opts.Admin)),
+		Handler:           s.mockHandler(s.mockRouter(opts.Mock, s.pendingAdmin())),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       75 * time.Second,
 		MaxHeaderBytes:    1 << 20,
@@ -80,7 +92,7 @@ func New(opts Options) *Server {
 	}
 
 	s.admin = &http.Server{
-		Handler:           s.adminRouter(opts.Admin),
+		Handler:           s.adminRouter(s.pendingAdmin()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       75 * time.Second,
 		MaxHeaderBytes:    1 << 20,
@@ -88,6 +100,31 @@ func New(opts Options) *Server {
 		ErrorLog:          slog.NewLogLogger(opts.Logger.With("listener", "admin").Handler(), slog.LevelDebug),
 	}
 	return s
+}
+
+// SetAdmin installs the admin API once its dependencies exist.
+//
+// Startup binds the admin listener before it connects the store, so that a pod
+// waiting on a slow or absent Couchbase is still answering /healthz and /readyz
+// (SPEC §4.4 step 2). That ordering is the difference between a pod Kubernetes
+// leaves alone to retry and one it restarts into CrashLoopBackOff — but the
+// admin API itself needs the store, so the two cannot come up together.
+func (s *Server) SetAdmin(h http.Handler) { s.adminAPI.Store(&h) }
+
+// pendingAdmin dispatches to the installed admin API, or reports the store as
+// unavailable while there is none.
+//
+// The indirection costs one atomic load per admin request and none at all on
+// the mock path, since the mock router only reaches it for a /__admin prefix.
+func (s *Server) pendingAdmin() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h := s.adminAPI.Load(); h != nil {
+			(*h).ServeHTTP(w, r)
+			return
+		}
+		wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeStoreUnavailable,
+			"the store is not connected yet; this pod is still starting"))
+	})
 }
 
 // mockHandler wraps the mock router in cleartext HTTP/2 when h2c is enabled.

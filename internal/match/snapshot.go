@@ -44,6 +44,13 @@ type Snapshot struct {
 	// and template kinds, and stubs with no URL criterion at all.
 	Patterns []int32
 
+	// Settings is the deployment's global response delay, or nil when nobody has
+	// set one. It rides here rather than in a mutex-guarded field because the
+	// serve path reads it on every matched response, and the snapshot pointer it
+	// already loads is the cheapest place to put it (P1). Nil rather than a zero
+	// value so an unconfigured instance skips the composition outright (P2).
+	Settings *stub.Settings
+
 	// byID indexes Ordered by stub id, for admin reads off the hot path.
 	byID map[string]*stub.CompiledStub
 	// scenarios maps a scenario name to the states its member stubs mention.
