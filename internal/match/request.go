@@ -189,6 +189,10 @@ func (r *ParsedRequest) PathVarSubject(name string) matchers.Subject {
 	return &r.keyScratch
 }
 
+// PathVars exposes the bindings of the stub that matched, which a response
+// template reads as request.path.<name>.
+func (r *ParsedRequest) PathVars() map[string]string { return r.pathVars }
+
 // BindPathVar records a path-template binding for the stub being evaluated.
 func (r *ParsedRequest) BindPathVar(name, value string) { r.pathVars[name] = value }
 

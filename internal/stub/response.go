@@ -25,7 +25,7 @@ var supportedResponseFields = map[string]bool{
 // bodyFields are the four mutually exclusive ways to state a response body.
 var bodyFields = []string{"body", "jsonBody", "base64Body", "bodyFileName"}
 
-func parseResponse(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledStub, _ Options) {
+func parseResponse(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledStub, opts Options) {
 	resp := &cs.Response
 	resp.Status = 200
 
@@ -50,6 +50,8 @@ func parseResponse(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledSt
 	parseDelays(errs, doc, resp)
 	parseFault(errs, doc, resp)
 	parseTransformers(errs, doc, resp)
+
+	compileTemplates(errs, cs, opts)
 
 	if resp.Fault != "" && len(resp.Body) > 0 {
 		// A fault replaces the response rather than decorating it; a stub
@@ -352,12 +354,61 @@ func parseTransformers(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 	}
 
 	if v, ok := doc["transformerParameters"]; ok {
-		var check map[string]json.RawMessage
-		if err := json.Unmarshal(v, &check); err != nil {
+		var params map[string]any
+		if err := json.Unmarshal(v, &params); err != nil {
 			errs.Addf(wmcompat.CodeMalformed, "/response/transformerParameters",
 				"transformerParameters must be a JSON object")
 			return
 		}
-		resp.TransformerParameters = append(json.RawMessage(nil), v...)
+		resp.TransformerParameters = params
+	}
+}
+
+// disableBodyTemplating is the per-stub opt-out of SPEC §10.1.
+const disableBodyTemplating = "disableBodyTemplating"
+
+// compileTemplates parses the response's templated parts at registration, so a
+// parse error or an unknown helper is a 422 here rather than a broken response
+// on every request afterwards (P3, deviation #13).
+func compileTemplates(errs *wmcompat.ErrorList, cs *CompiledStub, opts Options) {
+	resp := &cs.Response
+
+	active := resp.Templated || opts.GlobalTemplating
+	if !active || opts.CompileTemplate == nil {
+		return
+	}
+	resp.Templated = true
+
+	// The opt-out covers the body only; headers stay templated, which is what
+	// the field name says and what makes it useful for a stub whose body is
+	// binary or already carries braces.
+	bodyDisabled := false
+	if raw, ok := resp.TransformerParameters[disableBodyTemplating]; ok {
+		if b, isBool := raw.(bool); isBool {
+			bodyDisabled = b
+		}
+	}
+
+	// A value with no braces never reaches the engine, which is what keeps
+	// templating free for the parts of a stub that do not use it.
+	if !bodyDisabled && IsTemplated(string(resp.Body)) {
+		tpl, err := opts.CompileTemplate(string(resp.Body))
+		if err != nil {
+			errs.Addf(wmcompat.CodeTemplate, "/response/body", err.Error())
+		} else {
+			resp.BodyTemplate = tpl
+		}
+	}
+
+	for i, h := range resp.Headers {
+		if !IsTemplated(h.Value) {
+			continue
+		}
+		tpl, err := opts.CompileTemplate(h.Value)
+		if err != nil {
+			errs.Addf(wmcompat.CodeTemplate, "/response/headers/"+h.Name, err.Error())
+			continue
+		}
+		resp.HeaderTemplates = append(resp.HeaderTemplates, HeaderTemplate{Index: i, Template: tpl})
 	}
 }

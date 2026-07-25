@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/b3vet/mockulus/internal/handlebars"
 	"github.com/b3vet/mockulus/internal/matchers"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
@@ -36,7 +37,23 @@ type Options struct {
 	// CompileRegex builds patterns for regex criteria, carrying the engine
 	// choice, the anchoring policy and the match timeout.
 	CompileRegex matchers.RegexCompiler
+	// CompileTemplate parses a response template and rejects unknown helpers.
+	// Nil disables templating entirely, which is what `templating_enabled: off`
+	// means.
+	CompileTemplate TemplateCompiler
+	// GlobalTemplating forces templating on for every stub, whether or not it
+	// declares the transformer.
+	//
+	// The default is off, because the pinned WireMock requires the per-stub
+	// declaration: a stub without it serves `{{request.path}}` literally,
+	// verified directly. That makes `wm-compat` the same as off here, and makes
+	// a literal `{{` in mock data safe by default (SPEC §10.1).
+	GlobalTemplating bool
 }
+
+// TemplateCompiler parses a template, returning an error for a parse failure or
+// a helper outside the allowlist.
+type TemplateCompiler func(source string) (*handlebars.Template, error)
 
 // supportedTopLevel lists the mapping fields this build accepts.
 var supportedTopLevel = map[string]bool{
