@@ -1,0 +1,11 @@
+Mockulus
+Copyright 2026 The Mockulus contributors
+
+Licensed under the Apache License, Version 2.0 — see the LICENSE file.
+
+Mockulus is not affiliated with, endorsed by, or sponsored by the
+WireMock project or WireMock Inc. "WireMock" is used solely to describe
+API compatibility.
+
+Third-party attributions — including the vendored MIT-licensed Handlebars
+engine under internal/handlebars — are listed in THIRD_PARTY_LICENSES.

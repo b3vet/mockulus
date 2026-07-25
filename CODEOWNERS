@@ -1,0 +1,15 @@
+# Review routing. Everything has an owner; the compatibility surface, the spec
+# and the regression gate are called out because a change there is a change to
+# what mockulus promises.
+
+*                       @b3vet
+
+# The compatibility contract and its oracle.
+/SPEC.md                @b3vet
+/ROADMAP.md             @b3vet
+/internal/wmcompat/     @b3vet
+/internal/stub/         @b3vet
+/test/e2e/              @b3vet
+
+# The gate everything ships through.
+/.github/workflows/     @b3vet
