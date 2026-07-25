@@ -3,18 +3,21 @@
 package match
 
 import (
+	"io"
 	"net/http"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/response"
+	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
-// UnmatchedBody is the plain-text body WireMock returns when no stub matched.
-// Its exact wording is pending differential verification (SPEC §5.4 [DH]); the
-// corpus pins it the moment topology T5 resolves it.
+// UnmatchedBody is the plain-text body returned when no stub matched. Its exact
+// wording is pending differential verification (SPEC §5.4); the corpus pins it
+// the moment topology T5 resolves it.
 const UnmatchedBody = "Request was not matched\n"
 
 // Engine serves mock traffic from the current snapshot. It holds that snapshot
@@ -24,11 +27,17 @@ const UnmatchedBody = "Request was not matched\n"
 type Engine struct {
 	snapshot atomic.Pointer[Snapshot]
 	metrics  *metrics.Metrics
+	cfg      config.Config
+
+	// gate is consulted for stubs in a scenario. It is nil until the scenario
+	// client is wired in, and nil means scenario-gated stubs match on their
+	// other criteria alone.
+	gate atomic.Pointer[ScenarioGate]
 }
 
 // NewEngine returns an engine serving an empty snapshot.
-func NewEngine(m *metrics.Metrics) *Engine {
-	e := &Engine{metrics: m}
+func NewEngine(cfg config.Config, m *metrics.Metrics) *Engine {
+	e := &Engine{metrics: m, cfg: cfg}
 	e.snapshot.Store(EmptySnapshot())
 	return e
 }
@@ -45,24 +54,69 @@ func (e *Engine) Swap(s *Snapshot) {
 	e.metrics.SnapshotEpoch.Set(float64(s.Epoch))
 }
 
-// ServeHTTP is the mock-port handler: one atomic load, one match, one write.
+// SetScenarioGate installs the scenario state check.
+func (e *Engine) SetScenarioGate(gate ScenarioGate) { e.gate.Store(&gate) }
+
+// ServeHTTP is the mock-port handler: read the body, one atomic load, one
+// match, one write.
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	body, ok := e.readBody(w, r)
+	if !ok {
+		e.observe(false, http.StatusRequestEntityTooLarge, 0, time.Since(start))
+		return
+	}
+
+	pr := AcquireRequest(r, body)
+	defer ReleaseRequest(pr)
+
 	snap := e.snapshot.Load()
 
-	path, full := SplitURL(r.URL.RequestURI())
+	var gate ScenarioGate
+	if g := e.gate.Load(); g != nil {
+		gate = *g
+	}
+
 	candidates := 0
-	cs := snap.Match(r.Method, path, full, &candidates)
+	cs := snap.Match(pr, gate, &candidates)
 
 	status := http.StatusNotFound
 	if cs != nil {
-		status = cs.Response.Status
-		response.Write(w, &cs.Response)
+		status = response.Write(w, r, &cs.Response, e.cfg.WriteSlack.D())
 	} else {
 		writeUnmatched(w)
 	}
 
 	e.observe(cs != nil, status, candidates, time.Since(start))
+}
+
+// readBody reads the request body under the configured cap. Matching needs the
+// whole body anyway, so it is read once here rather than streamed.
+func (e *Engine) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	if r.Body == nil {
+		return nil, true
+	}
+	cap := e.cfg.MaxBodyBytes.B()
+	if cap <= 0 {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, true
+		}
+		return body, true
+	}
+
+	// Read one byte past the cap so exceeding it is detectable.
+	body, err := io.ReadAll(io.LimitReader(r.Body, cap+1))
+	if err != nil {
+		return nil, true
+	}
+	if int64(len(body)) > cap {
+		wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeBodyTooLarge,
+			"request body exceeds max_body_bytes"))
+		return nil, false
+	}
+	return body, true
 }
 
 func writeUnmatched(w http.ResponseWriter) {

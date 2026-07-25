@@ -21,6 +21,7 @@ import (
 	"github.com/b3vet/mockulus/internal/match"
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/store"
+	"github.com/b3vet/mockulus/internal/stub"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
@@ -38,6 +39,9 @@ type Options struct {
 	Store   store.StubStore
 	Engine  *match.Engine
 	Builder *match.Builder
+	// StubOptions carries the regex policy, so admin writes compile a stub
+	// exactly as a snapshot rebuild would.
+	StubOptions stub.Options
 }
 
 // Handler serves the admin API.
@@ -47,9 +51,10 @@ type Handler struct {
 	metrics *metrics.Metrics
 	version string
 
-	store   store.StubStore
-	engine  *match.Engine
-	builder *match.Builder
+	store    store.StubStore
+	engine   *match.Engine
+	builder  *match.Builder
+	stubOpts stub.Options
 
 	mux http.Handler
 }
@@ -57,13 +62,14 @@ type Handler struct {
 // New builds the admin handler and its routing table.
 func New(opts Options) *Handler {
 	h := &Handler{
-		cfg:     opts.Config,
-		log:     opts.Logger,
-		metrics: opts.Metrics,
-		version: opts.Version,
-		store:   opts.Store,
-		engine:  opts.Engine,
-		builder: opts.Builder,
+		cfg:      opts.Config,
+		log:      opts.Logger,
+		metrics:  opts.Metrics,
+		version:  opts.Version,
+		store:    opts.Store,
+		engine:   opts.Engine,
+		builder:  opts.Builder,
+		stubOpts: opts.StubOptions,
 	}
 
 	mux := http.NewServeMux()

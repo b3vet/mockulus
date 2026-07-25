@@ -28,10 +28,11 @@ const (
 // writer: admin-triggered and poller-triggered rebuilds serialise through one
 // mutex, and concurrent triggers coalesce rather than queue (SPEC §6.2).
 type Builder struct {
-	store   store.StubStore
-	engine  *Engine
-	log     *slog.Logger
-	metrics *metrics.Metrics
+	store    store.StubStore
+	engine   *Engine
+	log      *slog.Logger
+	metrics  *metrics.Metrics
+	stubOpts stub.Options
 
 	mu sync.Mutex
 	// dirty records that a change arrived while a rebuild was already running,
@@ -39,9 +40,12 @@ type Builder struct {
 	dirty atomic.Bool
 }
 
-// NewBuilder wires a builder to its store and engine.
-func NewBuilder(st store.StubStore, engine *Engine, log *slog.Logger, m *metrics.Metrics) *Builder {
-	return &Builder{store: st, engine: engine, log: log, metrics: m}
+// NewBuilder wires a builder to its store and engine. stubOpts carries the
+// regex policy so every compilation in the process — admin writes and snapshot
+// rebuilds alike — uses exactly the same one.
+func NewBuilder(st store.StubStore, engine *Engine, log *slog.Logger,
+	m *metrics.Metrics, stubOpts stub.Options) *Builder {
+	return &Builder{store: st, engine: engine, log: log, metrics: m, stubOpts: stubOpts}
 }
 
 // Rebuild reloads every document from the store, compiles them and swaps the
@@ -116,14 +120,15 @@ func (b *Builder) compile(doc store.StoredStub) (*stub.CompiledStub, string) {
 		return nil, quarantineDecode
 	}
 
-	m, errs := stub.Parse(doc.Mapping)
+	cs, errs := stub.Compile(doc.Mapping, doc.Seq, b.stubOpts)
 	if errs != nil {
 		b.log.Warn("stub quarantined: mapping does not compile",
 			"id", doc.ID, "problems", len(errs.Errors()))
 		return nil, quarantineStub
 	}
-	if m.ID == "" {
-		m.ID = doc.ID
+	if cs.ID == "" {
+		cs.ID = doc.ID
 	}
-	return stub.Compile(m, doc.Seq), ""
+	cs.Persistent = doc.Persistent
+	return cs, ""
 }
