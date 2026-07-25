@@ -15,9 +15,26 @@ import (
 // that registers successfully will match, and a stub that cannot is rejected
 // with every problem named at once (P3).
 
+// ProblemKind classifies a compilation problem, so the caller can map it onto
+// the right catalog code without matching on error text.
+type ProblemKind uint8
+
+const (
+	// ProblemMalformed is a document that does not say a valid thing.
+	ProblemMalformed ProblemKind = iota
+	// ProblemDeferred is a feature that exists in WireMock and is on the roadmap.
+	ProblemDeferred
+	// ProblemRegex is a regular expression that compiles on neither engine.
+	ProblemRegex
+	// ProblemJSONPath is a JSONPath expression that does not parse.
+	ProblemJSONPath
+)
+
 // Problem is one reason a matcher document was rejected. The caller maps it
 // onto the error catalog of SPEC Appendix B.
 type Problem struct {
+	// Kind classifies the problem for the error catalog.
+	Kind ProblemKind
 	// Pointer is the JSON pointer of the offending element, relative to the
 	// document root the caller supplied.
 	Pointer string
@@ -41,22 +58,25 @@ type RegexCompiler func(pattern string) (PatternMatcher, error)
 type Options struct {
 	// CompileRegex builds patterns for `matches` and `doesNotMatch`.
 	CompileRegex RegexCompiler
+	// CompileJSONPath builds path evaluators for `matchesJsonPath`.
+	CompileJSONPath JSONPathCompiler
 }
+
+// JSONPathCompiler builds a compiled path evaluator.
+type JSONPathCompiler func(expr string) (JSONPathEvaluator, error)
 
 // deferredMatchers are WireMock matchers mockulus does not implement yet. They
 // are named individually so the 422 tells a team exactly which roadmap item
 // they are waiting on, rather than a generic refusal.
 var deferredMatchers = map[string]string{
-	"before":               "the before date-time matcher",
-	"after":                "the after date-time matcher",
-	"equalToDateTime":      "the equalToDateTime matcher",
-	"matchesJsonSchema":    "matchesJsonSchema",
-	"equalToXml":           "equalToXml (XML matching)",
-	"matchesXPath":         "matchesXPath (XPath matching)",
-	"hasExactly":           "the hasExactly multi-value operator",
-	"includes":             "the includes multi-value operator",
-	"matchesJsonPath":      "matchesJsonPath",
-	"doesNotMatchJsonPath": "doesNotMatchJsonPath",
+	"before":            "the before date-time matcher",
+	"after":             "the after date-time matcher",
+	"equalToDateTime":   "the equalToDateTime matcher",
+	"matchesJsonSchema": "matchesJsonSchema",
+	"equalToXml":        "equalToXml (XML matching)",
+	"matchesXPath":      "matchesXPath (XPath matching)",
+	"hasExactly":        "the hasExactly multi-value operator",
+	"includes":          "the includes multi-value operator",
 }
 
 // modifierKeys are recognised alongside a matcher rather than being matchers
@@ -68,7 +88,6 @@ var modifierKeys = map[string]bool{
 	"truncateExpectedTo":  true,
 	"truncateActualTo":    true,
 	"expectedOffset":      true,
-	"expression":          true,
 }
 
 // Compile builds a matcher from one matcher document.
@@ -99,6 +118,7 @@ func Compile(raw json.RawMessage, pointer string, opts Options) (Matcher, []Prob
 		}
 		if feature, deferred := deferredMatchers[key]; deferred {
 			problems = append(problems, Problem{
+				Kind:     ProblemDeferred,
 				Pointer:  pointer + "/" + key,
 				Detail:   feature + " is not supported in mockulus v1",
 				Deferred: true,
@@ -175,7 +195,8 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		}
 		p, err := opts.CompileRegex(s)
 		if err != nil {
-			return nil, []Problem{{Pointer: at, Detail: "regular expression does not compile: " + err.Error()}}
+			return nil, []Problem{{Kind: ProblemRegex, Pointer: at,
+				Detail: "regular expression does not compile: " + err.Error()}}
 		}
 		return &Regex{Pattern: p, Negate: key == "doesNotMatch"}, nil
 
@@ -209,6 +230,64 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 			IgnoreArrayOrder:    boolField(doc, "ignoreArrayOrder"),
 			IgnoreExtraElements: boolField(doc, "ignoreExtraElements"),
 		}, nil
+
+	case "matchesJsonPath", "doesNotMatchJsonPath":
+		if opts.CompileJSONPath == nil {
+			return fail("no JSONPath engine is configured")
+		}
+		negate := key == "doesNotMatchJsonPath"
+
+		// The bare form is a string; the nested form is an object carrying the
+		// expression plus an inner matcher.
+		var expr string
+		if err := json.Unmarshal(value, &expr); err == nil {
+			path, err := opts.CompileJSONPath(expr)
+			if err != nil {
+				return nil, []Problem{{Kind: ProblemJSONPath, Pointer: at,
+					Detail: "JSONPath does not compile: " + err.Error()}}
+			}
+			return &MatchesJSONPath{Path: path, Negate: negate}, nil
+		}
+
+		var nested map[string]json.RawMessage
+		if err := json.Unmarshal(value, &nested); err != nil {
+			return fail(key + " takes an expression string or an object with an expression")
+		}
+		rawExpr, hasExpr := nested["expression"]
+		if !hasExpr {
+			return fail(key + " object form needs an expression")
+		}
+		if err := json.Unmarshal(rawExpr, &expr); err != nil {
+			return fail("expression must be a string")
+		}
+		path, err := opts.CompileJSONPath(expr)
+		if err != nil {
+			return nil, []Problem{{Kind: ProblemJSONPath, Pointer: at,
+				Detail: "JSONPath does not compile: " + err.Error()}}
+		}
+
+		// Whatever else the object carries is the inner matcher.
+		inner := make(map[string]json.RawMessage, len(nested))
+		for k, v := range nested {
+			if k == "expression" {
+				continue
+			}
+			inner[k] = v
+		}
+		if len(inner) == 0 {
+			// An object form with no inner matcher is the bare form written the
+			// long way.
+			return &MatchesJSONPath{Path: path, Negate: negate}, nil
+		}
+		encoded, err := json.Marshal(inner)
+		if err != nil {
+			return fail("could not read the nested matcher")
+		}
+		innerMatcher, problems := Compile(encoded, at, opts)
+		if len(problems) > 0 {
+			return nil, problems
+		}
+		return &MatchesJSONPath{Path: path, Inner: innerMatcher, Negate: negate}, nil
 
 	case "and", "or":
 		var items []json.RawMessage

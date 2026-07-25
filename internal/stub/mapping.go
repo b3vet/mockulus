@@ -37,6 +37,8 @@ type Options struct {
 	// CompileRegex builds patterns for regex criteria, carrying the engine
 	// choice, the anchoring policy and the match timeout.
 	CompileRegex matchers.RegexCompiler
+	// CompileJSONPath builds path evaluators for matchesJsonPath.
+	CompileJSONPath matchers.JSONPathCompiler
 	// CompileTemplate parses a response template and rejects unknown helpers.
 	// Nil disables templating entirely, which is what `templating_enabled: off`
 	// means.
@@ -54,6 +56,15 @@ type Options struct {
 // TemplateCompiler parses a template, returning an error for a parse failure or
 // a helper outside the allowlist.
 type TemplateCompiler func(source string) (*handlebars.Template, error)
+
+// matcherOptions projects the compile options onto what the matcher package
+// needs, so every matcher in the process is built the same way.
+func (o Options) matcherOptions() matchers.Options {
+	return matchers.Options{
+		CompileRegex:    o.CompileRegex,
+		CompileJSONPath: o.CompileJSONPath,
+	}
+}
 
 // supportedTopLevel lists the mapping fields this build accepts.
 var supportedTopLevel = map[string]bool{
@@ -396,8 +407,7 @@ func parseKeyCriteria(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 
 	out := make([]KeyCriterion, 0, len(entries))
 	for _, name := range sortedKeys(entries) {
-		m, problems := matchers.Compile(entries[name], pointer+"/"+name,
-			matchers.Options{CompileRegex: opts.CompileRegex})
+		m, problems := matchers.Compile(entries[name], pointer+"/"+name, opts.matcherOptions())
 		if len(problems) > 0 {
 			addMatcherProblems(errs, problems)
 			continue
@@ -445,7 +455,7 @@ func parseBodyPatterns(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 
 	for i, item := range items {
 		m, problems := matchers.Compile(item, fmt.Sprintf("/request/bodyPatterns/%d", i),
-			matchers.Options{CompileRegex: opts.CompileRegex})
+			opts.matcherOptions())
 		if len(problems) > 0 {
 			addMatcherProblems(errs, problems)
 			continue
@@ -494,12 +504,17 @@ func maxCost(ms []matchers.Matcher) int {
 }
 
 // addMatcherProblems maps matcher-compilation problems onto the error catalog.
+//
+// The mapping is on the problem's kind rather than its text: an expression that
+// "does not compile" could be a regex or a JSONPath, and reporting a bad
+// JSONPath as an invalid regular expression sends the author looking in the
+// wrong place.
 func addMatcherProblems(errs *wmcompat.ErrorList, problems []matchers.Problem) {
 	for _, p := range problems {
-		switch {
-		case p.Deferred:
+		switch p.Kind {
+		case matchers.ProblemDeferred:
 			errs.Unsupported(p.Pointer, p.Feature)
-		case strings.Contains(p.Detail, "does not compile"):
+		case matchers.ProblemRegex:
 			errs.Addf(wmcompat.CodeRegex, p.Pointer, p.Detail)
 		default:
 			errs.Addf(wmcompat.CodeMalformed, p.Pointer, p.Detail)
