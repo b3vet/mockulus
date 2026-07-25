@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-queryparameters-empty-002
+behaviors: [B-REQ-QUERYPARAMETERS, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A criterion demanding the empty string is the only way to observe the
+  # difference between "present with no value" and "absent".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0008-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-queryparameters-empty-002/flag",
+                     "queryParameters": {"flag": {"equalTo": ""}}},
+         "response": {"status": 200, "body": "flag-empty", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            flag: {equalTo: ""}
+
+  # Query parameter NAMES are case-sensitive — unlike header names. The two
+  # stubs below sit on separate paths so neither can mask the other.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0008-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-queryparameters-empty-002/case",
+                     "queryParameters": {"Tenant": {"equalTo": "acme"}}},
+         "response": {"status": 200, "body": "case-sensitive", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # `?flag=` is present with the empty string.
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-empty-002/flag?flag="}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "flag-empty"
+
+  # And so is bare `?flag`, with no `=` at all. Both spellings are
+  # present-with-empty-string and neither is ever absent (SPEC §5.2).
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-empty-002/flag?flag"}
+    expect: {status: 200, body: "flag-empty"}
+
+  # The negatives that give the two steps above their meaning: a real value
+  # fails the equalTo, and a missing parameter fails the criterion outright.
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-empty-002/flag?flag=x"}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/url-criteria-queryparameters-empty-002/flag}
+    expect: {status: 404}
+
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-empty-002/case?Tenant=acme"}
+    expect: {status: 200, body: "case-sensitive"}
+
+  # Same name, different case, same value: not a match. A team migrating from a
+  # framework that folds parameter case has to know this.
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-empty-002/case?tenant=acme"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-empty-002/case?TENANT=acme"}
+    expect: {status: 404}

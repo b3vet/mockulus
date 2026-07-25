@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-timeout-001
+behaviors:
+  - B-CFG-REGEX-TIMEOUT
+  - B-DEV-DEVIATION-12
+  - B-METRIC-REGEX-TIMEOUTS-TOTAL
+# Mockulus-specific by construction. WireMock has one engine and no match
+# budget: the same stub and the same request would occupy a WireMock worker
+# thread until the pattern finished, so there is no oracle answer to diff
+# against and `verified` would be a lie.
+wm: n/a
+steps:
+  # `(a+)+b` is the textbook catastrophic-backtracking shape, and the trailing
+  # `(?!x)` is what puts it on the backtracking engine: RE2 refuses the negative
+  # lookahead, and RE2 would otherwise have matched this in linear time. So this
+  # stub is exactly the combination deviation #12 exists for — a pattern a Java
+  # author may legitimately write, which the safe engine cannot take.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110008-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/regex-timeout-001/(a+)+b(?!x)"},
+         "response": {"status": 200, "body": "fallback matched"}}
+    expect: {status: 201}
+
+  # The control first: a subject the pattern settles quickly is served normally.
+  # Without it, every assertion below would also be satisfied by a stub that had
+  # been quarantined, or by a matcher that never runs.
+  - request: {port: mock, method: GET, path: /e2e/regex-timeout-001/aaab}
+    expect: {status: 200, body: "fallback matched"}
+
+  # The assertion: a subject with no `b` makes the engine try every partition of
+  # the a-run before it can conclude anything. It must come back as an ordinary
+  # non-match rather than holding the connection — a hang here is the failure
+  # mode the whole two-engine trade is designed around, and it would surface as
+  # this step timing out instead of failing.
+  - request: {port: mock, method: GET, path: /e2e/regex-timeout-001/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+    expect: {status: 404}
+
+  # A second, differently sized subject, so the counter assertion below rests on
+  # two independent abandonments rather than one.
+  - request: {port: mock, method: GET, path: /e2e/regex-timeout-001/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+    expect: {status: 404}
+
+  # Failing closed silently would be its own bug: an operator seeing 404s needs
+  # to be able to tell "no stub matched" from "a stub gave up". Two timeouts
+  # happened in this case, so the counter has moved by at least two — asserted
+  # as a floor because the instance is shared with every other case.
+  - metricsprobe: {series: 'mockulus_regex_timeouts_total', at_least: 2}
+
+  # The metric says how often; the WARN log says which pattern, which is what
+  # makes the offending stub findable in a deployment with thousands of them.
+  - logprobe:
+      json_fields:
+        level: "WARN"
+        msg: "regex match timed out; treating it as a non-match"
+        pattern: "/e2e/regex-timeout-001/(a+)+b(?!x)"
+        timeout: "100ms"
+
+  # The pattern that is abandoned at match time is still a perfectly valid stub:
+  # it was not quarantined, and it still serves the subject it can decide.
+  - request: {port: mock, method: GET, path: /e2e/regex-timeout-001/aaab}
+    expect: {status: 200, body: "fallback matched"}
+
+  # Take the landmine back out. Cases share an instance, and although the
+  # literal prefix keeps this pattern off every other case's requests, leaving a
+  # 100 ms trap registered is not a thing to do to the rest of the suite.
+  - admin: {method: DELETE, path: /__admin/mappings/11110008-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/regex-timeout-001/aaab}
+    expect: {status: 404}

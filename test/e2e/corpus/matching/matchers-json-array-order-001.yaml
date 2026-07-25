@@ -1,0 +1,208 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-array-order-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The control: arrays are ordered sequences unless the stub says otherwise.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0004-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-array-order-001/ordered",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,2,3]}"}]},
+         "response": {"status": 200, "body": "ordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0004-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-array-order-001/unordered",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,2,3],\"o\":{\"ys\":[\"a\",\"b\"]}}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "unordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/ordered
+      body: '{"xs":[1,2,3]}'
+    expect: {status: 200, body: "ordered"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/ordered
+      body: '{"xs":[3,2,1]}'
+    expect: {status: 404}
+
+  # With the flag a permutation matches, and it matches at depth too: the
+  # nested ys is reordered in the same request as the top-level xs.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/unordered
+      body: '{"xs":[3,1,2],"o":{"ys":["b","a"]}}'
+    expect: {status: 200, body: "unordered"}
+
+  # Order is all it relaxes: the same elements must still be there...
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/unordered
+      body: '{"xs":[3,1,4],"o":{"ys":["b","a"]}}'
+    expect: {status: 404}
+
+  # ...in the same number, both short...
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/unordered
+      body: '{"xs":[1,2],"o":{"ys":["a","b"]}}'
+    expect: {status: 404}
+
+  # ...and long.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/unordered
+      body: '{"xs":[1,2,3,4],"o":{"ys":["a","b"]}}'
+    expect: {status: 404}
+
+  # A nested array that is *not* reordered still has to match its expectation,
+  # so the flag cannot be read as "arrays are compared loosely".
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/unordered
+      body: '{"xs":[1,2,3],"o":{"ys":["a","c"]}}'
+    expect: {status: 404}
+
+  # The realistic shape: an array of objects, reordered. Pairing is by whole
+  # element, not by position, so each expected object must find a distinct
+  # partner.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0004-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-array-order-001/objects",
+                     "bodyPatterns": [{"equalToJson": "{\"items\":[{\"id\":1,\"t\":\"a\"},{\"id\":2,\"t\":\"b\"}]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "objects",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/objects
+      body: '{"items":[{"t":"b","id":2},{"t":"a","id":1}]}'
+    expect: {status: 200, body: "objects"}
+
+  # Two copies of one expected element do not stand in for the pair: each
+  # expected element needs a distinct partner.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/objects
+      body: '{"items":[{"id":1,"t":"a"},{"id":1,"t":"a"}]}'
+    expect: {status: 404}
+
+  # ignoreArrayOrder relaxes the order of one array, not the document around it.
+  # The json-unit placeholder here is the control for that: the member it stands
+  # in for accepts anything, and the flag must not quietly extend that licence
+  # to the array's contents.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0004-0000-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-array-order-001/scoped",
+                     "bodyPatterns": [{"equalToJson": "{\"meta\":\"${json-unit.ignore}\",\"xs\":[1,2,3]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "scoped",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/scoped
+      body: '{"meta":{"trace":"anything"},"xs":[2,3,1]}'
+    expect: {status: 200, body: "scoped"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/scoped
+      body: '{"meta":{"trace":"anything"},"xs":[2,3,4]}'
+    expect: {status: 404}
+
+  # A placeholder INSIDE the array is where order-independence is easy to get
+  # wrong. It accepts 2 as readily as 7, so an element can pair with more than
+  # one partner, and pairing them first-come-first-served consumes the partner
+  # the literal 2 needed — which rejects one of the two orders of the same
+  # multiset. Both orders below are the same array; both have to match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0004-0000-4000-8000-000000000005",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-array-order-001/ambiguous",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[\"${json-unit.any-number}\",2]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "ambiguous",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/ambiguous
+      body: '{"xs":[7,2]}'
+    expect: {status: 200, body: "ambiguous"}
+
+  # The same multiset, arrived at in the other order.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/ambiguous
+      body: '{"xs":[2,7]}'
+    expect: {status: 200, body: "ambiguous"}
+
+  # The placeholder may take the second 2, leaving the first for the literal.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/ambiguous
+      body: '{"xs":[2,2]}'
+    expect: {status: 200, body: "ambiguous"}
+
+  # Resolving the ambiguity must not become accepting anything: nothing here
+  # can stand in for the literal 2.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/ambiguous
+      body: '{"xs":[7,9]}'
+    expect: {status: 404}
+
+  # ignoreExtraElements creates the same ambiguity without any placeholder:
+  # {"a":1} matches both actual objects once extra members are ignored, so which
+  # one it is paired with cannot be decided by the order they arrive in.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0004-0000-4000-8000-000000000006",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-array-order-001/subset",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[{\"a\":1},{\"a\":1,\"b\":2}]}",
+                                       "ignoreArrayOrder": true, "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "subset",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/subset
+      body: '{"xs":[{"a":1},{"a":1,"b":2}]}'
+    expect: {status: 200, body: "subset"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-order-001/subset
+      body: '{"xs":[{"a":1,"b":2},{"a":1}]}'
+    expect: {status: 200, body: "subset"}

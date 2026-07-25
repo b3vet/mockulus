@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-collect-all-001
+behaviors: [B-ERR-10, B-ERR-1000, B-ERR-1003, B-DEV-DEVIATION-14]
+# Every code in this answer is mockulus's own; WireMock accepts most of the
+# document and raises none of them.
+wm: n/a
+steps:
+  # One document, five independent problems, spread across the top level, the
+  # request and the response — and one answer listing all five. Failing fast on
+  # the first would cost a CI user one round trip per mistake, which is exactly
+  # what "collect, don't fail-fast" in the error catalog is there to prevent.
+  #
+  # The order is the document walk order: top-level fields first (sorted), then
+  # the request, then the response. Pinning it keeps the answer reproducible for
+  # anyone diffing two runs.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000060",
+         "priority": "high",
+         "postServeActions": [{"name": "webhook"}],
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/errors-collect-all-001/(",
+                     "multipartPatterns": [{"name": "part1"}]},
+         "response": {"status": 200, "proxyBaseUrl": "http://upstream.invalid"}}
+    expect:
+      # 422 is the most severe status among the entries, so a mixed list still
+      # reports as one unprocessable document rather than picking a code's status
+      # at random.
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            title: "Unsupported feature"
+            source: {pointer: "/postServeActions"}
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/priority"}
+          - code: 1000
+            source: {pointer: "/request/multipartPatterns"}
+          - code: 1003
+            title: "Invalid regular expression"
+            source: {pointer: "/request/urlPattern"}
+          - code: 1000
+            source: {pointer: "/response/proxyBaseUrl"}
+
+  # Rejection is all-or-nothing: five problems, zero writes.
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000060}
+    expect: {status: 404}
+
+  # The control: the same document with all five problems fixed registers, so
+  # the rejection above is about those fields and not about the document shape.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000061",
+         "priority": 3,
+         "request": {"method": "GET", "urlPattern": "/e2e/errors-collect-all-001/ok"},
+         "response": {"status": 200, "body": "all fixed"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/errors-collect-all-001/ok}
+    expect: {status: 200, body: "all fixed"}

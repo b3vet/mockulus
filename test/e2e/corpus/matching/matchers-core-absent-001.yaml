@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-absent-001
+behaviors: [B-MATCH-ABSENT]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0006-0000-4000-8000-000000000001",
+         "name": "absent query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-absent-001/query",
+                     "queryParameters": {"trace": {"absent": true}}},
+         "response": {"status": 200, "body": "query",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0006-0000-4000-8000-000000000002",
+         "name": "absent header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-absent-001/header",
+                     "headers": {"X-Trace": {"absent": true}}},
+         "response": {"status": 200, "body": "header",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0006-0000-4000-8000-000000000003",
+         "name": "absent cookie",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-absent-001/cookie",
+                     "cookies": {"sid": {"absent": true}}},
+         "response": {"status": 200, "body": "cookie",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/matchers-core-absent-001/query}
+    expect: {status: 200, body: "query"}
+
+  - request: {method: GET, path: "/e2e/matchers-core-absent-001/query?trace=1"}
+    expect: {status: 404}
+
+  # An absent key and a present-but-empty one are different things: `?trace=`
+  # binds the parameter to the empty string, which is presence, so `absent`
+  # fails. Inferring absence from an empty value — the obvious shortcut — would
+  # pass this step and be wrong.
+  - request: {method: GET, path: "/e2e/matchers-core-absent-001/query?trace="}
+    expect: {status: 404}
+
+  # The bare `?trace` spelling is present-with-empty-string too (SPEC §5.2).
+  - request: {method: GET, path: "/e2e/matchers-core-absent-001/query?trace"}
+    expect: {status: 404}
+
+  # A different parameter being present says nothing about this one.
+  - request: {method: GET, path: "/e2e/matchers-core-absent-001/query?other=1"}
+    expect: {status: 200, body: "query"}
+
+  - request: {method: GET, path: /e2e/matchers-core-absent-001/header}
+    expect: {status: 200, body: "header"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-absent-001/header
+      headers: {X-Trace: "1"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-absent-001/header
+      headers: {X-Other: "1"}
+    expect: {status: 200, body: "header"}
+
+  - request: {method: GET, path: /e2e/matchers-core-absent-001/cookie}
+    expect: {status: 200, body: "cookie"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-absent-001/cookie
+      headers: {Cookie: "sid=abc"}
+    expect: {status: 404}
+
+  # The Cookie header is present but carries no `sid`, so the cookie is absent —
+  # absence is per cookie name, not per Cookie header.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-absent-001/cookie
+      headers: {Cookie: "other=abc"}
+    expect: {status: 200, body: "cookie"}

@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-anchoring-url-001
+behaviors:
+  - B-REQ-URLPATTERN
+  - B-REQ-URLPATHPATTERN
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18). Status and headers are
+# still diffed, and status is the whole observable of a URL matcher.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # urlPattern is matched against path *and* query, and it is a full match, not
+  # a search. Both halves of that sentence are load-bearing: a partial-match
+  # implementation would turn every URL pattern into a prefix rule, which is the
+  # classic way a mock server starts answering requests it should not.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110006-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/regex-anchoring-url-001/u/[a-z]+\\?q=[0-9]+"},
+         "response": {"status": 200, "body": "urlPattern"}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: "/e2e/regex-anchoring-url-001/u/[a-z]+\\?q=[0-9]+"}
+
+  - request: {port: mock, method: GET, path: "/e2e/regex-anchoring-url-001/u/abc?q=12"}
+    expect: {status: 200, body: "urlPattern"}
+
+  # The query is part of the subject, so dropping it is a non-match even though
+  # the path alone is a proper prefix of a matching URL.
+  - request: {port: mock, method: GET, path: "/e2e/regex-anchoring-url-001/u/abc"}
+    expect: {status: 404}
+
+  # Trailing text after an otherwise satisfied pattern: the \z anchor refuses it.
+  - request: {port: mock, method: GET, path: "/e2e/regex-anchoring-url-001/u/abc?q=12&extra=1"}
+    expect: {status: 404}
+
+  # Leading text before the pattern: the \A anchor refuses it, so a pattern
+  # cannot be satisfied somewhere in the middle of a longer path.
+  - request: {port: mock, method: GET, path: "/e2e/regex-anchoring-url-001/pre/e2e/regex-anchoring-url-001/u/abc?q=12"}
+    expect: {status: 404}
+
+  # urlPathPattern is the same regex machinery over the path only, which is the
+  # difference this stub exists to pin.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110006-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/regex-anchoring-url-001/p/[a-z]+"},
+         "response": {"status": 200, "body": "urlPathPattern"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/regex-anchoring-url-001/p/abc}
+    expect: {status: 200, body: "urlPathPattern"}
+
+  # A query string is invisible to urlPathPattern — it matches the path only —
+  # so this still matches. Against urlPattern the same URL would not.
+  - request: {port: mock, method: GET, path: "/e2e/regex-anchoring-url-001/p/abc?z=1"}
+    expect: {status: 200, body: "urlPathPattern"}
+
+  # One extra character in the path is still a non-match: anchoring applies to
+  # urlPathPattern exactly as it does to urlPattern.
+  - request: {port: mock, method: GET, path: /e2e/regex-anchoring-url-001/p/abc9}
+    expect: {status: 404}

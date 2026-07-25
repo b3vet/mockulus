@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-urlpath-001
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0003-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-urlpath-001/items"},
+         "response": {"status": 200, "body": "path-only", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/url-criteria-urlpath-001/items"}
+
+  - request: {method: GET, path: /e2e/url-criteria-urlpath-001/items}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "path-only"
+
+  # urlPath ignores the query entirely — this is the whole difference from
+  # `url`, and it is why a stub written with urlPath is immune to the parameter
+  # ordering that breaks a `url` stub (see url-criteria-url-exact-001).
+  - request: {method: GET, path: "/e2e/url-criteria-urlpath-001/items?a=1"}
+    expect: {status: 200, body: "path-only"}
+  - request: {method: GET, path: "/e2e/url-criteria-urlpath-001/items?b=2&a=1"}
+    expect: {status: 200, body: "path-only"}
+  - request: {method: GET, path: "/e2e/url-criteria-urlpath-001/items?a=1&b=2"}
+    expect: {status: 200, body: "path-only"}
+
+  # The path itself is still exact: neither a longer nor a shorter one matches,
+  # so "ignores the query" must not be read as "matches by prefix".
+  - request: {method: GET, path: /e2e/url-criteria-urlpath-001/items/extra}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/url-criteria-urlpath-001/item}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/url-criteria-urlpath-001/itemsX}
+    expect: {status: 404}

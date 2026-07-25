@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-conjunction-001
+behaviors:
+  - B-STUB-REQUEST
+  - B-REQ-METHOD
+  - B-REQ-URLPATH
+  - B-REQ-QUERYPARAMETERS
+  - B-REQ-HEADERS
+  - B-REQ-COOKIES
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # One stub carrying five different criterion kinds at once, so the conjunction
+  # rule of SPEC §5.3 can be falsified by flipping exactly one of them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc000d-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/url-criteria-conjunction-001/orders",
+                     "queryParameters": {"dryRun": {"equalTo": "false"}},
+                     "headers": {"X-Tenant": {"equalTo": "acme"}},
+                     "cookies": {"session": {"equalTo": "s-1"}}},
+         "response": {"status": 201, "body": "all-criteria", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          method: POST
+          urlPath: "/e2e/url-criteria-conjunction-001/orders"
+          queryParameters: {dryRun: {equalTo: "false"}}
+          headers: {X-Tenant: {equalTo: "acme"}}
+          cookies: {session: {equalTo: "s-1"}}
+
+  # A stub whose request object omits everything but method and path, to show
+  # the other half of the rule: unspecified criteria are wildcards, not implicit
+  # "must be absent" checks.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc000d-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/url-criteria-conjunction-001/loose"},
+         "response": {"status": 200, "body": "wildcards", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: "/e2e/url-criteria-conjunction-001/orders?dryRun=false"
+      headers: {X-Tenant: acme, Cookie: "session=s-1"}
+    expect:
+      status: 201
+      headers: {Content-Type: text/plain}
+      body: "all-criteria"
+
+  # Each of the next five steps changes exactly one thing from the request
+  # above. Every one of them must 404, which is what "every specified criterion
+  # must match" means operationally.
+  - request:
+      method: PUT
+      path: "/e2e/url-criteria-conjunction-001/orders?dryRun=false"
+      headers: {X-Tenant: acme, Cookie: "session=s-1"}
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: "/e2e/url-criteria-conjunction-001/orders-2?dryRun=false"
+      headers: {X-Tenant: acme, Cookie: "session=s-1"}
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: "/e2e/url-criteria-conjunction-001/orders?dryRun=true"
+      headers: {X-Tenant: acme, Cookie: "session=s-1"}
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: "/e2e/url-criteria-conjunction-001/orders?dryRun=false"
+      headers: {X-Tenant: other, Cookie: "session=s-1"}
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: "/e2e/url-criteria-conjunction-001/orders?dryRun=false"
+      headers: {X-Tenant: acme, Cookie: "session=s-2"}
+    expect: {status: 404}
+
+  # The loose stub serves the same rich request unchanged: query, header and
+  # cookie it never mentions cannot make it fail.
+  - request:
+      method: POST
+      path: "/e2e/url-criteria-conjunction-001/loose?dryRun=false&anything=1"
+      headers: {X-Tenant: acme, Cookie: "session=s-1"}
+    expect: {status: 200, body: "wildcards"}
+  - request: {method: POST, path: /e2e/url-criteria-conjunction-001/loose}
+    expect: {status: 200, body: "wildcards"}

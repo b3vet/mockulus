@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-placeholder-ignore-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # ${json-unit.ignore} stands in for the *value* of a member.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0005-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-ignore-001/ignore",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"${json-unit.ignore}\"}"}]},
+         "response": {"status": 200, "body": "ignore",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # ${json-unit.ignore-element} stands in for the *member*, which is the whole
+  # difference between the two and the reason both names exist.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0005-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-ignore-001/ignore-element",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"${json-unit.ignore-element}\"}"}]},
+         "response": {"status": 200, "body": "ignore-element",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Both accept any value of any type in the member they name.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore
+      body: '{"a":"text"}'
+    expect: {status: 200, body: "ignore"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore
+      body: '{"a":null}'
+    expect: {status: 200, body: "ignore"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore
+      body: '{"a":{"deep":[1,2]}}'
+    expect: {status: 200, body: "ignore"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore-element
+      body: '{"a":{"deep":[1,2]}}'
+    expect: {status: 200, body: "ignore-element"}
+
+  # The distinction, asserted from both sides with one and the same request
+  # body: ignore requires the member to be there...
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore
+      body: '{}'
+    expect: {status: 404}
+
+  # ...and ignore-element also stands in for its absence.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore-element
+      body: '{}'
+    expect: {status: 200, body: "ignore-element"}
+
+  # Neither relaxes the rest of the document: an unexpected member is still a
+  # mismatch, so neither placeholder is a back door to ignoreExtraElements.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore
+      body: '{"a":1,"b":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-ignore-001/ignore-element
+      body: '{"b":1}'
+    expect: {status: 404}

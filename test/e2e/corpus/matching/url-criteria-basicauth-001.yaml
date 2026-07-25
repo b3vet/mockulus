@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-basicauth-001
+behaviors: [B-REQ-BASICAUTHCREDENTIALS, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc000c-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-basicauth-001/vault",
+                     "basicAuthCredentials": {"username": "alice", "password": "s3cret"}},
+         "response": {"status": 200, "body": "authorized", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          basicAuthCredentials: {username: "alice", password: "s3cret"}
+
+  # basicAuthCredentials is sugar over the Authorization header: the criterion
+  # is satisfied by a Basic header carrying the base64 of "alice:s3cret".
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "Basic YWxpY2U6czNjcmV0"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "authorized"
+
+  # Right user, wrong password ("alice:wrong") — the credentials are compared,
+  # not merely the presence of a Basic header.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "Basic YWxpY2U6d3Jvbmc="}
+    expect: {status: 404}
+
+  # No Authorization header at all.
+  - request: {method: GET, path: /e2e/url-criteria-basicauth-001/vault}
+    expect: {status: 404}
+
+  # Correct credentials under the wrong scheme do not satisfy it.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "Bearer YWxpY2U6czNjcmV0"}
+    expect: {status: 404}
+
+  # RFC 7235 makes the scheme token case-insensitive and WireMock honours it, so
+  # the lower-case spelling a client is free to send is served, not silently
+  # 404ed. The fold covers those six characters and nothing else, which the
+  # three steps below pin from the other side.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "basic YWxpY2U6czNjcmV0"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "authorized"
+
+  # Every spelling, not just the two common ones: the token is folded rather
+  # than compared against a list of accepted forms.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "BASIC YWxpY2U6czNjcmV0"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "authorized"
+
+  # The base64 is not folded with the scheme it follows: case carries meaning in
+  # base64, so a lower-cased payload is a different credential. This is the half
+  # of the comparison that decides whether a password is accepted.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "basic ywxpy2u6cznjcmv0"}
+    expect: {status: 404}
+
+  # The single space is part of the fixed prefix, not skipped whitespace, so a
+  # doubled one takes the credentials out of alignment and the criterion fails.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "Basic  YWxpY2U6czNjcmV0"}
+    expect: {status: 404}
+
+  # Likewise a tab, which RFC 7235 does not allow as the delimiter.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-basicauth-001/vault
+      headers: {Authorization: "Basic\tYWxpY2U6czNjcmV0"}
+    expect: {status: 404}

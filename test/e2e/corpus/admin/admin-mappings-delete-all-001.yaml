@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-mappings-delete-all-001
+behaviors:
+  - B-ADMIN-MAPPINGS-DELETE
+# DELETE /__admin/mappings is deployment-wide by definition: there is no way to
+# show that it empties the store without emptying it for every case sharing the
+# instance. So this case owns the instance and runs after the concurrent ones,
+# the same bargain admin-bulk-import-delete-all-008 makes.
+requires: [exclusive]
+# n/a: the assertion that carries this behavior is an *empty* list envelope,
+# which only holds on an instance this case owns for its duration. The oracle is
+# seeded and reset on its own schedule, so the same document cannot be demanded
+# of it.
+wm: n/a
+steps:
+  # A persistent stub and an ordinary one. The pair is the point: reset spares
+  # persistent mappings (§5.2), delete-all does not, and a case using only
+  # ephemeral stubs could not tell the two endpoints apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0201-0000-4000-8000-000000000001",
+         "persistent": true,
+         "request": {"method": "GET", "urlPath": "/e2e/admin-mappings-delete-all-001/durable"},
+         "response": {"status": 200, "body": "durable"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0201-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-mappings-delete-all-001/ephemeral"},
+         "response": {"status": 200, "body": "ephemeral"}}
+    expect: {status: 201}
+
+  # The flag has to have taken for the deletion below to prove anything, so it
+  # is read back rather than assumed from the 201.
+  - admin: {method: GET, path: /__admin/mappings/dddd0201-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset: {persistent: true}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-delete-all-001/durable}
+    expect: {status: 200, body: "durable"}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-delete-all-001/ephemeral}
+    expect: {status: 200, body: "ephemeral"}
+
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  # The whole envelope, compared exactly: an empty `mappings` array and a
+  # `meta.total` of zero is the only answer that says "nothing anywhere",
+  # whereas a subset assertion would also pass on a store that kept the
+  # persistent stub.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json:
+        mappings: []
+        meta: {total: 0}
+
+  - admin: {method: GET, path: /__admin/mappings/dddd0201-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/dddd0201-0000-4000-8000-000000000002}
+    expect: {status: 404}
+
+  # The serving snapshot is rebuilt inside the admin call, so both stubs stop
+  # matching at once rather than after the next sync tick (SPEC §4.3 step 5).
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-delete-all-001/durable}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-delete-all-001/ephemeral}
+    expect: {status: 404}
+
+  # Deleting nothing is not an error: a CI job that tears the deployment down
+  # twice, or two jobs racing to clean up, must not fail on the second call.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json:
+        mappings: []
+        meta: {total: 0}

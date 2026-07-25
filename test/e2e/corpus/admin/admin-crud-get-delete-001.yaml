@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-get-delete-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-ADMIN-MAPPINGS-ID-DELETE
+# n/a rather than verified because the case ends on unmatched requests to the
+# mock port, whose 404 body names mockulus by design (deviation #18) — a
+# whole-body diff would report a difference the spec already records.
+#
+# The not-found *shape* asserted below is WireMock's own, probed against the
+# pinned image: GET, PUT and DELETE of an unknown mapping id all answer a bare
+# 404 with no body and no Content-Type. Mockulus used to answer these with its
+# JSON error envelope; that gap is closed, and the assertions here are what stop
+# it reopening.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0104-0000-4000-8000-000000000001",
+         "name": "delete me",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-get-delete-001/doomed"},
+         "response": {"status": 200, "body": "still here"}}
+    expect: {status: 201}
+
+  # Read-back by id returns the document, not a summary. The exact-document form
+  # of this assertion — every field the server stored, `uuid` included — lives in
+  # admin-crud-identity-echo-001; the subset form here keeps the delete story
+  # below readable.
+  - admin: {method: GET, path: /__admin/mappings/eeee0104-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "eeee0104-0000-4000-8000-000000000001"
+        name: "delete me"
+        request: {method: GET, urlPath: /e2e/admin-crud-get-delete-001/doomed}
+        response: {status: 200, body: "still here"}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-get-delete-001/doomed}
+    expect: {status: 200, body: "still here"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/eeee0104-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  # A delete is not only a store operation: the serving snapshot is rebuilt in
+  # the same admin call, so the stub stops matching on the writing pod at once
+  # rather than after the next sync tick (SPEC §4.3 step 5).
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-get-delete-001/doomed}
+    expect: {status: 404}
+
+  # The not-found is bare: no body, no Content-Type. That is WireMock's answer
+  # here and it is the one a client library is written against, so an error
+  # envelope in its place is a compatibility difference and not extra help —
+  # there is nothing to say beyond "the id you asked for is not here".
+  - admin: {method: GET, path: /__admin/mappings/eeee0104-0000-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # Deleting an id that is already gone reports 404 rather than a cheerful 200:
+  # a cleanup step that silently succeeds on a stub some other runner already
+  # removed would hide the collision.
+  - admin: {method: DELETE, path: /__admin/mappings/eeee0104-0000-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # An id that never existed answers the same way, for both verbs.
+  - admin: {method: GET, path: /__admin/mappings/eeee0104-0000-4000-8000-00000000ffff}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  - admin: {method: DELETE, path: /__admin/mappings/eeee0104-0000-4000-8000-00000000ffff}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]

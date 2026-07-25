@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-method-001
+behaviors: [B-REQ-METHOD, B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Two stubs on the same namespace: one pinned to a single method, one using
+  # the ANY wildcard, so the same request set exercises both rules.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-method-001/only-get"},
+         "response": {"status": 200, "body": "get-only", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {method: GET}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0001-0000-4000-8000-000000000002",
+         "request": {"method": "ANY", "urlPath": "/e2e/url-criteria-method-001/any"},
+         "response": {"status": 200, "body": "any-method", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {method: ANY}
+
+  - request: {method: GET, path: /e2e/url-criteria-method-001/only-get}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "get-only"
+
+  # A specific method matches only itself. Every other method — including HEAD,
+  # which some servers treat as a bodiless GET — is a plain non-match.
+  - request: {method: POST, path: /e2e/url-criteria-method-001/only-get}
+    expect: {status: 404}
+  - request: {method: PUT, path: /e2e/url-criteria-method-001/only-get}
+    expect: {status: 404}
+  - request: {method: DELETE, path: /e2e/url-criteria-method-001/only-get}
+    expect: {status: 404}
+  - request: {method: PATCH, path: /e2e/url-criteria-method-001/only-get}
+    expect: {status: 404}
+  - request: {method: OPTIONS, path: /e2e/url-criteria-method-001/only-get}
+    expect: {status: 404}
+  - request: {method: HEAD, path: /e2e/url-criteria-method-001/only-get}
+    expect: {status: 404}
+
+  # ANY is a wildcard over every method, not a method named "ANY": the same
+  # stub serves the whole verb set with no per-method registration.
+  - request: {method: GET, path: /e2e/url-criteria-method-001/any}
+    expect: {status: 200, body: "any-method"}
+  - request: {method: POST, path: /e2e/url-criteria-method-001/any}
+    expect: {status: 200, body: "any-method"}
+  - request: {method: PUT, path: /e2e/url-criteria-method-001/any}
+    expect: {status: 200, body: "any-method"}
+  - request: {method: DELETE, path: /e2e/url-criteria-method-001/any}
+    expect: {status: 200, body: "any-method"}
+  - request: {method: PATCH, path: /e2e/url-criteria-method-001/any}
+    expect: {status: 200, body: "any-method"}
+  - request: {method: OPTIONS, path: /e2e/url-criteria-method-001/any}
+    expect: {status: 200, body: "any-method"}
+  # HEAD is served too, with the status but no body — the wildcard covers it.
+  - request: {method: HEAD, path: /e2e/url-criteria-method-001/any}
+    expect: {status: 200}
+
+  # The wildcard is over the method only: the URL criterion of the same request
+  # object still has to hold, which is what makes `request` a conjunction.
+  - request: {method: GET, path: /e2e/url-criteria-method-001/any/deeper}
+    expect: {status: 404}

@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: security-config-shutdown-disabled-001
+behaviors:
+  - B-CFG-ADMIN-SHUTDOWN-ENABLED
+  - B-DEV-DEVIATION-8
+# Deviation #8 is ours: WireMock ships POST /__admin/shutdown enabled, so a
+# differential replay would report a designed disagreement as a diff.
+wm: n/a
+steps:
+  # A live stub, so the later steps can prove the process is still serving
+  # rather than merely still answering the admin port.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-shutdown-disabled-001/alive"},
+         "response": {"status": 200, "body": "still here", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/security-config-shutdown-disabled-001/alive}
+    expect: {status: 200, body: "still here"}
+
+  # The whole point of deviation #8: with admin_shutdown_enabled at its default
+  # of false, the endpoint is not merely refused, it is absent from the routing
+  # table, so an attacker probing it learns nothing beyond "unsupported".
+  - admin: {method: POST, path: /__admin/shutdown}
+    expect:
+      status: 404
+      headers_contain: {Content-Type: application/json}
+      body_json_subset:
+        errors:
+          - code: 1001
+            title: "Unsupported endpoint"
+      body_regex: '/__admin/shutdown'
+
+  # The negative half: it is not a method mismatch that would answer 405 for the
+  # verb WireMock uses. No verb reaches a shutdown handler, because there is none.
+  - admin: {method: GET, path: /__admin/shutdown}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+
+  - admin: {method: DELETE, path: /__admin/shutdown}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+
+  # The process survived the probe. A 404 that had nonetheless started a drain
+  # would still be a security failure, so both listeners are re-checked.
+  - admin: {port: admin, method: GET, path: /readyz}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/security-config-shutdown-disabled-001/alive}
+    expect: {status: 200, body: "still here"}
+
+  # The probes were routed as ordinary admin traffic and counted under their own
+  # endpoint group, which is what makes an unauthorised shutdown attempt visible
+  # to an operator instead of silent.
+  - metricsprobe:
+      series: 'mockulus_admin_requests_total{endpoint_group="shutdown",code="404"}'
+      at_least: 3
+
+  - admin: {method: DELETE, path: /__admin/mappings/5ec00001-0000-4000-8000-000000000001}
+    expect: {status: 200}

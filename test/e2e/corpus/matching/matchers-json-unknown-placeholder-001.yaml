@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-unknown-placeholder-001
+behaviors:
+  - B-DEV-DEVIATION-5
+  - B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS
+  - B-ERR-10
+# Mockulus-specific by construction: WireMock accepts this stub and compares the
+# placeholder as literal text, so the stub silently never matches. There is no
+# oracle to diff against — the whole point is that we answer differently.
+wm: n/a
+steps:
+  # Deviation #5: an unrecognised ${json-unit.*} placeholder is a registration
+  # error, not a stub that quietly matches nothing. The pointer names the
+  # offending matcher so the fix needs no bisection.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0009-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-unknown-placeholder-001/bad",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"${json-unit.no-such-thing}\"}"}]},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/equalToJson"}
+      # The detail names the placeholder that was refused, so the message is
+      # actionable without opening the stub.
+      body_regex: 'json-unit\.no-such-thing'
+
+  # Nothing was persisted: a refused registration must not leave a half-stub.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-unknown-placeholder-001/bad
+      body: '{"a":"x"}'
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/bbbb0009-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # A placeholder-looking string that is not in the ${json-unit.…} namespace is
+  # ordinary text, not a rejection: only the reserved prefix is policed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0009-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-unknown-placeholder-001/literal",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"$notaplaceholder\"}"}]},
+         "response": {"status": 200, "body": "literal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-unknown-placeholder-001/literal
+      body: '{"a":"$notaplaceholder"}'
+    expect: {status: 200, body: "literal"}
+
+  # The contrast that scopes the deviation: a *recognised* placeholder in the
+  # same position registers and serves, so it is the unknown name that is
+  # refused rather than placeholders in general.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0009-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-unknown-placeholder-001/good",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"${json-unit.any-string}\"}"}]},
+         "response": {"status": 200, "body": "good",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-unknown-placeholder-001/good
+      body: '{"a":"x"}'
+    expect: {status: 200, body: "good"}

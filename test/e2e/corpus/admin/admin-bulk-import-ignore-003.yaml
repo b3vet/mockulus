@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-import-ignore-003
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+# n/a: reads the stored documents back, which mockulus echoes verbatim while
+# WireMock re-serializes them (see admin-bulk-import-001).
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0003-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-ignore-003/keep"},
+         "response": {"status": 200, "body": "original"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-ignore-003/keep}
+    expect: {status: 200, body: "original"}
+
+  # One batch containing a duplicate id and a fresh one, under IGNORE.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "ffff0003-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-ignore-003/keep"},
+            "response": {"status": 200, "body": "replacement"}},
+           {"id": "ffff0003-0000-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-ignore-003/fresh"},
+            "response": {"status": 200, "body": "fresh"}}
+         ],
+         "importOptions": {"duplicatePolicy": "IGNORE"}}
+    expect: {status: 200}
+
+  # IGNORE leaves the existing stub completely untouched — the incoming
+  # document is dropped, not merged.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-ignore-003/keep}
+    expect: {status: 200, body: "original"}
+
+  - admin: {method: GET, path: /__admin/mappings/ffff0003-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "ffff0003-0000-4000-8000-000000000001"
+        response: {body: "original"}
+
+  # IGNORE skips only the collisions: a batch-mate with an unused id is still
+  # imported, so a partly-known payload is not rejected wholesale.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-ignore-003/fresh}
+    expect: {status: 200, body: "fresh"}
+
+  # The same payload under OVERWRITE does replace it, which is what proves the
+  # previous steps measured the policy and not an inert import.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "ffff0003-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-ignore-003/keep"},
+            "response": {"status": 200, "body": "replacement"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE"}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-ignore-003/keep}
+    expect: {status: 200, body: "replacement"}

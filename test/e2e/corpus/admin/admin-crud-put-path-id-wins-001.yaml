@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-put-path-id-wins-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-ADMIN-MAPPINGS-POST
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0108-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-path-id-wins-001/x"},
+         "response": {"status": 200, "body": "x-v1"}}
+    expect: {status: 201}
+
+  # The body names a different id from the path. The path wins and the body id
+  # is ignored — neither an error nor a rename (SPEC §5.1). The response echoes
+  # the path id, so a client cannot be left holding an id the server did not
+  # use.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/eeee0108-0000-4000-8000-000000000001
+      body: |
+        {"id": "eeee0108-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-path-id-wins-001/x"},
+         "response": {"status": 200, "body": "x-v2"}}
+    expect:
+      status: 200
+      body_json:
+        id: "eeee0108-0000-4000-8000-000000000001"
+        uuid: "eeee0108-0000-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/admin-crud-put-path-id-wins-001/x}
+        response: {status: 200, body: "x-v2"}
+
+  # The stub under the path id carries the new content. That the read-back also
+  # *reports* the path id is asserted in admin-crud-identity-echo-001, which
+  # fails today: the snapshot copy of this document still carries the body id.
+  - admin: {method: GET, path: /__admin/mappings/eeee0108-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        response: {body: "x-v2"}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-put-path-id-wins-001/x}
+    expect: {status: 200, body: "x-v2"}
+
+  # And nothing was registered under the id the body asked for. Proving that
+  # with a create rather than a 404 read keeps the assertion on the same
+  # surface the bug would live on: if the PUT had honoured the body id, that id
+  # would now be taken and this create would be refused 422 code 109. A 201 is
+  # only possible if the body id was never used.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0108-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-path-id-wins-001/y"},
+         "response": {"status": 200, "body": "y-fresh"}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "eeee0108-0000-4000-8000-000000000002"
+        uuid: "eeee0108-0000-4000-8000-000000000002"
+
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-put-path-id-wins-001/y}
+    expect: {status: 200, body: "y-fresh"}

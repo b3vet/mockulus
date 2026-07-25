@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-regex-untranslatable-001
+behaviors: [B-ERR-1003]
+# WireMock has one engine and takes these patterns; mockulus refuses them,
+# which is deviation #14 — see the case body for why refusing beats accepting.
+wm: n/a
+steps:
+  # Java intersects the two operands of `&&`, so this class is the consonants.
+  # Neither RE2 nor .NET has intersection syntax: both read the ampersands as
+  # two more members and the class comes out *wider* than it was written. A stub
+  # that quietly matches more than its author asked for is the failure P3 exists
+  # to prevent, so the pattern is refused where it is written instead.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000080",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/errors-regex-untranslatable-001/[a-z&&[^aeiou]]"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            title: "Invalid regular expression"
+            source: {pointer: "/request/urlPattern"}
+      body_regex: 'character-class intersection'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000080}
+    expect: {status: 404}
+
+  # The intersection does not need a nested operand to mean intersection.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000081",
+         "request": {"method": "POST", "urlPath": "/e2e/errors-regex-untranslatable-001/body",
+                     "bodyPatterns": [{"matches": "[a-z&&b-d]"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+      body_regex: 'character-class intersection'
+
+  # Java unions a nested class into its parent, so `[[:alpha:]]` is the five
+  # characters of ":alpha" and not the letters. Both engines read the inner
+  # bracket as an ordinary member, and RE2 additionally recognises the POSIX
+  # form and answers with the letters — three readings, so this one is refused.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000082",
+         "request": {"method": "POST", "urlPath": "/e2e/errors-regex-untranslatable-001/posix",
+                     "bodyPatterns": [{"matches": "[[:alpha:]]+"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+      body_regex: 'nested character class'
+
+  # `\R` can match two characters, so it is not something a class can hold;
+  # Java rejects it here too, and both engines would take it as a literal R.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000083",
+         "request": {"method": "POST", "urlPath": "/e2e/errors-regex-untranslatable-001/linebreak",
+                     "bodyPatterns": [{"matches": "[\\R]"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+
+  # Nothing was persisted by any of the rejections.
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000081}
+    expect: {status: 404}
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000082}
+    expect: {status: 404}
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000083}
+    expect: {status: 404}
+
+  # The refusals are narrow, which is what keeps them honest: ampersands that
+  # are not intersection and a bracket that is escaped both still register, and
+  # the stubs they build are real criteria rather than wildcards.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000084",
+         "request": {"method": "POST", "urlPath": "/e2e/errors-regex-untranslatable-001/ok",
+                     "bodyPatterns": [{"matches": "a&&[b\\[\\&]"}]},
+         "response": {"status": 200, "body": "literal ampersands"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/errors-regex-untranslatable-001/ok, body: "a&&["}
+    expect: {status: 200, body: "literal ampersands"}
+
+  - request: {port: mock, method: POST, path: /e2e/errors-regex-untranslatable-001/ok, body: "a&&c"}
+    expect: {status: 404}

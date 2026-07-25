@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: unmatched-diagnostics-off-001
+behaviors:
+  - B-CFG-DIAGNOSTICS-ON-UNMATCHED
+  - B-DEV-DEVIATION-2
+# n/a: WireMock renders a near-miss diff table in this body and mockulus
+# deliberately does not, so every body asserted here differs from the oracle by
+# design (deviation #2). The status half of the same surface is diffed against
+# WireMock by stub-roundtrip-001, which ignores only "$body".
+wm: n/a
+steps:
+  # A stub that a near miss is actually available for: the request below shares
+  # its method and URL and differs on exactly one header. This is precisely the
+  # shape WireMock spends near-miss scoring on for every unmatched request.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "04040001-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/unmatched-diagnostics-off-001/orders",
+                     "headers": {"X-Api-Key": {"equalTo": "secret"}}},
+         "response": {"status": 200, "body": "orders"}}
+    expect: {status: 201}
+
+  # Positive control: the stub does serve, so the 404s below are the matcher
+  # saying no rather than the stub never having registered.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/unmatched-diagnostics-off-001/orders
+      headers: {X-Api-Key: secret}
+    expect: {status: 200, body: "orders"}
+
+  # The core of the default unmatched contract (SPEC §5.4). The Content-Type is
+  # asserted exactly, not by substring: WireMock spells the charset with no
+  # space after the semicolon and a client sniffing the raw header would see the
+  # difference, so the spelling is part of the compatibility surface.
+  #
+  # The body is asserted exactly, which is what pins deviation #2: anything
+  # appended here — a near-miss table, a closest-stub diff, a hint — would fail
+  # this step. Diagnostics stay off unless diagnostics_on_unmatched is set.
+  - request: {port: mock, method: GET, path: /e2e/unmatched-diagnostics-off-001/orders}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body: "Request was not matched"
+
+  # Stubs exist in the snapshot, so the body is the no-match sentence and not
+  # the empty-snapshot one. Which of the two §5.4 bodies a populated snapshot
+  # picks is asserted here; the empty-snapshot half needs an instance to itself
+  # and lives in unmatched-names-mockulus-002.
+  - request: {port: mock, method: POST, path: /e2e/unmatched-diagnostics-off-001/orders}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body: "Request was not matched"
+
+  # The unmatched path allocates no response headers of its own beyond the
+  # content type: a caller cannot be handed a stale stub's headers.
+  - request: {port: mock, method: GET, path: /e2e/unmatched-diagnostics-off-001/nothing-here}
+    expect:
+      status: 404
+      header_absent: [X-Api-Key, Matched-Stub-Id, Matched-Stub-Name]
+      body: "Request was not matched"
+
+  # Leave the shared instance as this case found it.
+  - admin: {method: DELETE, path: /__admin/mappings/04040001-0000-4000-8000-000000000001}
+    expect: {status: 200}

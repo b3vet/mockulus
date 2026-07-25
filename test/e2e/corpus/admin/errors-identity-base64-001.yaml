@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-identity-base64-001
+behaviors:
+  - B-DEV-DEVIATION-24
+  - B-STUB-ID-UUID
+# n/a by construction: this is deviation #24. Pinned WireMock answers 201 and
+# echoes back `eeee0111-0000-4000-8000-000000000001` — its JSON layer decodes a
+# 24-character string as base64 and canonicalises the bytes. There is no
+# WireMock answer to diff against, only one to differ from.
+wm: n/a
+steps:
+  # `7u4BEQAAQACAAAAAAAAAAQ==` is the same sixteen bytes as the canonical id
+  # below, spelled base64. WireMock takes it and hands back the dashed form, so
+  # the client's own id never names its stub: a suite that stores the string it
+  # sent and later DELETEs by it removes nothing. That is the rewrite deviation
+  # 22 refuses for a disagreeing alias, reached by a different spelling, so it
+  # earns the same refusal.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "7u4BEQAAQACAAAAAAAAAAQ==",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-identity-base64-001/b64"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/id"}
+      body_regex: 'canonical 36-character UUID'
+
+  # The `uuid` alias is the same field, so it is the same answer — only the
+  # pointer moves.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"uuid": "7u4BEQAAQACAAAAAAAAAAQ==",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-identity-base64-001/b64"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/uuid"}
+
+  # Rejected means nothing registered: not under the id the decoded bytes would
+  # have produced, and not on the wire.
+  - admin: {method: GET, path: /__admin/mappings/eeee0111-0000-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  - request: {port: mock, method: GET, path: /e2e/errors-identity-base64-001/b64}
+    expect: {status: 404}
+
+  # The refusal is about the spelling, not the bytes: the canonical form of the
+  # very same UUID registers and serves.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0111-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-identity-base64-001/b64"},
+         "response": {"status": 200, "body": "canonical"}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "eeee0111-0000-4000-8000-000000000001"
+        uuid: "eeee0111-0000-4000-8000-000000000001"
+
+  - request: {port: mock, method: GET, path: /e2e/errors-identity-base64-001/b64}
+    expect: {status: 200, body: "canonical"}

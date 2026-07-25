@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-import-malformed-007
+behaviors:
+  - B-DEV-DEVIATION-21
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+# n/a by construction: this is deviation #21. WireMock raises an unhandled 500
+# on these payloads and applies a bad batch partially; there is nothing here to
+# diff against.
+wm: n/a
+steps:
+  # A null mappings array is the payload that 500s WireMock. Here it is a 422
+  # carrying the error envelope and the pointer at the offending element, so the
+  # author is told which field to fix.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": null, "importOptions": {"duplicatePolicy": "OVERWRITE"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/mappings"}
+            title: "Malformed request"
+
+  # A missing mappings key is the same mistake spelled differently and gets the
+  # same answer, rather than importing an empty batch by accident.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/mappings"}
+
+  # An unrecognised duplicatePolicy is refused rather than silently defaulted:
+  # a typo that quietly became OVERWRITE would destroy the stub the author was
+  # trying to protect.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [], "importOptions": {"duplicatePolicy": "MERGE"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/importOptions/duplicatePolicy"}
+      body_regex: 'want OVERWRITE or IGNORE'
+
+  # The atomicity half of the deviation: one bad mapping in a batch, and the
+  # pointer names its index inside the payload.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "ffff0007-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-malformed-007/survivor"},
+            "response": {"status": 200, "body": "survivor"}},
+           {"id": "not-a-uuid",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-malformed-007/broken"},
+            "response": {"status": 200}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/mappings/1/id"}
+
+  # Nothing was written. The valid mapping sat at index 0 and would have been
+  # applied by a fail-fast loop before the bad one was ever read — WireMock
+  # leaves exactly that half-import behind.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-malformed-007/survivor}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/ffff0007-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-malformed-007/broken}
+    expect: {status: 404}
+
+  # The same mapping imports fine on its own, which is what makes the rejection
+  # above the batch-mate's fault and the store's emptiness deliberate.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "ffff0007-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-malformed-007/survivor"},
+            "response": {"status": 200, "body": "survivor"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE"}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-malformed-007/survivor}
+    expect: {status: 200, body: "survivor"}

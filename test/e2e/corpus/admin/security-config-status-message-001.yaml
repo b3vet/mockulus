@@ -1,0 +1,198 @@
+# SPDX-License-Identifier: Apache-2.0
+id: security-config-status-message-001
+behaviors:
+  - B-RESP-STATUSMESSAGE
+  - B-DEV-DEVIATION-7
+# n/a for the differential, though not because the phrase is wrong: mockulus
+# emits the same status line as the pinned WireMock, byte for byte, verified by
+# probing. The replay simply cannot see it — it compares status code, headers
+# and body, and the reason phrase is none of those. What it would see instead is
+# the framing WireMock always uses (chunked, plus Matched-Stub-Id) against the
+# Content-Length mockulus sends, which is DECISIONS.md D-OPEN-4 and not this
+# case's subject. So the phrase is asserted here directly instead.
+wm: n/a
+steps:
+  # Accepted at registration rather than rejected as unsupported: statusMessage
+  # is in the supported response-field set, so a WireMock stub carrying one
+  # registers unchanged.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00002-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-status-message-001/teapot"},
+         "response": {"status": 418, "statusMessage": "Custom Teapot Phrase",
+                      "body": "short and stout", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "5ec00002-0000-4000-8000-000000000001"
+        response: {status: 418, statusMessage: "Custom Teapot Phrase"}
+
+  # Stored verbatim, so a client that reads the mapping back sees what it wrote.
+  - admin: {method: GET, path: /__admin/mappings/5ec00002-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        response: {statusMessage: "Custom Teapot Phrase", status: 418}
+
+  # The phrase reaches the wire. Go's net/http gives no way to choose it, so
+  # this response is written over a hijacked connection — which is also why the
+  # body assertion matters: the phrase belongs on the status line and nowhere
+  # else, and a hand-written status line is exactly where it could leak into the
+  # payload or the headers.
+  - request: {port: mock, method: GET, path: /e2e/security-config-status-message-001/teapot}
+    expect:
+      status: 418
+      status_message: "Custom Teapot Phrase"
+      headers: {Content-Type: text/plain}
+      body: "short and stout"
+
+  # A status with no IANA phrase at all, to rule out the reading that the phrase
+  # only disappears when Go happens to have a canonical one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00002-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-status-message-001/unphrased"},
+         "response": {"status": 599, "statusMessage": "Totally Custom Phrase"}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {status: 599, statusMessage: "Totally Custom Phrase"}
+
+  # A status Go has no canonical phrase for, to rule out the reading that the
+  # stub's phrase only survives where Go had nothing of its own to write. The
+  # body stays empty: the phrase goes on the status line and is not smuggled
+  # into the payload.
+  - request: {port: mock, method: GET, path: /e2e/security-config-status-message-001/unphrased}
+    expect:
+      status: 599
+      status_message: "Totally Custom Phrase"
+      body: ""
+
+  # The negative: statusMessage is typed, not waved through. A non-string is a
+  # 422 naming the exact pointer, so a stub cannot register with a phrase that
+  # would never have worked.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00002-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-status-message-001/badphrase"},
+         "response": {"status": 200, "statusMessage": 418}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/response/statusMessage"}
+
+  # And the rejected stub was not persisted.
+  - request: {port: mock, method: GET, path: /e2e/security-config-status-message-001/badphrase}
+    expect: {status: 404}
+
+  # What gives this case its name. The status line ends at a CRLF, so a phrase
+  # carrying one would let whoever writes the stub append headers of their own —
+  # response splitting, from a field that looks like decoration. Registration
+  # accepts it, because WireMock does, and the phrase is neutralised instead:
+  # each CR and each LF becomes '?', which is byte-for-byte what the pinned
+  # WireMock puts on the wire for the same stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00002-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-status-message-001/split"},
+         "response": {"status": 200, "statusMessage": "ok\r\nX-Injected: yes", "body": "not split"}}
+    expect: {status: 201}
+
+  # The injected header must not exist: if it does, the phrase escaped the
+  # status line and the response is attacker-shaped.
+  - request: {port: mock, method: GET, path: /e2e/security-config-status-message-001/split}
+    expect:
+      status: 200
+      status_message: "ok??X-Injected: yes"
+      header_absent: [X-Injected]
+      body: "not split"
+
+  # The phrase is not the only field that reaches the wire by hand here: naming
+  # one moves the whole header block onto a writer of our own, and a header name
+  # is as good a place to hide a CRLF as a phrase or a value. net/http drops a
+  # name it cannot write; this must drop it too, or the hijacked path becomes the
+  # one way into the server for a header nobody wrote.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00002-0000-4000-8000-000000000006",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-status-message-001/split-header"},
+         "response": {"status": 200, "statusMessage": "Phrased",
+                      "headers": {"X-Ok\r\nX-Injected: yes": "v"}, "body": "not split"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/security-config-status-message-001/split-header}
+    expect:
+      status: 200
+      status_message: "Phrased"
+      header_absent: [X-Injected]
+      body: "not split"
+
+  # A stub that declares its own transfer coding is framing the body itself, and
+  # on the ordinary path net/http encodes it accordingly. The hand-written path
+  # has to reach the same wire: a chunked header over a body written raw is a
+  # response the client cannot finish reading, so this step fails on the body it
+  # never receives rather than on anything about the phrase.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00002-0000-4000-8000-000000000007",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-status-message-001/chunked"},
+         "response": {"status": 200, "statusMessage": "Chunky",
+                      "headers": {"Transfer-Encoding": "chunked"}, "body": "abcdefgh"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/security-config-status-message-001/chunked}
+    expect:
+      status: 200
+      status_message: "Chunky"
+      body: "abcdefgh"
+
+  # The other half of the contract: a stub that sets no statusMessage is not on
+  # the hijacked path at all and keeps Go's canonical phrase. Nobody pays for a
+  # feature they did not ask for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5ec00002-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/security-config-status-message-001/plain"},
+         "response": {"status": 200, "body": "canonical"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/security-config-status-message-001/plain}
+    expect:
+      status: 200
+      status_message: "OK"
+      body: "canonical"
+
+  - admin: {method: DELETE, path: /__admin/mappings/5ec00002-0000-4000-8000-000000000004}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/5ec00002-0000-4000-8000-000000000005}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/5ec00002-0000-4000-8000-000000000006}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/5ec00002-0000-4000-8000-000000000007}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/5ec00002-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/5ec00002-0000-4000-8000-000000000002}
+    expect: {status: 200}

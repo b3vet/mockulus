@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-put-full-replace-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-STUB-PRIORITY
+  - B-RESP-HEADERS
+  - B-RESP-STATUS
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # --- part one: an omitted field reverts to its default, it is not retained ---
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0106-0000-4000-8000-000000000001",
+         "name": "replace me",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-full-replace-001/doc"},
+         "response": {"status": 201, "body": "before", "headers": {"X-Mark": "one"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-put-full-replace-001/doc}
+    expect:
+      status: 201
+      headers: {X-Mark: one}
+      body: "before"
+
+  # The replacement names neither `name` nor `response.headers`. PUT is a full
+  # replace, not a merge: the stored document becomes exactly the body sent.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/eeee0106-0000-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-full-replace-001/doc"},
+         "response": {"status": 200, "body": "after"}}
+    expect:
+      status: 200
+      # body_json, not body_json_subset: the point of the assertion is what is
+      # *absent*. A subset check would pass even if `name` had survived.
+      body_json:
+        id: "eeee0106-0000-4000-8000-000000000001"
+        uuid: "eeee0106-0000-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/admin-crud-put-full-replace-001/doc}
+        response: {status: 200, body: "after"}
+
+  # The read-back agrees with what the replace returned. It is a subset check
+  # only because the identity fields are missing from the snapshot copy of the
+  # document for one sync interval (admin-crud-identity-echo-001); the exact
+  # form above already proves nothing but request and response survived.
+  - admin: {method: GET, path: /__admin/mappings/eeee0106-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        request: {method: GET, urlPath: /e2e/admin-crud-put-full-replace-001/doc}
+        response: {status: 200, body: "after"}
+
+  # The dropped header is gone from the served response too, so the replacement
+  # reached the serving snapshot and not only the store.
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-put-full-replace-001/doc}
+    expect:
+      status: 200
+      header_absent: [X-Mark]
+      body: "after"
+
+  # --- part two: the reverted default is the *effective* one, not "unset" ---
+  #
+  # An omitted priority is not "keep whatever it was" and not "no priority": it
+  # is 5. Proving that needs a competitor, because priority is only observable
+  # through selection. The competitor sits at 3, so it loses to the original's
+  # explicit 1 and wins against the replacement's defaulted 5.
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0106-0000-4000-8000-000000000002",
+         "priority": 3,
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-full-replace-001/lane"},
+         "response": {"status": 200, "body": "competitor"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0106-0000-4000-8000-000000000003",
+         "priority": 1,
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-full-replace-001/lane"},
+         "response": {"status": 200, "body": "sharper"}}
+    expect: {status: 201}
+
+  # Lower number wins: 1 beats 3.
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-put-full-replace-001/lane}
+    expect: {status: 200, body: "sharper"}
+
+  - admin:
+      method: PUT
+      path: /__admin/mappings/eeee0106-0000-4000-8000-000000000003
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-full-replace-001/lane"},
+         "response": {"status": 200, "body": "sharper, demoted"}}
+    expect: {status: 200}
+
+  # After the replacement dropped `priority`, the edited stub sits at the
+  # default 5 and the competitor at 3 now wins. If PUT had merged instead of
+  # replaced, the old priority 1 would have survived and this would still serve
+  # "sharper, demoted".
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-put-full-replace-001/lane}
+    expect: {status: 200, body: "competitor"}

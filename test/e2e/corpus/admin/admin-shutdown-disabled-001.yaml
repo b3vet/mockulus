@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-shutdown-disabled-001
+behaviors: [B-ADMIN-SHUTDOWN-POST, B-CFG-ADMIN-SHUTDOWN-ENABLED, B-DEV-DEVIATION-8]
+wm: n/a
+steps:
+  # Kubernetes owns the pod lifecycle, so an endpoint that lets any caller stop
+  # a replica is off unless someone deliberately turns it on (deviation #8).
+  - admin: {method: POST, path: /__admin/shutdown}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+
+  # And the process is still serving afterwards, which is the point.
+  - admin: {port: admin, method: GET, path: /readyz}
+    expect: {status: 200}

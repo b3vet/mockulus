@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-put-unknown-id-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+# n/a for the same reason as admin-crud-get-delete-001: the closing step is an
+# unmatched request to the mock port, whose 404 body names mockulus by design
+# (deviation #18).
+#
+# Everything the case pins is WireMock's, probed against the pinned image: a PUT
+# to an unknown id answers a bare 404 — no body, no Content-Type — and the
+# existence check runs before the body is parsed.
+wm: n/a
+steps:
+  # PUT replaces an existing stub; it never creates one. A test suite that PUTs
+  # a stub it forgot to register must fail loudly instead of getting a mock it
+  # cannot find in the listing under the id it chose.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/eeee0105-0000-4000-8000-000000000009
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-unknown-id-001/ghost"},
+         "response": {"status": 200, "body": "ghost"}}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # The existence check runs before the body is parsed, so a body that would
+  # otherwise be a 422 still reports 404 against an unknown id. The order is
+  # observable and pinned deliberately (SPEC §5.1, Appendix C): reversing it
+  # would tell a caller their stub JSON is wrong when the real mistake was the
+  # id in the URL.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/eeee0105-0000-4000-8000-000000000009
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/admin-crud-put-unknown-id-001/ghost"},
+         "response": {"status": 200},
+         "postServeActions": [{"name": "webhook"}]}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # Neither attempt created anything: not under the id, and not on the wire.
+  - admin: {method: GET, path: /__admin/mappings/eeee0105-0000-4000-8000-000000000009}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-put-unknown-id-001/ghost}
+    expect: {status: 404}

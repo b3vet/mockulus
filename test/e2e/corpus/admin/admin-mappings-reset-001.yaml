@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-mappings-reset-001
+behaviors:
+  - B-ADMIN-MAPPINGS-RESET-POST
+# Reset sweeps every non-persistent mapping in the deployment, which is most of
+# what the rest of the corpus registers. It can only run once the concurrent
+# cases are done with the instance.
+requires: [exclusive]
+# n/a: the survivor set is asserted deployment-wide, which only holds on an
+# instance this case owns. It is also where mockulus and WireMock part company —
+# WM keeps non-persistent stubs until the process restarts, ours gives them a
+# TTL (§5.2) — so `persistent` does not mean the same thing on both sides.
+wm: n/a
+steps:
+  # A known-empty starting point, so the survivor count at the end is a
+  # statement about reset rather than about whatever ran before.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0301-0000-4000-8000-000000000001",
+         "persistent": true,
+         "request": {"method": "GET", "urlPath": "/e2e/admin-mappings-reset-001/durable"},
+         "response": {"status": 200, "body": "durable"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0301-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-mappings-reset-001/ephemeral"},
+         "response": {"status": 200, "body": "ephemeral"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-reset-001/durable}
+    expect: {status: 200, body: "durable"}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-reset-001/ephemeral}
+    expect: {status: 200, body: "ephemeral"}
+
+  - admin: {method: POST, path: /__admin/mappings/reset}
+    expect: {status: 200}
+
+  # The stub that declared no `persistent` flag is gone — from the store and
+  # from the serving snapshot, which reset rebuilds in the same call.
+  - admin: {method: GET, path: /__admin/mappings/dddd0301-0000-4000-8000-000000000002}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-reset-001/ephemeral}
+    expect: {status: 404}
+
+  # The stub that declared `persistent: true` is untouched, still serving and
+  # still flagged. This is the whole contract: reset is the "start the next test
+  # from a clean slate" button, and a fixture a team marked durable is the one
+  # thing it must not take away.
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-reset-001/durable}
+    expect: {status: 200, body: "durable"}
+
+  - admin: {method: GET, path: /__admin/mappings/dddd0301-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "dddd0301-0000-4000-8000-000000000001"
+        persistent: true
+
+  # And nothing else survived anywhere: the sweep is deployment-wide, not
+  # confined to this case's namespace.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "dddd0301-0000-4000-8000-000000000001"
+        meta: {total: 1}
+
+  # Resetting again is a no-op rather than an escalation: the persistent stub
+  # does not decay into an ephemeral one by being swept past.
+  - admin: {method: POST, path: /__admin/mappings/reset}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-mappings-reset-001/durable}
+    expect: {status: 200, body: "durable"}
+
+  # Cleanup, and the contrast that defines the endpoint: what reset spares,
+  # DELETE /__admin/mappings takes. Leaving the durable stub behind would make
+  # every later exclusive case inherit it.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/dddd0301-0000-4000-8000-000000000001}
+    expect: {status: 404}

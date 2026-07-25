@@ -16,7 +16,14 @@ wm: verified
 # The unmatched steps land on a body that differs by design: WireMock renders a
 # near-miss diff table on every unmatched request and mockulus deliberately does
 # not (deviation #2). Status and headers are still diffed.
-wm_ignore: ["$body"]
+#
+# $global-listing covers the listing step. Not a deviation: pointed at a fresh
+# instance the two servers return the same listing. The oracle is reset per case
+# while corpus cases share one mockulus, so our list is a superset of the
+# oracle's and the two cannot agree on ordering or on meta.total. The listing is
+# still compared entry by entry — this stub's document has to be in it, and has
+# to match WireMock's in full.
+wm_ignore: ["$unmatched-body", "$global-listing"]
 steps:
   # Register a stub carrying its own id, so later steps can address it.
   - admin: {method: POST, path: /__admin/mappings, body_file: stubs/roundtrip-hello.json}
@@ -53,11 +60,22 @@ steps:
         id: "e2e0001a-0000-4000-8000-000000000001"
         response: {body: "world"}
 
-  # And it is listed in the WireMock envelope.
+  # And it is listed in the WireMock envelope. The listing is deployment-global
+  # and every case writes to the same instance, so the case finds its own stub by
+  # id: an index would name whichever stub some other case registered first, and
+  # a count would name how many of them there happen to be.
   - admin: {method: GET, path: /__admin/mappings}
     expect:
       status: 200
-      body_regex: '"meta"\s*:\s*\{"total"'
+      body_regex: '"meta"\s*:\s*\{\s*"total"'
+      body_json_contains:
+        - path: mappings
+          match:
+            id: "e2e0001a-0000-4000-8000-000000000001"
+            uuid: "e2e0001a-0000-4000-8000-000000000001"
+            name: "e2e stub round trip"
+            request: {method: GET, urlPath: /e2e/stub-roundtrip-001/hello}
+            response: {status: 200, body: "world"}
 
   # Deleting it takes it out of the snapshot too.
   - admin: {method: DELETE, path: /__admin/mappings/e2e0001a-0000-4000-8000-000000000001}

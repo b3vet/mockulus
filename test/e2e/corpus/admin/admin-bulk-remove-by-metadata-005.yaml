@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-remove-by-metadata-005
+behaviors:
+  - B-ADMIN-MAPPINGS-REMOVE-BY-METADATA-POST
+  - B-ADMIN-MAPPINGS-FIND-BY-METADATA-POST
+# n/a: WireMock answers remove-by-metadata with a bare {}; mockulus additionally
+# returns the removed mappings under the list envelope, a catalogued extension
+# (SPEC §5.1) that this case asserts directly.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0005-0000-4000-8000-000000000001",
+         "metadata": {"suite": "admin-bulk-remove-by-metadata-005", "batch": "doomed"},
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-remove-by-metadata-005/doomed-a"},
+         "response": {"status": 200, "body": "doomed-a"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0005-0000-4000-8000-000000000002",
+         "metadata": {"suite": "admin-bulk-remove-by-metadata-005", "batch": "doomed"},
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-remove-by-metadata-005/doomed-b"},
+         "response": {"status": 200, "body": "doomed-b"}}
+    expect: {status: 201}
+
+  # Same suite, different batch: the survivor that proves the removal is
+  # selective rather than a suite-wide wipe.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0005-0000-4000-8000-000000000003",
+         "metadata": {"suite": "admin-bulk-remove-by-metadata-005", "batch": "keeper"},
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-remove-by-metadata-005/keeper"},
+         "response": {"status": 200, "body": "keeper"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-remove-by-metadata-005/doomed-a}
+    expect: {status: 200, body: "doomed-a"}
+
+  # The removal reports what it removed, so a CI runner cleaning up a shared
+  # deployment can log it rather than guess.
+  - admin:
+      method: POST
+      path: /__admin/mappings/remove-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"admin-bulk-remove-by-metadata-005\",\"batch\":\"doomed\"}"}
+    expect:
+      status: 200
+      body_json_subset: {meta: {total: 2}}
+
+  # The removal is real, on the serving path...
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-remove-by-metadata-005/doomed-a}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-remove-by-metadata-005/doomed-b}
+    expect: {status: 404}
+
+  # ...and in the store, not only in this pod's snapshot.
+  - admin: {method: GET, path: /__admin/mappings/ffff0005-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # The stub the matcher did not select is untouched.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-remove-by-metadata-005/keeper}
+    expect: {status: 200, body: "keeper"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"admin-bulk-remove-by-metadata-005\",\"batch\":\"doomed\"}"}
+    expect:
+      status: 200
+      body_json: {mappings: [], meta: {total: 0}}
+
+  # Cleanup is idempotent: removing nothing is a 200 with an empty list, so a
+  # suite's teardown can run twice without failing the build.
+  - admin:
+      method: POST
+      path: /__admin/mappings/remove-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"admin-bulk-remove-by-metadata-005\",\"batch\":\"doomed\"}"}
+    expect:
+      status: 200
+      body_json: {mappings: [], meta: {total: 0}}

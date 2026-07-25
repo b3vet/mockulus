@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-headers-001
+behaviors: [B-REQ-HEADERS, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The criterion name is deliberately spelled all-lower-case while the requests
+  # below send the header capitalised, which is what makes the name comparison
+  # observable rather than accidental.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0009-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-headers-001/tenant",
+                     "headers": {"x-tenant": {"equalTo": "acme"}}},
+         "response": {"status": 200, "body": "header-matched", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            x-tenant: {equalTo: "acme"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0009-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-headers-001/ci",
+                     "headers": {"X-Tenant": {"equalTo": "acme", "caseInsensitive": true}}},
+         "response": {"status": 200, "body": "header-ci", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0009-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-headers-001/legacy",
+                     "headers": {"X-Legacy": {"absent": true}}},
+         "response": {"status": 200, "body": "header-absent", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Header NAMES match case-insensitively in both directions: a lower-case
+  # criterion against a capitalised request header.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-headers-001/tenant
+      headers: {X-Tenant: acme}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "header-matched"
+
+  # Header VALUES are case-sensitive unless the matcher opts out, so the same
+  # header spelled with a different value case is a non-match. Pairing this with
+  # the caseInsensitive stub below is what proves the default is strict.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-headers-001/tenant
+      headers: {X-Tenant: ACME}
+    expect: {status: 404}
+
+  # A wrong value, and a missing header, both fail the criterion.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-headers-001/tenant
+      headers: {X-Tenant: other}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/url-criteria-headers-001/tenant}
+    expect: {status: 404}
+
+  # caseInsensitive relaxes the value comparison only.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-headers-001/ci
+      headers: {X-Tenant: ACME}
+    expect: {status: 200, body: "header-ci"}
+  - request:
+      method: GET
+      path: /e2e/url-criteria-headers-001/ci
+      headers: {X-Tenant: nope}
+    expect: {status: 404}
+
+  # `absent` holds only while the header is not sent at all.
+  - request: {method: GET, path: /e2e/url-criteria-headers-001/legacy}
+    expect: {status: 200, body: "header-absent"}
+  - request:
+      method: GET
+      path: /e2e/url-criteria-headers-001/legacy
+      headers: {X-Legacy: "1"}
+    expect: {status: 404}

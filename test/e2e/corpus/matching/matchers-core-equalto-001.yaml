@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-equalto-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+wm: verified
+# Every non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up — the matched steps' bodies, the
+# statuses and the headers are all still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0001-0000-4000-8000-000000000001",
+         "name": "equalTo, exact",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-equalto-001/exact",
+                     "headers": {"X-Token": {"equalTo": "SeCrEt"}}},
+         "response": {"status": 200, "body": "exact",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0001-0000-4000-8000-000000000002",
+         "name": "equalTo, caseInsensitive",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-equalto-001/ci",
+                     "headers": {"X-Token": {"equalTo": "SeCrEt", "caseInsensitive": true}}},
+         "response": {"status": 200, "body": "ci",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0001-0000-4000-8000-000000000003",
+         "name": "equalTo over the body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-equalto-001/body-ci",
+                     "bodyPatterns": [{"equalTo": "SeCrEt", "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "body-ci",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The exact operand matches itself.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-equalto-001/exact
+      headers: {X-Token: SeCrEt}
+    expect: {status: 200, body: "exact"}
+
+  # equalTo is case-SENSITIVE by default. This is the whole point of the
+  # caseInsensitive modifier existing, and the pair below is what proves the
+  # default is not quietly the relaxed one.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-equalto-001/exact
+      headers: {X-Token: secret}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-equalto-001/exact
+      headers: {X-Token: SECRET}
+    expect: {status: 404}
+
+  # A header criterion is not satisfied by the header being missing.
+  - request: {method: GET, path: /e2e/matchers-core-equalto-001/exact}
+    expect: {status: 404}
+
+  # caseInsensitive relaxes case only.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-equalto-001/ci
+      headers: {X-Token: secret}
+    expect: {status: 200, body: "ci"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-equalto-001/ci
+      headers: {X-Token: SECRET}
+    expect: {status: 200, body: "ci"}
+
+  # ...and nothing else: one extra character is still a non-match, so
+  # caseInsensitive is not accidentally implemented as a prefix or a contains.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-equalto-001/ci
+      headers: {X-Token: SeCrEtX}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/matchers-core-equalto-001/ci}
+    expect: {status: 404}
+
+  # The same matcher, applied to a body rather than a header value: one matcher
+  # implementation serves every subject (SPEC §5.2 content-matcher table).
+  - request:
+      method: POST
+      path: /e2e/matchers-core-equalto-001/body-ci
+      body: "secret"
+    expect: {status: 200, body: "body-ci"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-equalto-001/body-ci
+      body: "secretx"
+    expect: {status: 404}

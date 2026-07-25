@@ -81,21 +81,127 @@ asserting on something neither server promises.
 
 ---
 
-## D-OPEN-5 — `statusMessage` reason phrases
+## D-OPEN-5 — Reason phrase when `statusMessage` is absent
 
-**Status:** not implemented · **Owner:** M6 · **Reversible:** at a cost
+**Status:** Go's phrase table · **Owner:** M6 · **Reversible:** at a cost
 
-WireMock emits `statusMessage` as the HTTP/1.1 reason phrase, with its own
-quirks: CR and LF each become `?`, the phrase is ISO-8859-1 encoded, and the
-fallback when absent is Jetty's phrase table rather than IANA's (`500` →
-`Server Error`, `420` → `Enhance your Calm`).
+The larger question this entry used to carry — whether `statusMessage` reaches
+the wire at all — is closed. It does. A stub that sets it is served over a
+hijacked connection with the status line written by hand, which is the only way
+to choose a reason phrase in Go, and the phrase matches the pinned WireMock byte
+for byte including its quirks (CR and LF each become `?`, a rune outside
+Latin-1 becomes `?`). The cost is that such a response closes the connection
+where WireMock keeps it alive; that is now numbered deviation #7 rather than an
+open question, because it follows from hijacking and hijacking is the only
+mechanism available.
 
-Go's `net/http` does not expose the reason phrase — `WriteHeader` always emits
-the canonical text. Emitting a custom one requires hijacking the connection and
-writing the status line by hand, which would move every stub that sets
-`statusMessage` onto the fault-injection path.
+What stays open is the *other* phrase — the one sent when a stub says nothing.
+Mockulus sends Go's (`500` → `Internal Server Error`, `222` → `status code
+222`); WireMock sends Jetty's (`500` → `Server Error`, `222` → `222`, `420` →
+`Enhance your Calm`). An explicitly empty `statusMessage` is the same question
+seen from the other side: WireMock emits an empty phrase there, mockulus emits
+the canonical one, because an empty string is how "unset" is spelled in
+`CompiledResponse`.
 
-SPEC §5.2 currently marks `statusMessage` as supported on HTTP/1.1. Either the
-implementation grows a hijacking path for it, or the spec row and the deviation
-list need to say it is accepted and stored but not conveyed. **This one is a
-real inconsistency between the spec and the code today**, not just a deferral.
+Closing it is not a small change dressed as a table lookup. Every response would
+have to take the hijacked path to control its phrase, which is exactly the
+per-stub opt-in that keeps the current implementation within P2, and it would
+put deviation #7's connection-close on all traffic.
+
+**To settle:** find a client that reads the reason phrase and acts on it. Nobody
+has produced one; HTTP/2 has no phrase at all, which is the strongest evidence
+that none exists. If none does, this becomes a numbered deviation and stops
+being a question.
+
+---
+
+## D-OPEN-6 — Sibling matcher keys on one document
+
+**Status:** implemented as a conjunction · **Owner:** M6 · **Reversible:** yes
+
+`{"contains": "a", "doesNotContain": "b"}` is one matcher document carrying two
+matcher keys. Mockulus treats it as a **conjunction** — both must hold — and a
+code comment asserts that WireMock does the same. Probing during the M1
+compatibility pass contradicted that comment: pinned WireMock 3.13.2 appears to
+honour only the **first** key it deserializes and discard the rest.
+
+The conjunction is the more useful reading and the safer one: a stub written
+with two criteria almost certainly means both, and silently dropping one is how
+a test passes against a request it should have rejected. But it is a divergence,
+and right now it is an undocumented one resting on a comment that is wrong.
+
+**To change:** `Compile` in `internal/matchers/compile.go` collects every
+recognised key into `built`; honouring only the first would mean stopping after
+one, or rejecting the multi-key form outright.
+
+**To settle:** establish WireMock's key ordering — whether "first" means source
+order, or the order its Jackson binding happens to visit — because a behavior
+that depends on JSON member order is one no client can rely on either, which
+would argue for the third option: **reject the multi-key form at registration**
+(P3) rather than pick a winner.
+
+Whichever way it lands, it becomes a numbered deviation in §5.5 or a corrected
+comment.
+
+---
+
+## D-OPEN-7 — `and` / `or` with a single operand
+
+**Status:** accepted; WireMock rejects · **Owner:** M6 · **Reversible:** yes
+
+WireMock requires `and` and `or` to carry at least two operands and answers 422
+code 10 for a one-operand form. Mockulus accepts it, and a one-operand `and` is
+simply that operand.
+
+Accepting it is harmless in itself, but it breaks the D2 contract in the
+direction that matters least and is still worth noticing: a stub that registers
+here and 422s there is a mappings file that cannot be migrated back to WireMock.
+
+**To change:** an arity check in `compileCombinator`, one condition and a test.
+
+---
+
+## D-OPEN-8 — `\s` and `\S` on U+000B
+
+**Status:** translated to Java's definition · **Owner:** M6 · **Reversible:** yes
+
+Java's `\s` is `[ \t\n\x0B\f\r]`; RE2's omits the vertical tab, U+000B. The Java
+syntax translation added in M1 lowers `\s` and `\S` to Java's definition, so a
+pattern containing the most common escape in the language now means the same
+thing on both servers.
+
+This contradicts SPEC §6.6 item 4, which says RE2-vs-Java divergences are
+**accepted** for patterns that compile on both engines. The translation was
+included anyway because the fix is exact, costs nothing at match time, and
+removes a wrong answer rather than a missing feature — but the carve-out it
+overrides was a deliberate decision, so overriding it should be a deliberate one
+too.
+
+**To change:** delete the `s` row from `javaLetterClasses` in
+`internal/regexx/javasyntax.go`. One table entry.
+
+**To settle:** decide whether §6.6 item 4 still describes the intended policy now
+that a translation step exists. If translation is the policy, item 4 should say
+so and name what is still accepted as divergent.
+
+---
+
+## D-OPEN-9 — `statusMessage: ""`
+
+**Status:** sends the canonical phrase · **Owner:** M6 · **Reversible:** yes
+
+A stub setting `"statusMessage": ""` explicitly asks for an empty reason phrase.
+Mockulus currently treats empty as absent and sends the canonical phrase for the
+status code instead, because the hijacking path that writes a custom reason
+phrase is only entered when the field is non-empty (§5.2).
+
+An explicitly empty string is a different statement from an omitted field, and a
+test written to assert a blank reason phrase would get one it did not ask for.
+Against that: HTTP/1.1 permits an empty reason phrase but little tooling expects
+it, and entering the hijack path for it costs a connection close.
+
+**To change:** distinguish "absent" from "present and empty" when decoding
+`statusMessage` in `internal/stub/response.go`, and let the empty case take the
+hijack path.
+
+**To settle:** probe pinned WireMock with `"statusMessage": ""` and match it.

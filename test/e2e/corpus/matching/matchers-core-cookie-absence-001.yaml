@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-cookie-absence-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-MATCH-CONTAINS-DOESNOTCONTAIN]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0009-0000-4000-8000-000000000001",
+         "name": "doesNotMatch over a header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-cookie-absence-001/header",
+                     "headers": {"X-Env": {"doesNotMatch": "prod"}}},
+         "response": {"status": 200, "body": "header",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0009-0000-4000-8000-000000000002",
+         "name": "doesNotMatch over a cookie",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-cookie-absence-001/cookie",
+                     "cookies": {"env": {"doesNotMatch": "prod"}}},
+         "response": {"status": 200, "body": "cookie",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0009-0000-4000-8000-000000000003",
+         "name": "matches over a cookie",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-cookie-absence-001/cookie-pos",
+                     "cookies": {"env": {"matches": "prod"}}},
+         "response": {"status": 200, "body": "cookie-pos",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0009-0000-4000-8000-000000000004",
+         "name": "doesNotContain over a cookie",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-cookie-absence-001/cookie-ndc",
+                     "cookies": {"env": {"doesNotContain": "prod"}}},
+         "response": {"status": 200, "body": "cookie-ndc",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-cookie-absence-001/header
+      headers: {X-Env: dev}
+    expect: {status: 200, body: "header"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-cookie-absence-001/header
+      headers: {X-Env: prod}
+    expect: {status: 404}
+
+  # The reference point for the pair below: an absent HEADER satisfies the
+  # negative form.
+  - request: {method: GET, path: /e2e/matchers-core-cookie-absence-001/header}
+    expect: {status: 200, body: "header"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-cookie-absence-001/cookie
+      headers: {Cookie: "env=dev"}
+    expect: {status: 200, body: "cookie"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-cookie-absence-001/cookie
+      headers: {Cookie: "env=prod"}
+    expect: {status: 404}
+
+  # The exception, and the reason absence has to be a property of the subject
+  # rather than a rule inside the matcher: an absent COOKIE satisfies neither
+  # form. The header step above and this one differ only in where the value
+  # would have come from.
+  - request: {method: GET, path: /e2e/matchers-core-cookie-absence-001/cookie}
+    expect: {status: 404}
+
+  # A Cookie header carrying some other name leaves `env` absent, so it fails
+  # the same way — the rule is about the cookie, not the header.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-cookie-absence-001/cookie
+      headers: {Cookie: "other=1"}
+    expect: {status: 404}
+
+  # The positive form fails on an absent cookie too, which is what makes the
+  # two forms non-exhaustive there: no request without the cookie matches
+  # either stub.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-cookie-absence-001/cookie-pos
+      headers: {Cookie: "env=prod"}
+    expect: {status: 200, body: "cookie-pos"}
+
+  - request: {method: GET, path: /e2e/matchers-core-cookie-absence-001/cookie-pos}
+    expect: {status: 404}
+
+  # doesNotContain over a cookie takes the same strict-absence rule.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-cookie-absence-001/cookie-ndc
+      headers: {Cookie: "env=dev"}
+    expect: {status: 200, body: "cookie-ndc"}
+
+  - request: {method: GET, path: /e2e/matchers-core-cookie-absence-001/cookie-ndc}
+    expect: {status: 404}

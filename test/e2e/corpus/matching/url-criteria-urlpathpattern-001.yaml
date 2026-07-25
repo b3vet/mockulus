@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-urlpathpattern-001
+behaviors: [B-REQ-URLPATHPATTERN, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0005-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/url-criteria-urlpathpattern-001/w/[0-9]+"},
+         "response": {"status": 200, "body": "path-pattern", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPathPattern: "/e2e/url-criteria-urlpathpattern-001/w/[0-9]+"}
+
+  - request: {method: GET, path: /e2e/url-criteria-urlpathpattern-001/w/42}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "path-pattern"
+
+  # The pattern's subject is the path alone, so any query at all is invisible to
+  # it. The identically-written urlPattern stub in url-criteria-urlpattern-001
+  # rejects this same request, which is the whole distinction between the two.
+  - request: {method: GET, path: "/e2e/url-criteria-urlpathpattern-001/w/42?trace=true&z=9"}
+    expect: {status: 200, body: "path-pattern"}
+
+  # Still fully anchored over that path: a longer path does not match even
+  # though the pattern matches its leading portion.
+  - request: {method: GET, path: /e2e/url-criteria-urlpathpattern-001/w/42/extra}
+    expect: {status: 404}
+
+  # Anchored at the start as well.
+  - request: {method: GET, path: /e2e/url-criteria-urlpathpattern-001/pre/w/42}
+    expect: {status: 404}
+
+  # And the regex itself gates the match.
+  - request: {method: GET, path: /e2e/url-criteria-urlpathpattern-001/w/abc}
+    expect: {status: 404}

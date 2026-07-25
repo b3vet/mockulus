@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-fallback-prefilter-001
+behaviors: [B-REQ-URLPATTERN]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18): WireMock renders a
+# near-miss table on a 404 and mockulus does not. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A URL pattern is prefiltered by the leading literal text every match must
+  # start with (SPEC §6.3), and on the fallback engine that text is read off the
+  # pattern by hand rather than derived by RE2. The patterns below are the ones
+  # where a naive reading claims text the subject need not carry, and the
+  # failure is silent: the stub is skipped before its regex is ever run.
+
+  # A top-level alternation makes everything before the bar one branch of
+  # several, so nothing in it is required.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1111000c-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/regex-fallback-prefilter-001/aq|/e2e/regex-fallback-prefilter-001/bq++"},
+         "response": {"status": 200, "body": "alternation"}}
+    expect: {status: 201}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/aq}
+    expect: {status: 200, body: "alternation"}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/bq}
+    expect: {status: 200, body: "alternation"}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/cq}
+    expect: {status: 404}
+
+  # A counted closure whose minimum is zero leaves the character before it as
+  # optional as `?` does.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1111000c-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/regex-fallback-prefilter-001/x{0,2}+y"},
+         "response": {"status": 200, "body": "closure"}}
+    expect: {status: 201}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/y}
+    expect: {status: 200, body: "closure"}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/xxy}
+    expect: {status: 200, body: "closure"}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/xxxy}
+    expect: {status: 404}
+
+  # A closure with a non-zero minimum does require its character, so the
+  # prefilter is allowed to keep it — this is the control that stops the fix
+  # above from being "give up on every brace".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1111000c-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/regex-fallback-prefilter-001/z{2,3}+w"},
+         "response": {"status": 200, "body": "minimum"}}
+    expect: {status: 201}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/zzw}
+    expect: {status: 200, body: "minimum"}
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-prefilter-001/zw}
+    expect: {status: 404}

@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-identity-conflict-001
+behaviors:
+  - B-DEV-DEVIATION-22
+  - B-STUB-ID-UUID
+# n/a by construction: this is deviation #22. WireMock answers these registrations
+# 201, treating `id` and `uuid` as one field and letting the last spelling in the
+# document win — verified against the pinned image, both orderings. There is no
+# WireMock answer to diff against, only one to differ from.
+wm: n/a
+steps:
+  # `id` and `uuid` are aliases (§5.2), so two values for them is two answers to
+  # "which stub is this". WireMock picks the later one silently; a suite that
+  # then deletes by the id it wrote first deletes nothing, and a suite that PUTs
+  # by it either 404s or — once somebody else's stub takes that id — replaces the
+  # wrong mapping. The pointer names `/uuid` because that is the field that
+  # introduced the conflict.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0110-0000-4000-8000-000000000001",
+         "uuid": "eeee0110-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-identity-conflict-001/conflict"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/uuid"}
+      body_regex: 'must not disagree'
+
+  # Rejected means rejected under both candidate identities. Under WireMock one
+  # of these two ids would now name a live stub.
+  - admin: {method: GET, path: /__admin/mappings/eeee0110-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/eeee0110-0000-4000-8000-000000000002}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/errors-identity-conflict-001/conflict}
+    expect: {status: 404}
+
+  # The order of the two fields does not change the answer. It changes WireMock's:
+  # there the winner is whichever came last, so the same pair of ids registers a
+  # stub under a different one depending on how the client serialized its JSON.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"uuid": "eeee0110-0000-4000-8000-000000000002",
+         "id": "eeee0110-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-identity-conflict-001/conflict"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/uuid"}
+
+  # Agreeing aliases are not a conflict, and case is not a disagreement: both
+  # spellings resolve to the same canonical id, so the stub registers.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0110-0000-4000-8000-000000000003",
+         "uuid": "EEEE0110-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-identity-conflict-001/agree"},
+         "response": {"status": 200, "body": "agreed"}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "eeee0110-0000-4000-8000-000000000003"
+        uuid: "eeee0110-0000-4000-8000-000000000003"
+
+  - request: {port: mock, method: GET, path: /e2e/errors-identity-conflict-001/agree}
+    expect: {status: 200, body: "agreed"}

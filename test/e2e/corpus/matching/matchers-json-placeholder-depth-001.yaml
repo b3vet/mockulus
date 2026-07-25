@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-placeholder-depth-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Placeholders are resolved wherever they appear — inside a nested object and
+  # inside an array element — and they compose with the relaxation flags rather
+  # than being an alternative to them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0008-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-depth-001/deep",
+                     "bodyPatterns": [{"equalToJson": "{\"o\":{\"a\":\"${json-unit.any-number}\"},\"xs\":[\"${json-unit.any-string}\",2]}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "deep",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/deep
+      body: '{"o":{"a":7},"xs":["s",2],"extra":true}'
+    expect: {status: 200, body: "deep"}
+
+  # A nested placeholder still constrains its own type.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/deep
+      body: '{"o":{"a":"7"},"xs":["s",2]}'
+    expect: {status: 404}
+
+  # And the literal siblings of a placeholder still have to match: a wildcard in
+  # one array slot does not loosen the slot next to it.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/deep
+      body: '{"o":{"a":7},"xs":["s",3]}'
+    expect: {status: 404}
+
+  # The array's length is relaxed here, but by ignoreExtraElements rather than
+  # by the placeholder: an element past the end of the expected array is an
+  # element the expected document never accounted for, like an unnamed member.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/deep
+      body: '{"o":{"a":7},"xs":["s",2,9]}'
+    expect: {status: 200, body: "deep"}
+
+  # The placeholder itself still needs a slot to stand in: a wildcard does not
+  # make its element optional, so a shorter array is a mismatch.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/deep
+      body: '{"o":{"a":7},"xs":["s"]}'
+    expect: {status: 404}
+
+  # Placeholders compose with ignoreArrayOrder too: the wildcard slot is paired
+  # with whichever element satisfies it, not with the one in its position.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0008-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-depth-001/unordered",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[\"${json-unit.any-number}\",\"lit\"]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "unordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/unordered
+      body: '{"xs":["lit",5]}'
+    expect: {status: 200, body: "unordered"}
+
+  # The literal element is still required: a second number cannot stand in for it.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/unordered
+      body: '{"xs":[5,6]}'
+    expect: {status: 404}
+
+  # And this stub carries only ignoreArrayOrder, so the count is still exact —
+  # an element with no expected element to pair with is a mismatch here, which
+  # is what scopes the length relaxation above to ignoreExtraElements.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-depth-001/unordered
+      body: '{"xs":["lit",5,9]}'
+    expect: {status: 404}

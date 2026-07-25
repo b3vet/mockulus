@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-headers-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A response header may be a single string or an array of strings; the array
+  # form is how WireMock states a header that legitimately repeats, and it must
+  # survive registration as an array rather than being flattened into one value.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990301-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-headers-001/multi"},
+         "response": {"status": 200, "body": "headered",
+                      "headers": {"Content-Type": "application/vnd.acme+json",
+                                  "X-Single": "solo",
+                                  "X-Multi": ["one", "two"]}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers:
+            X-Single: "solo"
+            X-Multi: ["one", "two"]
+
+  # Every configured header reaches the client, and a Content-Type the stub
+  # states wins over anything the server might otherwise sniff from the body.
+  #
+  # X-Multi is asserted at its first value only: the runner reads headers
+  # through Header.Get, which returns the first of a repeated header. That both
+  # values are actually emitted is what the T5 diff checks — the differential
+  # normalizer joins repeats, so a flattened or dropped second value shows up
+  # there as a header mismatch against WireMock.
+  - request: {port: mock, method: GET, path: /e2e/responses-headers-001/multi}
+    expect:
+      status: 200
+      body: "headered"
+      headers:
+        Content-Type: application/vnd.acme+json
+        X-Single: "solo"
+        X-Multi: "one"
+      # The negative half: headers are what the stub declared and nothing more —
+      # the response is not decorated with names that were never configured.
+      header_absent: [X-Undeclared, X-Single-Typo]
+
+  # A second stub with no headers block at all proves the header set belongs to
+  # the stub rather than to the instance: none of the above leaks onto it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990301-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-headers-001/bare"},
+         "response": {"status": 200, "body": "bare"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-headers-001/bare}
+    expect:
+      status: 200
+      body: "bare"
+      header_absent: [X-Single, X-Multi]

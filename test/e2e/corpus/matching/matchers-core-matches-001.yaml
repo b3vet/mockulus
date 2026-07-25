@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-matches-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0003-0000-4000-8000-000000000001",
+         "name": "matches requires a full match",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-matches-001/full",
+                     "bodyPatterns": [{"matches": "[a-z]+"}]},
+         "response": {"status": 200, "body": "full",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0003-0000-4000-8000-000000000002",
+         "name": "matches runs with DOTALL on",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-matches-001/dotall",
+                     "bodyPatterns": [{"matches": "a.b"}]},
+         "response": {"status": 200, "body": "dotall",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0003-0000-4000-8000-000000000003",
+         "name": "doesNotMatch over a body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-matches-001/does-not-match",
+                     "bodyPatterns": [{"doesNotMatch": "[0-9]+"}]},
+         "response": {"status": 200, "body": "does-not-match",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0003-0000-4000-8000-000000000004",
+         "name": "matches over a header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-matches-001/header",
+                     "headers": {"X-Id": {"matches": "[0-9]{3}"}}},
+         "response": {"status": 200, "body": "header",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/full
+      body: "abc"
+    expect: {status: 200, body: "full"}
+
+  # matches is anchored to the whole subject, not a search: a pattern that is
+  # satisfied by a substring is still a non-match (SPEC §6.6 rule 3). Both the
+  # trailing and the leading extra character are pinned, because a one-sided
+  # anchor would pass one of them.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/full
+      body: "abc1"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/full
+      body: "1abc"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/full
+      body: "ABC"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/dotall
+      body: "aXb"
+    expect: {status: 200, body: "dotall"}
+
+  # Stub patterns compile with DOTALL on, so `.` spans the newline. The
+  # anchoring is \A..\z rather than ^..$ precisely so this subject cannot
+  # satisfy the anchor at a line boundary instead.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/dotall
+      body: "a\nb"
+    expect: {status: 200, body: "dotall"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/dotall
+      body: "ab"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/dotall
+      body: "aXbX"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/does-not-match
+      body: "abc"
+    expect: {status: 200, body: "does-not-match"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/does-not-match
+      body: "123"
+    expect: {status: 404}
+
+  # doesNotMatch inherits the full-match rule too: "12a" is not entirely digits,
+  # so the pattern does not match it, so the negative criterion holds.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-matches-001/does-not-match
+      body: "12a"
+    expect: {status: 200, body: "does-not-match"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-matches-001/header
+      headers: {X-Id: "123"}
+    expect: {status: 200, body: "header"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-matches-001/header
+      headers: {X-Id: "1234"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-matches-001/header
+      headers: {X-Id: "12"}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/matchers-core-matches-001/header}
+    expect: {status: 404}

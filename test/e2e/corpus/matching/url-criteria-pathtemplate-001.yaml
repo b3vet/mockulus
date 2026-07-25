@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-pathtemplate-001
+behaviors: [B-REQ-URLPATHTEMPLATE-PATHPARAMETERS, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Two variables, each gated by a different matcher, so a failure can be
+  # attributed to one binding rather than to the template as a whole.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0006-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPathTemplate": "/e2e/url-criteria-pathtemplate-001/orders/{orderId}/items/{itemId}",
+                     "pathParameters": {"orderId": {"matches": "[0-9]+"},
+                                        "itemId": {"equalTo": "42"}}},
+         "response": {"status": 200, "body": "template", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          urlPathTemplate: "/e2e/url-criteria-pathtemplate-001/orders/{orderId}/items/{itemId}"
+          pathParameters:
+            orderId: {matches: "[0-9]+"}
+            itemId: {equalTo: "42"}
+
+  - request: {method: GET, path: /e2e/url-criteria-pathtemplate-001/orders/123/items/42}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "template"
+
+  # The template binds the variables and the pathParameters matchers then gate
+  # on those bindings: a segment that fits the template shape but fails its
+  # matcher is a non-match. Without this step the template alone could be
+  # matching and the matchers doing nothing.
+  - request: {method: GET, path: /e2e/url-criteria-pathtemplate-001/orders/abc/items/42}
+    expect: {status: 404}
+
+  # Each variable is gated independently — the second one rejects on its own.
+  - request: {method: GET, path: /e2e/url-criteria-pathtemplate-001/orders/123/items/7}
+    expect: {status: 404}
+
+  # A variable spans exactly one segment, so it cannot swallow a trailing one.
+  - request: {method: GET, path: /e2e/url-criteria-pathtemplate-001/orders/123/items/42/extra}
+    expect: {status: 404}
+
+  # Nor can the path be shorter than the template.
+  - request: {method: GET, path: /e2e/url-criteria-pathtemplate-001/orders/123/items}
+    expect: {status: 404}
+
+  # A variable must bind a non-empty segment, so an empty one is not a binding.
+  - request: {method: GET, path: /e2e/url-criteria-pathtemplate-001/orders//items/42}
+    expect: {status: 404}
+
+  # The template is a *path* criterion, so the query is ignored the way urlPath
+  # ignores it.
+  - request: {method: GET, path: "/e2e/url-criteria-pathtemplate-001/orders/123/items/42?x=1"}
+    expect: {status: 200, body: "template"}

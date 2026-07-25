@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-delays-001
+behaviors: [B-RESP-FIXEDDELAYMILLISECONDS, B-RESP-DELAYDISTRIBUTION]
+wm: n/a
+steps:
+  # A delayed stub is the point of a mock server for anyone testing timeouts.
+  # The assertion is on the response, not the elapsed time: the E2E gate never
+  # asserts latency — that belongs to the perf suite on the reference rig
+  # (SPEC §19.3). What is asserted here is that the delay does not break the
+  # response.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999de1a-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/responses-delays-001/fixed"},
+         "response":{"status":200,"body":"slow","fixedDelayMilliseconds":120}}
+    expect: {status: 201}
+  - request: {method: GET, path: /e2e/responses-delays-001/fixed}
+    expect: {status: 200, body: "slow"}
+
+  # A uniform distribution draws between the bounds.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999de1a-0000-4000-8000-000000000002",
+         "request":{"method":"GET","urlPath":"/e2e/responses-delays-001/uniform"},
+         "response":{"status":200,"body":"drawn",
+                     "delayDistribution":{"type":"uniform","lower":10,"upper":60}}}
+    expect: {status: 201}
+  - request: {method: GET, path: /e2e/responses-delays-001/uniform}
+    expect: {status: 200, body: "drawn"}
+
+  # A lognormal distribution is parameterised by median and sigma.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999de1a-0000-4000-8000-000000000003",
+         "request":{"method":"GET","urlPath":"/e2e/responses-delays-001/lognormal"},
+         "response":{"status":200,"body":"drawn",
+                     "delayDistribution":{"type":"lognormal","median":20,"sigma":0.3}}}
+    expect: {status: 201}
+  - request: {method: GET, path: /e2e/responses-delays-001/lognormal}
+    expect: {status: 200, body: "drawn"}
+
+  # An unknown distribution type is refused rather than silently ignored.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request":{"urlPath":"/e2e/responses-delays-001/bad"},
+         "response":{"delayDistribution":{"type":"weibull","lower":1,"upper":2}}}
+    expect:
+      status: 422
+      body_json_subset: {errors: [{code: 10}]}

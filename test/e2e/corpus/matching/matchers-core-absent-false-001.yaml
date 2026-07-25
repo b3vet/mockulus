@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-absent-false-001
+behaviors: [B-MATCH-ABSENT, B-ERR-10]
+# n/a rather than verified: this is a fail-loud rejection mockulus makes and
+# WireMock does not. Pinned WireMock 3.13.2 ACCEPTS {"absent": false} and
+# silently rewrites it to {"absent": true} — a criterion that then means the
+# opposite of what it says. mockulus refuses it at registration instead (P3),
+# so the two servers cannot be diffed here.
+wm: n/a
+steps:
+  # The rejection names the offending pointer, down to the matcher key, so the
+  # author can find it in a large mapping file.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa000b-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-absent-false-001/q",
+                     "queryParameters": {"trace": {"absent": false}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/queryParameters/trace/absent"}
+
+  # Nothing was persisted, so the URL matches nothing — the difference that
+  # matters between "rejected" and "accepted and quietly rewritten".
+  - request: {method: GET, path: /e2e/matchers-core-absent-false-001/q}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/aaaa000b-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # The same criterion inside bodyPatterns is rejected the same way, so the
+  # rule belongs to the matcher rather than to one field that happens to check.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa000b-0000-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-absent-false-001/body",
+                     "bodyPatterns": [{"absent": false}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/absent"}
+
+  # The positive spelling registers and serves, so the rejection is about the
+  # `false` operand and not about `absent` being unsupported.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa000b-0000-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-absent-false-001/body",
+                     "bodyPatterns": [{"absent": true}]},
+         "response": {"status": 200, "body": "absent-true",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: POST, path: /e2e/matchers-core-absent-false-001/body}
+    expect: {status: 200, body: "absent-true"}

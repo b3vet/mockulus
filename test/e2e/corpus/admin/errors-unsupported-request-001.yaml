@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-unsupported-request-001
+behaviors:
+  - B-ERR-1000
+  - B-REQ-MULTIPARTPATTERNS
+  - B-REQ-CUSTOMMATCHER-HASEXACTLY-INCLUDES-MULTI-VALUE-OPS
+  - B-DEV-DEVIATION-14
+# Deferred-feature rejection is mockulus-specific: WireMock accepts every one of
+# these documents.
+wm: n/a
+steps:
+  # multipartPatterns is deferred. Registering the stub and ignoring the
+  # criterion would make it match multipart requests it was written to reject.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000020",
+         "request": {"method": "POST", "urlPath": "/e2e/errors-unsupported-request-001/upload",
+                     "multipartPatterns": [{"name": "part1", "matchingType": "ALL"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            title: "Unsupported feature"
+            source: {pointer: "/request/multipartPatterns"}
+      body_regex: 'multipartPatterns is not supported in mockulus v1.*ROADMAP\.md'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000020}
+    expect: {status: 404}
+
+  # customMatcher names a Java class mockulus has no way to run, so it is
+  # refused by name rather than treated as an unknown field.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000021",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-unsupported-request-001/custom",
+                     "customMatcher": {"name": "body-too-old", "parameters": {}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            source: {pointer: "/request/customMatcher"}
+      body_regex: 'customMatcher is not supported in mockulus v1.*ROADMAP\.md'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000021}
+    expect: {status: 404}
+
+  # The extended multi-value operators are matcher keys, not stub fields, so the
+  # pointer has to reach all the way into the criterion that used them. Both are
+  # reported from one document: fix everything in one round, not one per restart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000022",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-unsupported-request-001/multi",
+                     "queryParameters": {"tag": {"hasExactly": [{"equalTo": "a"}],
+                                                 "includes": [{"equalTo": "b"}]}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            source: {pointer: "/request/queryParameters/tag/hasExactly"}
+          - code: 1000
+            source: {pointer: "/request/queryParameters/tag/includes"}
+      body_regex: 'multi-value operator is not supported in mockulus v1'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000022}
+    expect: {status: 404}
+
+  # Nothing any of the three rejected documents described is servable.
+  - request: {port: mock, method: GET, path: "/e2e/errors-unsupported-request-001/multi?tag=a"}
+    expect: {status: 404}
+
+  # The control: the same criterion written with a supported matcher registers
+  # and selects, so the rejections above are about the deferred operators and
+  # not about queryParameters as such.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000023",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-unsupported-request-001/multi",
+                     "queryParameters": {"tag": {"equalTo": "a"}}},
+         "response": {"status": 200, "body": "selected"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/errors-unsupported-request-001/multi?tag=a"}
+    expect: {status: 200, body: "selected"}
+
+  # …and it really is a criterion: a different value does not match.
+  - request: {port: mock, method: GET, path: "/e2e/errors-unsupported-request-001/multi?tag=z"}
+    expect: {status: 404}

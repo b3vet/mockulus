@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-fallback-backreference-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18): WireMock renders a
+# near-miss table, mockulus does not. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A backreference is not expressible in RE2 at all — it is outside the regular
+  # languages the engine is built on — so this stub can only exist on the
+  # regexp2 fallback. It is the sharpest available proof that the second engine
+  # is real rather than a compile-time formality.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110002-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-fallback-backreference-001/pair",
+                     "bodyPatterns": [{"matches": "(\\w+)-\\1"}]},
+         "response": {"status": 200, "body": "backreference"}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          bodyPatterns:
+            - matches: "(\\w+)-\\1"
+
+  # The two halves are equal, so \1 is satisfied.
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-backreference-001/pair, body: "abc-abc"}
+    expect: {status: 200, body: "backreference"}
+
+  # The negative is the whole point: a pattern that had degraded to `(\w+)-\w+`
+  # — or to a literal `\1` — would match this too. Only an engine that carries
+  # the captured group forward can say no here.
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-backreference-001/pair, body: "abc-def"}
+    expect: {status: 404}
+
+  # A prefix-equal but not equal pair, so the assertion is equality of the whole
+  # group rather than of its first characters.
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-backreference-001/pair, body: "abc-abcd"}
+    expect: {status: 404}

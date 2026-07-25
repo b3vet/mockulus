@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-body-conflict-001
+behaviors:
+  - B-DEV-DEVIATION-19
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# n/a by construction: this is deviation #19 itself. Probed against pinned
+# WireMock 3.13.2, which answers 201 to the first document below and then serves
+# "a" — silently discarding the jsonBody. Accept-and-ignore is the failure mode
+# the fail-loud contract exists to rule out, so there is nothing to diff here.
+wm: n/a
+steps:
+  # Two body forms in one response state two different intents, and no ordering
+  # rule between them is discoverable from the JSON. Rejecting names both fields
+  # so the author can see which pair collided.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990601-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-conflict-001/two"},
+         "response": {"status": 200, "body": "a", "jsonBody": {"a": 1}}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response"}
+      # Both offending fields are named, in one message: the author fixes the
+      # stub in one round rather than discovering the second conflict on retry.
+      body_regex: 'found body, jsonBody'
+
+  # The rejection is total — nothing was persisted, so the path stays unmatched.
+  - request: {port: mock, method: GET, path: /e2e/responses-body-conflict-001/two}
+    expect: {status: 404}
+
+  # The rule covers every pair, not just the two that happen to be easy to
+  # compare: a binary body and a file reference collide the same way.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990601-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-conflict-001/file-and-binary"},
+         "response": {"status": 200, "base64Body": "YQ==", "bodyFileName": "unused.json"}}
+    expect:
+      status: 422
+      body_regex: 'found base64Body, bodyFileName'
+
+  # The positive half: exactly one body form is the normal, accepted case. Same
+  # response object as the first step with the loser removed, so the difference
+  # between 422 and 201 is the conflict and nothing else.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990601-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-conflict-001/one"},
+         "response": {"status": 200, "jsonBody": {"a": 1}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-body-conflict-001/one}
+    expect: {status: 200, body: '{"a":1}'}

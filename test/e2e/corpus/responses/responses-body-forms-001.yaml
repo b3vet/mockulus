@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-body-forms-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# Verified: probed against pinned WireMock 3.13.2, which serves the same bytes
+# for all three forms — jsonBody compacted, base64Body decoded — and, like
+# mockulus, emits no Content-Type for any of them. The create echo preserves
+# whichever body field was submitted on both servers, so the admin steps diff
+# cleanly too.
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `body` is the literal-bytes form.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990401-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-forms-001/text"},
+         "response": {"status": 200, "body": "plain bytes, verbatim"}}
+    expect: {status: 201}
+
+  # `jsonBody` takes a JSON value rather than a string. The submitted document
+  # is deliberately spaced out so the assertion below can tell serving the
+  # *value* apart from echoing the *text* that was submitted.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990401-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-forms-001/json"},
+         "response": {"status": 200,
+                      "jsonBody": { "id" :  7 ,  "tags" : [ "a" , "b" ] }}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          jsonBody: {id: 7, tags: ["a", "b"]}
+
+  # `base64Body` is the binary form: the operand is base64, the wire carries the
+  # decoded bytes. The payload carries an embedded NUL, which a server treating
+  # the body as a C-style string would truncate at.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990401-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-forms-001/binary"},
+         "response": {"status": 200, "base64Body": "SGVsbG8AV29ybGQ="}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-body-forms-001/text}
+    expect:
+      status: 200
+      body: "plain bytes, verbatim"
+      # A stub that declares no Content-Type gets none on the wire: the server
+      # must not sniff the body and invent a header the author never wrote and
+      # has no way to remove. WireMock behaves the same way.
+      header_absent: [Content-Type]
+
+  # jsonBody is served COMPACT — the whitespace in the submitted document is
+  # formatting, not payload. Asserting the exact bytes is what pins that; a
+  # body_json assertion would pass either way and prove nothing.
+  - request: {port: mock, method: GET, path: /e2e/responses-body-forms-001/json}
+    expect:
+      status: 200
+      body: '{"id":7,"tags":["a","b"]}'
+      header_absent: [Content-Type]
+
+  # The 16-character operand decodes to 11 bytes, so a server that served the
+  # base64 text verbatim — or stopped at the NUL — fails this exact-body check.
+  - request: {port: mock, method: GET, path: /e2e/responses-body-forms-001/binary}
+    expect:
+      status: 200
+      body: "Hello\0World"
+      header_absent: [Content-Type]

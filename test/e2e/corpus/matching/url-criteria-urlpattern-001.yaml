@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-urlpattern-001
+behaviors: [B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A pattern over the path with no query part.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0004-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPattern": "/e2e/url-criteria-urlpattern-001/w/[0-9]+"},
+         "response": {"status": 200, "body": "pattern-plain", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: "/e2e/url-criteria-urlpattern-001/w/[0-9]+"}
+
+  # A pattern that names the query, which only works because urlPattern's
+  # subject is the whole request target.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0004-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPattern": "/e2e/url-criteria-urlpattern-001/q/[0-9]+\\?trace=true"},
+         "response": {"status": 200, "body": "pattern-query", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/url-criteria-urlpattern-001/w/42}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "pattern-plain"
+
+  # Fully anchored at the end: a longer path is a non-match even though the
+  # pattern matches a prefix of it. WireMock requires a full match, which
+  # mockulus implements by wrapping the pattern in \A(?:...)\z (SPEC §6.6).
+  - request: {method: GET, path: /e2e/url-criteria-urlpattern-001/w/42/extra}
+    expect: {status: 404}
+
+  # Fully anchored at the start too: extra path in front does not match.
+  - request: {method: GET, path: /e2e/url-criteria-urlpattern-001/pre/w/42}
+    expect: {status: 404}
+
+  # The character class has to hold, so the regex is really being evaluated
+  # rather than the pattern being treated as a literal prefix.
+  - request: {method: GET, path: /e2e/url-criteria-urlpattern-001/w/abc}
+    expect: {status: 404}
+
+  # Because urlPattern matches path AND query, a request carrying a query no
+  # longer satisfies a pattern that only describes the path. This is the
+  # assertion that separates urlPattern from urlPathPattern.
+  - request: {method: GET, path: "/e2e/url-criteria-urlpattern-001/w/42?trace=true"}
+    expect: {status: 404}
+
+  # The mirror image: a pattern spelling out the query matches only when the
+  # query is present and identical.
+  - request: {method: GET, path: "/e2e/url-criteria-urlpattern-001/q/7?trace=true"}
+    expect: {status: 200, body: "pattern-query"}
+  - request: {method: GET, path: /e2e/url-criteria-urlpattern-001/q/7}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/url-criteria-urlpattern-001/q/7?trace=true&x=1"}
+    expect: {status: 404}

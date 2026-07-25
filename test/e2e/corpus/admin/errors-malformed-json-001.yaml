@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-malformed-json-001
+behaviors: [B-ERR-10]
+# Code 10 is WireMock's parity code, but the detail text and the `source`
+# pointer mockulus attaches are ours, so there is no single-node WM oracle for
+# the body — this stays out of the differential run.
+wm: n/a
+steps:
+  # A truncated document cannot reach field validation at all, so the answer is
+  # the parse failure rather than a list of field problems.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: '{"request": {"method": "GET", "urlPath": "/e2e/errors-malformed-json-001/a"'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'stub mapping is not a JSON object'
+
+  # A literal JSON null decodes into an empty map without error. Registering it
+  # would produce a stub made entirely of defaults — a catch-all matching every
+  # request in a shared deployment — so it is refused as malformed instead.
+  - admin: {method: POST, path: /__admin/mappings, body: 'null'}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'stub mapping is null, not an object'
+
+  # The top level must be an object; an array is not a stub mapping.
+  - admin: {method: POST, path: /__admin/mappings, body: '[{"request": {}}]'}
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10}]
+
+  # An empty body is malformed too, not an implicit empty stub.
+  - admin: {method: POST, path: /__admin/mappings}
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10}]
+      body_regex: 'request body is empty'
+
+  # Nothing was persisted by any of the four rejections: the URL the truncated
+  # document named still does not match.
+  - request: {port: mock, method: GET, path: /e2e/errors-malformed-json-001/a}
+    expect: {status: 404}
+
+  # The control: the same document, closed properly, registers and serves. That
+  # is what pins the four rejections above on the malformed JSON rather than on
+  # anything else in the payload.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-malformed-json-001/a"},
+         "response": {"status": 200, "body": "well-formed"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/errors-malformed-json-001/a}
+    expect: {status: 200, body: "well-formed"}

@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-formparameters-001
+behaviors: [B-REQ-FORMPARAMETERS, B-REQ-METHOD, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc000b-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/url-criteria-formparameters-001/token",
+                     "formParameters": {"grant_type": {"equalTo": "client_credentials"}}},
+         "response": {"status": 200, "body": "form-matched", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          formParameters:
+            grant_type: {equalTo: "client_credentials"}
+
+  - request:
+      method: POST
+      path: /e2e/url-criteria-formparameters-001/token
+      headers: {Content-Type: "application/x-www-form-urlencoded"}
+      body: "grant_type=client_credentials&scope=read"
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "form-matched"
+
+  # The media type is compared without its parameters, so a charset does not
+  # stop the body being parsed as a form.
+  - request:
+      method: POST
+      path: /e2e/url-criteria-formparameters-001/token
+      headers: {Content-Type: "application/x-www-form-urlencoded; charset=UTF-8"}
+      body: "grant_type=client_credentials"
+    expect: {status: 200, body: "form-matched"}
+
+  # The matcher gates the match: a different value for the named field fails.
+  - request:
+      method: POST
+      path: /e2e/url-criteria-formparameters-001/token
+      headers: {Content-Type: "application/x-www-form-urlencoded"}
+      body: "grant_type=password"
+    expect: {status: 404}
+
+  # A well-formed form that simply lacks the field fails too.
+  - request:
+      method: POST
+      path: /e2e/url-criteria-formparameters-001/token
+      headers: {Content-Type: "application/x-www-form-urlencoded"}
+      body: "scope=read"
+    expect: {status: 404}
+
+  # Form parameters come from urlencoded bodies ONLY. The identical bytes under
+  # a JSON content type yield no form fields at all, so the criterion fails —
+  # this is the step that proves the content type is part of the criterion and
+  # that the body is not simply being scanned for "grant_type=".
+  - request:
+      method: POST
+      path: /e2e/url-criteria-formparameters-001/token
+      headers: {Content-Type: "application/json"}
+      body: "grant_type=client_credentials"
+    expect: {status: 404}
+
+  # An empty body is not a form either.
+  - request:
+      method: POST
+      path: /e2e/url-criteria-formparameters-001/token
+      headers: {Content-Type: "application/x-www-form-urlencoded"}
+    expect: {status: 404}

@@ -1,0 +1,235 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-combinators-001
+behaviors: [B-MATCH-AND-OR-NOT, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Most subjects here are single-valued. The repeated-key steps at the end cover
+# the rule that only shows up once a key carries more than one value: WireMock
+# evaluates the whole pattern — combinators included — once per value and takes
+# any-of, rather than letting each leaf take any-of on its own.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0008-0000-4000-8000-000000000001",
+         "name": "and over two content matchers",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-combinators-001/and",
+                     "bodyPatterns": [{"and": [{"contains": "a"}, {"contains": "b"}]}]},
+         "response": {"status": 200, "body": "and",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0008-0000-4000-8000-000000000002",
+         "name": "or over two content matchers",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-combinators-001/or",
+                     "bodyPatterns": [{"or": [{"equalTo": "a"}, {"equalTo": "b"}]}]},
+         "response": {"status": 200, "body": "or",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0008-0000-4000-8000-000000000003",
+         "name": "not over one content matcher",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-combinators-001/not",
+                     "bodyPatterns": [{"not": {"contains": "a"}}]},
+         "response": {"status": 200, "body": "not",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0008-0000-4000-8000-000000000004",
+         "name": "or over a header value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-combinators-001/env",
+                     "headers": {"X-Env": {"or": [{"equalTo": "dev"}, {"equalTo": "stage"}]}}},
+         "response": {"status": 200, "body": "env",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0008-0000-4000-8000-000000000005",
+         "name": "not over absent, i.e. require the header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-combinators-001/present",
+                     "headers": {"X-Env": {"not": {"absent": true}}}},
+         "response": {"status": 200, "body": "present",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0008-0000-4000-8000-000000000006",
+         "name": "not over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-combinators-001/repeated-not",
+                     "queryParameters": {"tag": {"not": {"matches": "a"}}}},
+         "response": {"status": 200, "body": "repeated-not",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0008-0000-4000-8000-000000000007",
+         "name": "and over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-combinators-001/repeated-and",
+                     "queryParameters": {"tag": {"and": [{"contains": "a"},
+                                                         {"contains": "b"}]}}},
+         "response": {"status": 200, "body": "repeated-and",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # and needs both children.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/and
+      body: "ab"
+    expect: {status: 200, body: "and"}
+
+  # Each child failing alone is enough to reject, which is what distinguishes
+  # `and` from `or` here: the two operands are deliberately chosen so that a
+  # mis-wired `or` would answer 200 to both of the next two steps.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/and
+      body: "a"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/and
+      body: "b"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/and
+      body: "c"
+    expect: {status: 404}
+
+  # or needs either child, and a mis-wired `and` would reject both of these
+  # because the two equalTo operands cannot hold at once.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/or
+      body: "a"
+    expect: {status: 200, body: "or"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/or
+      body: "b"
+    expect: {status: 200, body: "or"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/or
+      body: "c"
+    expect: {status: 404}
+
+  # not inverts its child.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/not
+      body: "bbb"
+    expect: {status: 200, body: "not"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-combinators-001/not
+      body: "aaa"
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-combinators-001/env
+      headers: {X-Env: dev}
+    expect: {status: 200, body: "env"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-combinators-001/env
+      headers: {X-Env: stage}
+    expect: {status: 200, body: "env"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-combinators-001/env
+      headers: {X-Env: prod}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/matchers-core-combinators-001/env}
+    expect: {status: 404}
+
+  # not(absent) is how a stub says "this header must be there, whatever it
+  # says" — the combinators compose the key-level matcher too, not only the
+  # value-level ones.
+  - request:
+      method: GET
+      path: /e2e/matchers-core-combinators-001/present
+      headers: {X-Env: anything}
+    expect: {status: 200, body: "present"}
+
+  - request: {method: GET, path: /e2e/matchers-core-combinators-001/present}
+    expect: {status: 404}
+
+  # The repeated-key rule, and the two steps that separate it from applying
+  # any-of at each leaf instead.
+  #
+  # `not(matches "a")` over tag=a&tag=b holds — on the strength of "b", the one
+  # value that fails the pattern. Taking any-of at the leaf would evaluate
+  # matches("a") over the whole key, find "a", and invert that to a non-match.
+  - request:
+      method: GET
+      path: "/e2e/matchers-core-combinators-001/repeated-not?tag=a&tag=b"
+    expect: {status: 200, body: "repeated-not"}
+
+  # …and with only the matching value present there is nothing left to hold on.
+  - request:
+      method: GET
+      path: "/e2e/matchers-core-combinators-001/repeated-not?tag=a"
+    expect: {status: 404}
+
+  # The mirror image: no single value contains both "a" and "b", so the
+  # conjunction fails. Leaf-level any-of would satisfy each branch from a
+  # different value and answer 200.
+  - request:
+      method: GET
+      path: "/e2e/matchers-core-combinators-001/repeated-and?tag=a&tag=b"
+    expect: {status: 404}
+
+  # The control: one value satisfying both branches is what the criterion asks
+  # for, and it still matches when repeated alongside others.
+  - request:
+      method: GET
+      path: "/e2e/matchers-core-combinators-001/repeated-and?tag=ab"
+    expect: {status: 200, body: "repeated-and"}
+
+  - request:
+      method: GET
+      path: "/e2e/matchers-core-combinators-001/repeated-and?tag=a&tag=ab"
+    expect: {status: 200, body: "repeated-and"}

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-dribble-001
+behaviors: [B-RESP-CHUNKEDDRIBBLEDELAY]
+wm: n/a
+steps:
+  # A dribbled body arrives in pieces over the configured duration, which is how
+  # a slow upstream is simulated. The client still sees one complete body, and
+  # that is what a corpus case can assert — the chunk boundaries themselves are
+  # a socket-level property, covered by the Go-native tests.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999b01b-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/responses-dribble-001/slow"},
+         "response":{"status":200,"body":"abcdefghij",
+                     "chunkedDribbleDelay":{"numberOfChunks":5,"totalDuration":100}}}
+    expect: {status: 201}
+  - request: {method: GET, path: /e2e/responses-dribble-001/slow}
+    expect: {status: 200, body: "abcdefghij"}
+
+  # numberOfChunks must be at least one: zero chunks is not a slow response,
+  # it is a stub that cannot be served.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request":{"urlPath":"/e2e/responses-dribble-001/bad"},
+         "response":{"body":"x","chunkedDribbleDelay":{"numberOfChunks":0,"totalDuration":10}}}
+    expect:
+      status: 422
+      body_json_subset: {errors: [{code: 10}]}

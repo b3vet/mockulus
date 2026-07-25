@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+id: precedence-priority-order-001
+behaviors: [B-STUB-PRIORITY]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The three stubs below share one path and one criterion set, so the only
+  # thing that can decide between them is precedence. They are registered
+  # strongest first: every later registration is both newer and weaker, which
+  # means recency can never be the explanation for the winner (SPEC §5.3).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0001-0000-4000-8000-000000000001",
+         "priority": 4,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-order-001/select"},
+         "response": {"status": 200, "body": "priority-4",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      # The declared priority round-trips unchanged, so the ordering asserted
+      # below is driven by the number the case wrote, not a normalised one.
+      body_json_subset:
+        id: "dddd0001-0000-4000-8000-000000000001"
+        priority: 4
+
+  # No priority at all: WireMock treats an absent priority as 5, and the two
+  # neighbours registered around it exist to prove that number rather than
+  # assume it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0001-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-order-001/select"},
+         "response": {"status": 200, "body": "priority-absent",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0001-0000-4000-8000-000000000003",
+         "priority": 6,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-order-001/select"},
+         "response": {"status": 200, "body": "priority-6",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 6}
+
+  # The lowest number wins even though two stubs were added after it, which is
+  # the ordering rule that matters: priority dominates insertion recency.
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-order-001/select}
+    expect: {status: 200, body: "priority-4"}
+
+  # Removing the winner promotes the stub carrying no priority at all, so the
+  # absent default outranks an explicit 6: absent < 6.
+  - admin: {method: DELETE, path: /__admin/mappings/dddd0001-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-order-001/select}
+    expect: {status: 200, body: "priority-absent"}
+
+  # And removing that one in turn shows the priority-6 stub was matching the
+  # whole time — it was outranked, never excluded. With the first step this
+  # brackets the absent default strictly between 4 and 6, i.e. WireMock's 5.
+  - admin: {method: DELETE, path: /__admin/mappings/dddd0001-0000-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-order-001/select}
+    expect: {status: 200, body: "priority-6"}

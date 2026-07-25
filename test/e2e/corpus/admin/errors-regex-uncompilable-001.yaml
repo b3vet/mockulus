@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-regex-uncompilable-001
+behaviors: [B-ERR-1003]
+# Code 1003 and the two-engine strategy behind it are mockulus's; WireMock has
+# one engine and reports the failure differently.
+wm: n/a
+steps:
+  # `(` compiles on neither RE2 nor the backtracking fallback, so it is refused
+  # at registration. Deferring it to serve time would give a stub that can never
+  # match and never explains why.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000050",
+         "request": {"method": "GET", "urlPattern": "/e2e/errors-regex-uncompilable-001/("},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            title: "Invalid regular expression"
+            source: {pointer: "/request/urlPattern"}
+      body_regex: 'does not compile on either engine'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000050}
+    expect: {status: 404}
+
+  # The same rule applies to a content matcher, with the pointer reaching into
+  # the body pattern that carried it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000051",
+         "request": {"method": "POST", "urlPath": "/e2e/errors-regex-uncompilable-001/body",
+                     "bodyPatterns": [{"matches": "[a-"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+      body_regex: 'regular expression does not compile'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000051}
+    expect: {status: 404}
+
+  # Nothing was persisted by either rejection.
+  - request: {port: mock, method: POST, path: /e2e/errors-regex-uncompilable-001/body, body: "abc"}
+    expect: {status: 404}
+
+  # The negative case that makes 1003 mean something: a lookahead is a Java
+  # construct RE2 refuses, and it must still register — 1003 is "compiles on
+  # neither engine", not "RE2 said no". The fallback engine takes it and the
+  # stub matches for real.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000052",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/errors-regex-uncompilable-001/(?=ok)ok"},
+         "response": {"status": 200, "body": "fallback engine"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/errors-regex-uncompilable-001/ok}
+    expect: {status: 200, body: "fallback engine"}
+
+  # …and it is still a real criterion on the fallback engine, not a wildcard.
+  - request: {port: mock, method: GET, path: /e2e/errors-regex-uncompilable-001/no}
+    expect: {status: 404}

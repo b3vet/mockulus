@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-post-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-ERR-109
+  - B-STUB-NAME
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A create carrying its own id echoes it back under both spellings: WireMock
+  # treats id and uuid as two names for one field, and a client reading either
+  # must find the same value.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0101-0000-4000-8000-000000000001",
+         "name": "admin crud create",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-post-001/hello"},
+         "response": {"status": 200, "body": "created"}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "eeee0101-0000-4000-8000-000000000001"
+        uuid: "eeee0101-0000-4000-8000-000000000001"
+        name: "admin crud create"
+        request: {method: GET, urlPath: /e2e/admin-crud-post-001/hello}
+        response: {status: 200, body: "created"}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-post-001/hello}
+    expect: {status: 200, body: "created"}
+
+  # Create is not an upsert. A second create over a live id is refused with the
+  # WireMock parity code 109 rather than quietly replacing the stub — an
+  # accidental id collision between two CI runners sharing a deployment would
+  # otherwise destroy the other runner's mock without a word (SPEC §5.1).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0101-0000-4000-8000-000000000001",
+         "name": "the impostor",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-post-001/hijacked"},
+         "response": {"status": 500, "body": "clobbered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 109
+            title: "Duplicate stub mapping ID"
+      body_regex: "is already taken by another stub mapping"
+
+  # The refusal is total: the original stub still serves its original response,
+  # so the rejected document reached neither the store nor the snapshot.
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-post-001/hello}
+    expect: {status: 200, body: "created"}
+
+  # Reading the id back returns the document as registered, not the one the
+  # rejected create tried to put there.
+  - admin: {method: GET, path: /__admin/mappings/eeee0101-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "eeee0101-0000-4000-8000-000000000001"
+        name: "admin crud create"
+        response: {status: 200, body: "created"}

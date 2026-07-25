@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-find-by-metadata-004
+behaviors:
+  - B-ADMIN-MAPPINGS-FIND-BY-METADATA-POST
+# n/a: the last step asserts the mockulus error envelope for an envelope-shaped
+# body, and the matched documents are echoed verbatim rather than round-tripped
+# through WireMock's serializer.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0004-0000-4000-8000-000000000001",
+         "metadata": {"suite": "admin-bulk-find-by-metadata-004", "tier": "gold"},
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-find-by-metadata-004/gold"},
+         "response": {"status": 200, "body": "gold"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0004-0000-4000-8000-000000000002",
+         "metadata": {"suite": "admin-bulk-find-by-metadata-004", "tier": "silver"},
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-find-by-metadata-004/silver"},
+         "response": {"status": 200, "body": "silver"}}
+    expect: {status: 201}
+
+  # A near miss: same prefix, different suite value. It exists so the searches
+  # below are shown to discriminate rather than to return everything nearby.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0004-0000-4000-8000-000000000003",
+         "metadata": {"suite": "admin-bulk-find-by-metadata-004-other"},
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-find-by-metadata-004/other"},
+         "response": {"status": 200, "body": "other"}}
+    expect: {status: 201}
+
+  # The body IS the content matcher — no {"metadata": ...} envelope around it.
+  # ignoreExtraElements lets one suite tag select every stub the suite owns.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"admin-bulk-find-by-metadata-004\"}",
+         "ignoreExtraElements": true}
+    expect:
+      status: 200
+      body_json_subset: {meta: {total: 2}}
+
+  # A stricter matcher selects one. The total is asserted alongside the id so a
+  # matcher that accidentally matched everything could not pass this step.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"admin-bulk-find-by-metadata-004\",\"tier\":\"gold\"}"}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "ffff0004-0000-4000-8000-000000000001"
+            metadata: {suite: "admin-bulk-find-by-metadata-004", tier: "gold"}
+        meta: {total: 1}
+
+  # The negative: a matcher no stub satisfies returns the empty envelope rather
+  # than everything, an error, or the nearest thing.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"admin-bulk-find-by-metadata-004\",\"tier\":\"bronze\"}"}
+    expect:
+      status: 200
+      body_json: {mappings: [], meta: {total: 0}}
+
+  # Any content matcher of SPEC §5.2 works here, not just equalToJson: a string
+  # matcher sees the metadata document as its serialized text, which is how the
+  # "-other" stub is swept in alongside the two exact ones.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"contains": "admin-bulk-find-by-metadata-004"}
+    expect:
+      status: 200
+      body_json_subset: {meta: {total: 3}}
+
+  # Wrapping the matcher in the field it applies to is rejected rather than
+  # silently matching nothing — the failure mode where a cleanup call quietly
+  # finds zero stubs forever is exactly what fail-loud exists to prevent.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"metadata": {"suite": "admin-bulk-find-by-metadata-004"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/metadata"}
+      body_regex: 'unknown matcher metadata'
+
+  # A search is a read: everything it looked at still serves.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-find-by-metadata-004/gold}
+    expect: {status: 200, body: "gold"}

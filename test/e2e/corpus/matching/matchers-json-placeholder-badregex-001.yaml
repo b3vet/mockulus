@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-placeholder-badregex-001
+behaviors:
+  - B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS
+  - B-ERR-1003
+# Registration-time rejection is the mockulus contract (P3, deviation #5's
+# family): WireMock defers pattern errors, so there is no shared answer to diff.
+wm: n/a
+steps:
+  # The pattern inside a ${json-unit.regex} placeholder is compiled when the
+  # stub is registered, so a broken pattern fails loudly here rather than
+  # turning into a stub that never matches.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0010-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-badregex-001/bad",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"${json-unit.regex}(unclosed\"}"}]},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/equalToJson"}
+      body_regex: 'json-unit\.regex'
+
+  # Nothing was persisted.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-badregex-001/bad
+      body: '{"a":"x"}'
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/bbbb0010-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # The control: the same placeholder with a pattern that does compile is
+  # accepted, so it is the broken pattern that is refused rather than the
+  # regex placeholder itself.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0010-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-badregex-001/good",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"${json-unit.regex}(closed)+\"}"}]},
+         "response": {"status": 200, "body": "good",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-badregex-001/good
+      body: '{"a":"closedclosed"}'
+    expect: {status: 200, body: "good"}

@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-structural-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# Every non-matching step below lands on the unmatched-request body, which
+# differs by design: WireMock renders a near-miss table there and mockulus
+# deliberately does not (deviation #2), and WireMock names itself where we name
+# mockulus (deviation #18). Status still carries the whole matched/not-matched
+# signal these steps are about.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A plain equalToJson operand in the escaped-string form, no relaxation flags.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0001-0000-4000-8000-000000000001",
+         "name": "equalToJson structural equality",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-structural-001/doc",
+                     "bodyPatterns": [{"equalToJson": "{\"a\": 1, \"b\": {\"c\": \"x\"}}"}]},
+         "response": {"status": 200, "body": "structural",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "bbbb0001-0000-4000-8000-000000000001"
+
+  # The comparison is structural, so member order is not part of the document.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: '{"b":{"c":"x"},"a":1}'
+    expect: {status: 200, body: "structural"}
+
+  # Whitespace and line breaks are not part of the document either.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: |
+        {
+            "a"   :   1,
+
+            "b" : {   "c"  :  "x"   }
+        }
+    expect: {status: 200, body: "structural"}
+
+  # Numbers compare by value, not by lexical form: 1, 1.0 and 1e0 are one number.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: '{"a":1.0,"b":{"c":"x"}}'
+    expect: {status: 200, body: "structural"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: '{"a":1e0,"b":{"c":"x"}}'
+    expect: {status: 200, body: "structural"}
+
+  # Value-equality is not string-equality: the string "1" is not the number 1,
+  # so the relaxation above stops at the number's value.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: '{"a":"1","b":{"c":"x"}}'
+    expect: {status: 404}
+
+  # A different value at depth is still a different document.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: '{"a":1,"b":{"c":"y"}}'
+    expect: {status: 404}
+
+  # Without ignoreExtraElements an unexpected member is a mismatch — this is the
+  # negative that makes the flag in matchers-json-ignore-extra-001 mean something.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: '{"a":1,"b":{"c":"x"},"z":9}'
+    expect: {status: 404}
+
+  # A body that is not JSON is a plain non-match, never an error.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/doc
+      body: 'not json at all'
+    expect: {status: 404}
+
+  # The same document with one member replaced by a json-unit placeholder. The
+  # placeholder is lowered into a matcher node at registration, so this pins
+  # that the rewrite leaves its literal siblings alone: order, whitespace and
+  # numeric-value equality must still hold around it, and a wrong literal must
+  # still be a mismatch.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0001-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-structural-001/mixed",
+                     "bodyPatterns": [{"equalToJson": "{\"a\": 1, \"b\": \"${json-unit.ignore}\"}"}]},
+         "response": {"status": 200, "body": "mixed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/mixed
+      body: '{"b":{"anything":[1,2]},"a":1.0}'
+    expect: {status: 200, body: "mixed"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-structural-001/mixed
+      body: '{"a":2,"b":"whatever"}'
+    expect: {status: 404}

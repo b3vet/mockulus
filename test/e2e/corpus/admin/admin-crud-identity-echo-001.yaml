@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-identity-echo-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-ADMIN-MAPPINGS-ID-PUT
+# n/a: the listing step reads a deployment-global collection that the per-case
+# oracle, which is reset between cases, cannot mirror.
+#
+# This case is the round-trip pin: every admin read must return the document the
+# server stored, identity stamped in, on the same call that wrote it. SPEC §6.1
+# calls `Raw` "exact JSON returned by GET (round-trip fidelity)" and §5.5
+# deviation #11 promises the writing replica reflects its own write immediately,
+# so a read that serves the caller's un-stamped body — even for one sync
+# interval — hands back a document that was never stored.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0109-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-identity-echo-001/echo"},
+         "response": {"status": 200, "body": "echo"}}
+    expect: {status: 201}
+
+  # id and uuid are aliases and both are echoed (SPEC §5.2). The create response
+  # carries both; the read-back must agree with it, or a client that registers
+  # and then reads gets two different documents for one stub.
+  - admin: {method: GET, path: /__admin/mappings/eeee0109-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "eeee0109-0000-4000-8000-000000000001"
+        uuid: "eeee0109-0000-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/admin-crud-identity-echo-001/echo}
+        response: {status: 200, body: "echo"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/admin-crud-identity-echo-001/gen"},
+         "response": {"status": 200, "body": "gen"}}
+    expect: {status: 201}
+
+  # A server-assigned id has to be visible in the listing too: register-then-list
+  # is how a client library discovers the id of a stub it did not name, and a
+  # listed mapping with no id at all cannot be addressed, edited or deleted.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_regex: '"id":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}","request":\{"method":"GET","urlPath":"/e2e/admin-crud-identity-echo-001/gen"\}'
+
+  - admin:
+      method: PUT
+      path: /__admin/mappings/eeee0109-0000-4000-8000-000000000001
+      body: |
+        {"id": "eeee0109-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-identity-echo-001/echo"},
+         "response": {"status": 200, "body": "echo-v2"}}
+    expect: {status: 200}
+
+  # The path id wins, so the stored document reports the path id — the same id
+  # the PUT response echoed. Reporting the ignored body id here would mean the
+  # stub answers to one id and names another.
+  - admin: {method: GET, path: /__admin/mappings/eeee0109-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "eeee0109-0000-4000-8000-000000000001"
+        uuid: "eeee0109-0000-4000-8000-000000000001"
+        response: {body: "echo-v2"}
+
+  # And the ignored body id names nothing at all — answered the way WireMock
+  # answers an unknown mapping id, with a bare 404 and no body.
+  - admin: {method: GET, path: /__admin/mappings/eeee0109-0000-4000-8000-000000000002}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]

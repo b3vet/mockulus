@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-list-001
+behaviors:
+  - B-ADMIN-MAPPINGS-GET
+# The listing is deployment-global (SPEC §1): it returns every case's stubs on
+# the shared instance, while the differential oracle is reset per case and holds
+# only this one's. The two lists are therefore not comparable by construction —
+# this is a property of the harness, not a compatibility claim, so the envelope
+# shape is pinned here and left out of the T5 diff.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0103-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-list-001/one"},
+         "response": {"status": 200, "body": "one"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0103-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-crud-list-001/two"},
+         "response": {"status": 200, "body": "two"}}
+    expect: {status: 201}
+
+  # The envelope is WireMock's, not a bare array: clients deserialize
+  # {"mappings":[...],"meta":{"total":n}} and break on anything else.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_regex: '^\{"mappings":\[.*\],"meta":\{"total":[0-9]+\}\}$'
+
+  # Both freshly registered stubs are in the list, addressed by the ids they
+  # were registered under. Matched on `id` rather than its `uuid` alias because
+  # the listing currently serves the un-stamped client document right after a
+  # write — pinned in admin-crud-identity-echo-001.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_regex: '"id":"eeee0103-0000-4000-8000-000000000001"'
+
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_regex: '"id":"eeee0103-0000-4000-8000-000000000002"'
+
+  # meta.total counts the collection, not the page: an empty page still reports
+  # a total of at least the two stubs registered above. That is what makes the
+  # field usable for paging, and it is the one number a page-size assertion can
+  # pin on an instance other cases are writing to concurrently.
+  - admin: {method: GET, path: "/__admin/mappings?limit=0"}
+    expect:
+      status: 200
+      body_regex: '^\{"mappings":\[\],"meta":\{"total":([2-9]|[1-9][0-9]+)\}\}$'
+
+  # An offset past the end of the collection is an empty page, not an error and
+  # not a wrapped-around first page.
+  - admin: {method: GET, path: "/__admin/mappings?offset=1000000"}
+    expect:
+      status: 200
+      body_regex: '^\{"mappings":\[\],"meta":\{"total":([2-9]|[1-9][0-9]+)\}\}$'

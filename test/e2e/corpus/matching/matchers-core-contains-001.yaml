@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-contains-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design: WireMock
+# renders near-miss detail there and mockulus deliberately does not
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0002-0000-4000-8000-000000000001",
+         "name": "contains and doesNotContain over one body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-contains-001/both",
+                     "bodyPatterns": [{"contains": "alpha"}, {"doesNotContain": "beta"}]},
+         "response": {"status": 200, "body": "both",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0002-0000-4000-8000-000000000002",
+         "name": "contains over a header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-contains-001/header",
+                     "headers": {"X-Trace": {"contains": "abc"}}},
+         "response": {"status": 200, "body": "header",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0002-0000-4000-8000-000000000003",
+         "name": "doesNotContain over a header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-contains-001/header-neg",
+                     "headers": {"X-Trace": {"doesNotContain": "abc"}}},
+         "response": {"status": 200, "body": "header-neg",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # contains is a substring test, not equality.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-contains-001/both
+      body: "xx alpha xx"
+    expect: {status: 200, body: "both"}
+
+  # Each listed body pattern is a separate reason to reject: here only the
+  # doesNotContain fails, and the stub is still not selected.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-contains-001/both
+      body: "alpha and beta"
+    expect: {status: 404}
+
+  # ...and here only the contains fails.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-contains-001/both
+      body: "gamma"
+    expect: {status: 404}
+
+  # contains compares bytes, not folded case.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-contains-001/both
+      body: "ALPHA"
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-contains-001/header
+      headers: {X-Trace: xxabcxx}
+    expect: {status: 200, body: "header"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-contains-001/header
+      headers: {X-Trace: xxABCxx}
+    expect: {status: 404}
+
+  # A missing header does not satisfy the positive form...
+  - request: {method: GET, path: /e2e/matchers-core-contains-001/header}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-contains-001/header-neg
+      headers: {X-Trace: xx}
+    expect: {status: 200, body: "header-neg"}
+
+  - request:
+      method: GET
+      path: /e2e/matchers-core-contains-001/header-neg
+      headers: {X-Trace: xxabcxx}
+    expect: {status: 404}
+
+  # ...but a missing header DOES satisfy the negative form: there is no value
+  # there that contains the text. An absent cookie is the exception to this,
+  # pinned by matchers-core-cookie-absence-001.
+  - request: {method: GET, path: /e2e/matchers-core-contains-001/header-neg}
+    expect: {status: 200, body: "header-neg"}
