@@ -78,12 +78,17 @@ func (b *Builder) MarkDirty() { b.dirty.Store(true) }
 func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 	start := time.Now()
 
-	stored, _, epoch, err := b.store.LoadAll(ctx)
+	stored, files, epoch, err := b.store.LoadAll(ctx)
 	if err != nil {
 		b.metrics.SnapshotReloadFailures.Inc()
 		b.log.Error("snapshot reload failed; keeping previous snapshot",
 			"trigger", trigger, "error", err)
 		return fmt.Errorf("load store state: %w", err)
+	}
+
+	byName := make(map[string][]byte, len(files))
+	for _, f := range files {
+		byName[f.Name] = f.Data
 	}
 
 	compiled := make([]*stub.CompiledStub, 0, len(stored))
@@ -93,6 +98,7 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 			b.metrics.SnapshotQuarantined.WithLabelValues(reason).Inc()
 			continue
 		}
+		resolveBodyFile(cs, byName, b.log)
 		compiled = append(compiled, cs)
 	}
 
@@ -105,6 +111,29 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 		"trigger", trigger, "epoch", epoch, "stubs", len(compiled),
 		"quarantined", len(stored)-len(compiled), "took", took.String())
 	return nil
+}
+
+// resolveBodyFile inlines a file-backed response body into the snapshot, so the
+// request path never reads a file (P1).
+//
+// A stub whose file is not there still enters the snapshot, carrying an error
+// response instead. Registering a stub before uploading its file is legal, and
+// the later file write bumps the epoch so the next rebuild resolves it
+// (SPEC §6.9).
+func resolveBodyFile(cs *stub.CompiledStub, files map[string][]byte, log *slog.Logger) {
+	name := cs.Response.BodyFileName
+	if name == "" {
+		return
+	}
+	data, ok := files[name]
+	if !ok {
+		cs.Response.BodyFileMissing = true
+		log.Warn("stub references a body file that does not exist; it will serve an error until the file is uploaded",
+			"id", cs.ID, "bodyFileName", name)
+		return
+	}
+	cs.Response.BodyFileMissing = false
+	cs.Response.Body = data
 }
 
 // compile turns one stored document into a compiled stub, or reports why it was
