@@ -54,11 +54,11 @@ func (h *Handler) updateMapping(w http.ResponseWriter, r *http.Request) {
 		errs.WriteList(w)
 		return
 	}
-	if compiled.ID != "" && compiled.ID != id {
-		wmcompat.WriteError(w, wmcompat.NewFieldError(wmcompat.CodeMalformed, "/id",
-			"the id in the body does not match the id in the path"))
-		return
-	}
+	// A body id that disagrees with the path is ignored rather than rejected:
+	// the path names the stub being replaced, and WireMock resolves the conflict
+	// the same way. WithIdentity stamps the path id into the stored document, so
+	// the disagreement cannot survive into the store.
+	_ = compiled.ID
 
 	doc, err := stub.WithIdentity(raw, id)
 	if err != nil {

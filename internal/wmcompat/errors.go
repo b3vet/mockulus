@@ -40,6 +40,9 @@ const (
 	CodeBodyTooLarge = 1030
 	// CodeScenarioInvalid marks an unknown scenario or an invalid target state.
 	CodeScenarioInvalid = 1031
+	// CodeDuplicateStubID marks a create whose id already exists. The value is
+	// WireMock's, so a client that special-cases it keeps working.
+	CodeDuplicateStubID = 109
 )
 
 // roadmapURL is appended to the detail of every deferred-feature error so a
@@ -64,6 +67,7 @@ var catalog = map[int]struct {
 	CodeBodyFileMissing:     {http.StatusInternalServerError, "Body file not found"},
 	CodeBodyTooLarge:        {http.StatusRequestEntityTooLarge, "Request body too large"},
 	CodeScenarioInvalid:     {http.StatusBadRequest, "Invalid scenario"},
+	CodeDuplicateStubID:     {http.StatusUnprocessableEntity, "Duplicate stub mapping ID"},
 }
 
 // StatusFor returns the HTTP status a catalog code is reported with.

@@ -79,11 +79,15 @@ type Options struct {
 func Compile(source string, opts Options) (*Pattern, error) {
 	p := &Pattern{source: source, onTimeout: opts.OnTimeout}
 
-	expr := source
+	// WireMock compiles stub patterns with DOTALL on and MULTILINE off, verified
+	// against the pinned version: `a.b` matches "a\nb", and `^a$` does not.
+	// Go's default is the opposite for dot, so the flag is set explicitly; a
+	// pattern that wants the other behavior can still write (?-s).
+	expr := `(?s)` + source
 	if opts.Anchored {
 		// \A and \z rather than ^ and $ so that a subject containing a newline
 		// cannot satisfy the anchor at a line boundary.
-		expr = `\A(?:` + source + `)\z`
+		expr = `(?s)\A(?:` + source + `)\z`
 	}
 
 	if re, err := regexp.Compile(expr); err == nil {

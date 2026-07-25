@@ -85,24 +85,44 @@ func TestResponseDefaultsToStatus200(t *testing.T) {
 }
 
 func TestIDAndUUIDAreAliases(t *testing.T) {
-	cs := compileOK(t, `{"id":"abc","request":{"urlPath":"/x"}}`)
-	if cs.ID != "abc" {
+	const id = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
+	const other = "3f2504e0-4f89-41d3-9a0c-0305e82c3302"
+
+	cs := compileOK(t, `{"id":"`+id+`","request":{"urlPath":"/x"}}`)
+	if cs.ID != id {
 		t.Errorf("id = %q", cs.ID)
 	}
-	cs = compileOK(t, `{"uuid":"abc","request":{"urlPath":"/x"}}`)
-	if cs.ID != "abc" {
+	cs = compileOK(t, `{"uuid":"`+id+`","request":{"urlPath":"/x"}}`)
+	if cs.ID != id {
 		t.Errorf("uuid should populate the same field, got %q", cs.ID)
 	}
-	cs = compileOK(t, `{"id":"abc","uuid":"abc","request":{"urlPath":"/x"}}`)
-	if cs.ID != "abc" {
+	cs = compileOK(t, `{"id":"`+id+`","uuid":"`+id+`","request":{"urlPath":"/x"}}`)
+	if cs.ID != id {
 		t.Errorf("agreeing aliases should be accepted, got %q", cs.ID)
 	}
 
 	// Disagreeing aliases are ambiguous, and guessing which one the author
 	// meant would silently register a stub under an id they cannot predict.
-	problems := compileErrs(t, `{"id":"abc","uuid":"def","request":{"urlPath":"/x"}}`)
+	problems := compileErrs(t, `{"id":"`+id+`","uuid":"`+other+`","request":{"urlPath":"/x"}}`)
 	if !hasProblem(problems, wmcompat.CodeMalformed, "") {
 		t.Errorf("disagreeing id and uuid should be rejected, got %v", problems)
+	}
+}
+
+// A stub id is deserialized as a UUID by WireMock, so an arbitrary string is
+// rejected there and must be rejected here. Parsing is hex-case-insensitive and
+// canonicalises to lower case, so two spellings name one stub.
+func TestStubIDMustBeAUUID(t *testing.T) {
+	for _, bad := range []string{"abc", "not-a-uuid", "12345", "3f2504e0-4f89-41d3-9a0c"} {
+		problems := compileErrs(t, `{"id":"`+bad+`","request":{"urlPath":"/x"}}`)
+		if !hasProblem(problems, wmcompat.CodeMalformed, "/id") {
+			t.Errorf("id %q should be rejected, got %v", bad, problems)
+		}
+	}
+
+	cs := compileOK(t, `{"id":"3F2504E0-4F89-41D3-9A0C-0305E82C3301","request":{"urlPath":"/x"}}`)
+	if cs.ID != "3f2504e0-4f89-41d3-9a0c-0305e82c3301" {
+		t.Errorf("an upper-case id should canonicalise to lower case, got %q", cs.ID)
 	}
 }
 
@@ -220,18 +240,28 @@ func TestEveryProblemIsReportedAtOnce(t *testing.T) {
 	}
 }
 
-func TestPriorityValidation(t *testing.T) {
-	cs := compileOK(t, `{"priority":1,"request":{"urlPath":"/x"}}`)
-	if cs.Priority != 1 {
-		t.Errorf("priority = %d", cs.Priority)
-	}
-	// 1 is the highest priority, so lower is meaningless rather than "even
-	// higher" — accepting it would create an ordering the author cannot reason
-	// about against WireMock.
-	for _, doc := range []string{`{"priority":0,"request":{}}`, `{"priority":-1,"request":{}}`} {
-		if problems := compileErrs(t, doc); !hasProblem(problems, wmcompat.CodeMalformed, "/priority") {
-			t.Errorf("%s should be rejected, got %v", doc, problems)
+// Priority is an arbitrary signed integer compared numerically. WireMock
+// accepts 0, negatives and int32 max and sorts them purely by value, so
+// rejecting any of them would refuse a stub WireMock takes — the "1 is the
+// highest" phrasing in the documentation is convention, not a constraint.
+func TestPriorityAcceptsAnySignedInteger(t *testing.T) {
+	for _, c := range []struct {
+		doc  string
+		want int32
+	}{
+		{`{"priority":1,"request":{}}`, 1},
+		{`{"priority":0,"request":{}}`, 0},
+		{`{"priority":-1,"request":{}}`, -1},
+		{`{"priority":2147483647,"request":{}}`, 2147483647},
+		{`{"request":{}}`, DefaultPriority},
+	} {
+		if got := compileOK(t, c.doc).Priority; got != c.want {
+			t.Errorf("%s: priority = %d, want %d", c.doc, got, c.want)
 		}
+	}
+
+	if problems := compileErrs(t, `{"priority":"high","request":{}}`); !hasProblem(problems, wmcompat.CodeMalformed, "/priority") {
+		t.Errorf("a non-integer priority should still be rejected, got %v", problems)
 	}
 }
 

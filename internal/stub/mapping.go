@@ -21,6 +21,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/b3vet/mockulus/internal/matchers"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
@@ -146,12 +148,24 @@ func parseIdentity(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, cs 
 		if s == "" {
 			continue
 		}
-		if cs.ID != "" && cs.ID != s {
+		parsed, err := uuid.Parse(s)
+		if err != nil {
+			// WireMock deserializes this field as a UUID, so a non-UUID id is
+			// rejected there too. Accepting one here would let a stub register
+			// that could never be migrated back.
+			errs.Addf(wmcompat.CodeMalformed, "/"+field,
+				field+" must be a canonical 36-character UUID")
+			continue
+		}
+		// UUID parsing is hex-case-insensitive and canonicalises to lower case,
+		// so two spellings of one id resolve to the same stub.
+		canonical := parsed.String()
+		if cs.ID != "" && cs.ID != canonical {
 			errs.Addf(wmcompat.CodeMalformed, "/"+field,
 				"id and uuid are aliases and must not disagree")
 			continue
 		}
-		cs.ID = s
+		cs.ID = canonical
 	}
 }
 
@@ -165,11 +179,11 @@ func parsePriority(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, cs 
 		errs.Addf(wmcompat.CodeMalformed, "/priority", "priority must be an integer")
 		return
 	}
-	if p < 1 {
-		errs.Addf(wmcompat.CodeMalformed, "/priority",
-			"priority must be 1 or greater, where 1 is the highest")
-		return
-	}
+	// Priority is an arbitrary signed integer compared numerically, with no
+	// clamping — verified against the pinned WireMock, which accepts 0, -1 and
+	// int32 max and sorts them purely by value. The common "1 is the highest"
+	// phrasing describes convention, not a constraint, and rejecting a stub
+	// WireMock accepts would be a compatibility break.
 	cs.Priority = p
 }
 

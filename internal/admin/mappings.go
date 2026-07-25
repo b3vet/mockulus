@@ -39,10 +39,22 @@ func (h *Handler) createMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctxCheck := r.Context()
 	id := compiled.ID
 	if id == "" {
 		id = uuid.NewString()
+	} else if _, err := h.store.GetStub(ctxCheck, id); err == nil {
+		// Creating over an existing id is rejected rather than treated as an
+		// update: an accidental collision would otherwise silently replace
+		// another suite's stub, and PUT exists for the deliberate case.
+		wmcompat.WriteError(w, wmcompat.NewFieldError(wmcompat.CodeDuplicateStubID, "/id",
+			"a stub mapping with id "+id+" already exists; use PUT to replace it"))
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		h.storeError(w, "get_stub", err)
+		return
 	}
+
 	doc, err := stub.WithIdentity(raw, id)
 	if err != nil {
 		wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeMalformed, err.Error()))
