@@ -39,6 +39,11 @@ type Case struct {
 	// Config names the instance variant to run against (SPEC §19.4).
 	Config string `yaml:"config,omitempty"`
 	WM     string `yaml:"wm"`
+	// WMIgnore lists JSON paths excluded from the differential diff, for fields
+	// that identify the server rather than describe its behavior — a version
+	// string, a product name. Each entry needs a reason in the case comment;
+	// the compatibility contract is the response *shape*, not our identity.
+	WMIgnore []string `yaml:"wm_ignore,omitempty"`
 	// Skip, when set, must carry a linked issue and an expiry the runner
 	// enforces — an expired skip fails the gate (SPEC §19.1).
 	Skip  *Skip  `yaml:"skip,omitempty"`

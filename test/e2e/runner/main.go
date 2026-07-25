@@ -42,6 +42,10 @@ type options struct {
 	checkOnly bool
 	parallel  int
 	filter    string
+	// differential turns on topology T5: `wm: verified` cases are replayed
+	// against pinned WireMock and the answers diffed (SPEC §5.6).
+	differential bool
+	wiremockFile string
 }
 
 func run() error {
@@ -55,6 +59,10 @@ func run() error {
 	flag.BoolVar(&opt.checkOnly, "check-only", false, "run the catalog and static gates without executing cases")
 	flag.IntVar(&opt.parallel, "parallel", 8, "how many cases to run concurrently")
 	flag.StringVar(&opt.filter, "run", "", "only run cases whose id contains this substring")
+	flag.BoolVar(&opt.differential, "differential", false,
+		"also replay wm:verified cases against pinned WireMock and diff (topology T5)")
+	flag.StringVar(&opt.wiremockFile, "wiremock-version", "test/e2e/WIREMOCK_VERSION",
+		"file naming the pinned WireMock image")
 	flag.Parse()
 
 	spec, err := loadSpec(opt.spec)
@@ -292,6 +300,9 @@ func resolveBinary(path string) (string, error) {
 // execute runs the corpus. Cases share instances per (topology, variant) and
 // stay isolated through their URL namespace; cases needing pristine global
 // state declare `requires: [exclusive]` and run serially (SPEC §19.3).
+// log prints a progress line during a run.
+func log(msg string) { fmt.Println(msg) }
+
 func execute(opt options, cases []*Case, binary string) ([]*Result, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -301,9 +312,21 @@ func execute(opt options, cases []*Case, binary string) ([]*Result, error) {
 
 	exec := &Executor{corpusDir: opt.corpus}
 
+	if opt.differential {
+		oracle, err := StartWireMock(ctx, opt.wiremockFile)
+		if err != nil {
+			return nil, fmt.Errorf("start the WireMock oracle: %w", err)
+		}
+		defer func() { _ = oracle.Stop() }()
+		exec.oracle = oracle
+		log("differential run against " + oracle.Version)
+	}
+
 	var concurrent, exclusive []*Case
 	for _, c := range cases {
-		if c.RequiresCapability("exclusive") {
+		// A differential case resets the shared oracle, so it cannot run
+		// alongside another differential case.
+		if c.RequiresCapability("exclusive") || (exec.oracle != nil && c.WM == WMVerified) {
 			exclusive = append(exclusive, c)
 			continue
 		}

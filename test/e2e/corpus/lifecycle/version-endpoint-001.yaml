@@ -2,6 +2,9 @@
 id: version-endpoint-001
 behaviors: [B-ADMIN-VERSION-GET]
 wm: verified
+# `version` is our version, not WireMock's; `guessedWireMockVersion` is the
+# field a WireMock client actually probes and IS compared.
+wm_ignore: ["$.version"]
 steps:
   - admin: {method: GET, path: /__admin/version}
     expect:

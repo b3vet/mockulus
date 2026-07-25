@@ -13,6 +13,10 @@ behaviors:
   - B-RESP-HEADERS
   - B-CFG-PORT
 wm: verified
+# The unmatched steps land on a body that differs by design: WireMock renders a
+# near-miss diff table on every unmatched request and mockulus deliberately does
+# not (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$body"]
 steps:
   # Register a stub carrying its own id, so later steps can address it.
   - admin: {method: POST, path: /__admin/mappings, body_file: stubs/roundtrip-hello.json}

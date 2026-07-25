@@ -20,6 +20,10 @@ import (
 // Executor runs one case against one instance.
 type Executor struct {
 	corpusDir string
+	// oracle, when set, turns the run differential: every step of a
+	// `wm: verified` case is replayed against pinned WireMock and the two
+	// answers diffed (SPEC §5.6).
+	oracle *WireMock
 }
 
 // Result is the outcome of a case.
@@ -34,12 +38,28 @@ type Result struct {
 	// Transcript is the full request/response record, attached to artifacts on
 	// failure so a red gate is debuggable without a rerun (SPEC §19.3).
 	Transcript []string
+
+	// mockulusAddr is the instance the case ran against, so a differential step
+	// can re-send the same request there.
+	mockulusAddr string
 }
 
 // Run executes every step of a case in order.
 func (e *Executor) Run(ctx context.Context, c *Case, inst *Instance) *Result {
 	start := time.Now()
-	res := &Result{Case: c, Topology: inst.Topology, Variant: inst.Variant}
+	res := &Result{Case: c, Topology: inst.Topology, Variant: inst.Variant,
+		mockulusAddr: inst.MockAddr}
+
+	if e.differential(c) {
+		res.Topology = TopologyT5
+		// The oracle has no namespacing of its own, so a leftover stub from an
+		// earlier case would silently change this one's answer.
+		if err := e.oracle.Reset(ctx); err != nil {
+			res.Failure = "could not reset the WireMock oracle: " + err.Error()
+			res.Duration = time.Since(start)
+			return res
+		}
+	}
 
 	for i, step := range c.Steps {
 		if err := e.runStep(ctx, c, inst, step, res); err != nil {
@@ -51,6 +71,11 @@ func (e *Executor) Run(ctx context.Context, c *Case, inst *Instance) *Result {
 	res.Passed = true
 	res.Duration = time.Since(start)
 	return res
+}
+
+// differential reports whether this case should also run against the oracle.
+func (e *Executor) differential(c *Case) bool {
+	return e.oracle != nil && c.WM == WMVerified
 }
 
 func (e *Executor) runStep(ctx context.Context, c *Case, inst *Instance, step Step, res *Result) error {
@@ -110,6 +135,8 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, inst *Instance,
 		return fmt.Errorf("an http step must carry expect or expect_eventually")
 	}
 
+	var ourResponse *NormalizedResponse
+
 	do := func() (string, error) {
 		req, err := http.NewRequestWithContext(ctx, strings.ToUpper(hs.Method), base+hs.Path,
 			strings.NewReader(body))
@@ -146,12 +173,18 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, inst *Instance,
 		res.Transcript = append(res.Transcript, fmt.Sprintf("%s %s -> %d\n%s",
 			strings.ToUpper(hs.Method), hs.Path, resp.StatusCode, truncate(string(respBody), 2048)))
 
+		// Kept for the differential diff: replaying a mutating request to get a
+		// second copy of the answer would change the server's state.
+		ourResponse = Normalize(resp, respBody)
+
 		return "", assertResponse(expect, resp, respBody)
 	}
 
 	if !eventually {
-		_, err := do()
-		return err
+		if _, err := do(); err != nil {
+			return err
+		}
+		return e.diffAgainstOracle(ctx, c, hs, body, ourResponse, res)
 	}
 
 	window, err := expect.WithinDuration()
@@ -176,6 +209,57 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, inst *Instance,
 			return ctx.Err()
 		}
 	}
+}
+
+// diffAgainstOracle replays one step against pinned WireMock and reports any
+// difference in the answers. It is a no-op unless the run is differential.
+//
+// The oracle sees exactly the same request; only the base URL differs. A
+// difference here means mockulus and WireMock disagree about a behavior the
+// corpus claims is compatible, which is the one thing topology T5 exists to
+// catch.
+func (e *Executor) diffAgainstOracle(ctx context.Context, c *Case, hs *HTTPStep,
+	body string, ours *NormalizedResponse, res *Result) error {
+
+	if !e.differential(c) || ours == nil {
+		return nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(hs.Method),
+		e.oracle.Addr+hs.Path, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	for k, v := range hs.Headers {
+		if v == "" {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+	if body != "" && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := e.oracle.Client().Do(req)
+	if err != nil {
+		return fmt.Errorf("replaying against the WireMock oracle: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	theirs := Normalize(resp, raw)
+
+	if diffs := DiffResponses(theirs, ours, c.WMIgnore); len(diffs) > 0 {
+		res.Transcript = append(res.Transcript, fmt.Sprintf(
+			"DIFFERENTIAL %s %s\n  WireMock: %d %s\n  mockulus: %d %s",
+			strings.ToUpper(hs.Method), hs.Path,
+			theirs.Status, truncate(string(theirs.Body), 400),
+			ours.Status, truncate(string(ours.Body), 400)))
+		return fmt.Errorf("differs from pinned WireMock: %s", strings.Join(diffs, "; "))
+	}
+	return nil
 }
 
 func (e *Executor) body(hs *HTTPStep) (string, error) {

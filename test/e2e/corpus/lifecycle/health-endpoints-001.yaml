@@ -2,6 +2,12 @@
 id: health-endpoints-001
 behaviors: [B-ADMIN-HEALTH-GET, B-CFG-ADMIN-ON-MOCK-PORT, B-DEV-DEVIATION-9]
 wm: verified
+# `message` names the product answering, not a behavior. WireMock says
+# "Wiremock is ok"; we say mockulus. The contract is the shape.
+# `version` likewise reports which build answered, and uptime and timestamp are
+# live values that differ between any two running servers by construction. All
+# four are present and correctly typed — only their values are not comparable.
+wm_ignore: ["$.message", "$.version", "$.uptimeInSeconds", "$.timestamp"]
 steps:
   # The admin API answers on the dedicated ops port...
   - admin: {port: admin, method: GET, path: /__admin/health}
