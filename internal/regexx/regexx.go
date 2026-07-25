@@ -79,15 +79,24 @@ type Options struct {
 func Compile(source string, opts Options) (*Pattern, error) {
 	p := &Pattern{source: source, onTimeout: opts.OnTimeout}
 
+	// Java-only syntax is lowered first, so that neither engine ever sees a
+	// construct it would read differently from the way the stub's author wrote
+	// it, and so that the constructs with no equivalent are refused here rather
+	// than becoming a stub that matches the wrong thing (javasyntax.go).
+	pattern, err := translateJava(source)
+	if err != nil {
+		return nil, err
+	}
+
 	// WireMock compiles stub patterns with DOTALL on and MULTILINE off, verified
 	// against the pinned version: `a.b` matches "a\nb", and `^a$` does not.
 	// Go's default is the opposite for dot, so the flag is set explicitly; a
 	// pattern that wants the other behavior can still write (?-s).
-	expr := `(?s)` + source
+	expr := `(?s)` + pattern
 	if opts.Anchored {
 		// \A and \z rather than ^ and $ so that a subject containing a newline
 		// cannot satisfy the anchor at a line boundary.
-		expr = `(?s)\A(?:` + source + `)\z`
+		expr = `(?s)\A(?:` + pattern + `)\z`
 	}
 
 	if re, err := regexp.Compile(expr); err == nil {
@@ -157,24 +166,36 @@ func (p *Pattern) LiteralPrefix() string { return p.literalPrefix }
 // pattern opens with one — a wrong prefix would silently drop matching stubs,
 // so this errs entirely toward returning less.
 func backtrackingLiteralPrefix(source string) string {
-	var sb strings.Builder
-	for i := 0; i < len(source); i++ {
+	// last is where the most recently scanned literal character starts, so a
+	// quantifier that can take none of it drops exactly that character and not
+	// the trailing byte of its encoding.
+	last := -1
+	i := 0
+	for i < len(source) {
 		c := source[i]
 		if c == '\\' {
 			// An escape may be a literal (\.) or a class (\d); either way the
 			// prefix ends here rather than guessing.
 			break
 		}
-		if strings.IndexByte(`.*+?()[]{}|^$`, c) >= 0 {
+		if c == '|' {
+			// Everything scanned so far is one branch of an alternation, so
+			// nothing in it is required of a matching subject.
+			return ""
+		}
+		if c == '*' || c == '?' || (c == '{' && closureMinIsZero(source, i)) {
 			// A quantifier applies to the character before it, so that
 			// character is not guaranteed to be present.
-			if (c == '*' || c == '?') && sb.Len() > 0 {
-				s := sb.String()
-				return s[:len(s)-1]
+			if last < 0 {
+				return ""
 			}
+			return source[:last]
+		}
+		if strings.IndexByte(`.+()[]{}^$`, c) >= 0 {
 			break
 		}
-		sb.WriteByte(c)
+		last = i
+		i += runeWidth(source, i)
 	}
-	return sb.String()
+	return source[:i]
 }
