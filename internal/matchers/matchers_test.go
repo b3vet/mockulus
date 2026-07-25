@@ -272,16 +272,33 @@ func TestJSONUnitPlaceholders(t *testing.T) {
 				t.Errorf("ignore should accept %s", actual)
 			}
 		}
-		// It stands in for the value, not for the key: the field must be there.
+		// It stands in for the value, not for the member: the key must be there.
+		if m.Match(body(`{}`)) {
+			t.Error("ignore should still require the member to be present")
+		}
 		if m.Match(body(`{"b":1}`)) {
-			t.Error("ignore should still require the field to be present")
+			t.Error("ignore should not accept a different member")
 		}
 	})
 
-	t.Run("ignore-element behaves as ignore", func(t *testing.T) {
+	// ignore-element is not a synonym for ignore, despite the name: it also
+	// stands in for a member that is not there. Probed side by side.
+	t.Run("ignore-element additionally makes the member optional", func(t *testing.T) {
 		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.ignore-element}\"}"}`)
-		if !m.Match(body(`{"a":{"deep":1}}`)) {
-			t.Error("ignore-element should accept a nested object")
+		for _, actual := range []string{`{"a":{"deep":1}}`, `{"a":1}`, `{"a":null}`, `{}`} {
+			if !m.Match(body(actual)) {
+				t.Errorf("ignore-element should accept %s", actual)
+			}
+		}
+		// It relaxes the member it stands for, not the whole document.
+		if m.Match(body(`{"b":1}`)) {
+			t.Error("ignore-element should not accept an unexpected extra member")
+		}
+
+		// The contrast that makes the distinction real.
+		ignore := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.ignore}\"}"}`)
+		if ignore.Match(body(`{}`)) {
+			t.Error("ignore should still require the member to be present")
 		}
 	})
 

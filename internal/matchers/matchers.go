@@ -293,12 +293,24 @@ func jsonEqual(expected, actual any, ignoreArrayOrder, ignoreExtra bool) bool {
 		if !ok {
 			return false
 		}
-		if !ignoreExtra && len(act) != len(exp) {
-			return false
+		// Unexpected members are rejected by name rather than by counting, so
+		// that an optional expected member can be missing without a length
+		// mismatch letting an unexpected one through in its place.
+		if !ignoreExtra {
+			for k := range act {
+				if _, expected := exp[k]; !expected {
+					return false
+				}
+			}
 		}
 		for k, ev := range exp {
 			av, present := act[k]
 			if !present {
+				// Only ${json-unit.ignore-element} stands in for a member that
+				// is not there; ${json-unit.ignore} still requires one.
+				if ph, isPlaceholder := ev.(*jsonPlaceholder); isPlaceholder && ph.optional() {
+					continue
+				}
 				return false
 			}
 			if !jsonEqual(ev, av, ignoreArrayOrder, ignoreExtra) {
