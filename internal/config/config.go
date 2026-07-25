@@ -15,6 +15,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strings"
@@ -294,8 +295,20 @@ func (c Config) Validate() error {
 		bad("template_max_output_bytes: must be positive")
 	}
 
-	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+	// TLS is checked here, against the filesystem, rather than left to the
+	// listener. ServeTLS loads the pair on its own goroutine, long after the
+	// process has bound its ports and reported itself ready: a typo in a mounted
+	// path would leave a pod that is live, ready and serving nothing on the mock
+	// port, which is the worst of the available failures because Kubernetes
+	// would route traffic straight at it. Exiting 1 at load time is the contract
+	// (SPEC §4.4 step 1).
+	switch {
+	case (c.TLSCertFile == "") != (c.TLSKeyFile == ""):
 		bad("tls_cert_file and tls_key_file must be set together")
+	case c.TLSEnabled():
+		if _, err := tls.LoadX509KeyPair(c.TLSCertFile, c.TLSKeyFile); err != nil {
+			bad("tls_cert_file/tls_key_file: %v", err)
+		}
 	}
 
 	if len(problems) == 0 {

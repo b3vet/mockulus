@@ -214,15 +214,48 @@ func TestDeferredFeaturesAreRejectedWithPointers(t *testing.T) {
 	}
 }
 
+// A name that is in neither vocabulary is a schema violation and nothing more.
+// WireMock answers a typo'd field with code 10 at exactly this pointer; the
+// deferred-feature code would send its author to the roadmap to look for a
+// misspelling that is not there.
 func TestUnknownFieldsAreRejected(t *testing.T) {
 	for _, c := range []struct{ doc, pointer string }{
 		{`{"nonsense":1,"request":{"urlPath":"/x"}}`, "/nonsense"},
 		{`{"request":{"urlPath":"/x","nonsense":1}}`, "/request/nonsense"},
 		{`{"request":{"urlPath":"/x"},"response":{"nonsense":1}}`, "/response/nonsense"},
+		// The near-miss that motivates the distinction: one character off a
+		// deferred feature is still a typo, not the feature.
+		{`{"postServeActionz":[],"request":{"urlPath":"/x"}}`, "/postServeActionz"},
+		// additionalHeaders reads like the proxy-mode fields it used to be
+		// listed beside, but WireMock's ResponseDefinition has no such field —
+		// it answers "Unrecognized field". A name nobody defines cannot be a
+		// feature anyone is waiting for.
+		{`{"request":{"urlPath":"/x"},"response":{"additionalHeaders":{"X-Added":"1"}}}`,
+			"/response/additionalHeaders"},
+	} {
+		problems := compileErrs(t, c.doc)
+		if !hasProblem(problems, wmcompat.CodeMalformed, c.pointer) {
+			t.Errorf("%s should be a schema violation at %s, got %v", c.doc, c.pointer, problems)
+		}
+	}
+}
+
+// …while a field WireMock does have and mockulus does not keeps the
+// deferred-feature code and its pointer at the roadmap. The pair is what makes
+// the distinction worth drawing: both refusals are 422, and only the code tells
+// an author which of the two mistakes they made.
+func TestUnimplementedWireMockFieldsStayDeferred(t *testing.T) {
+	for _, c := range []struct{ doc, pointer string }{
+		{`{"request":{"urlPath":"/x"},"serveEventListeners":[]}`, "/serveEventListeners"},
+		{`{"request":{"urlPath":"/x"},"insertionIndex":3}`, "/insertionIndex"},
+		{`{"request":{"urlPath":"/x","host":{"equalTo":"h"}}}`, "/request/host"},
+		{`{"request":{"urlPath":"/x","scheme":"https"}}`, "/request/scheme"},
+		{`{"request":{"urlPath":"/x"},"response":{"removeProxyRequestHeaders":["X"]}}`,
+			"/response/removeProxyRequestHeaders"},
 	} {
 		problems := compileErrs(t, c.doc)
 		if !hasProblem(problems, wmcompat.CodeUnsupportedFeature, c.pointer) {
-			t.Errorf("%s should name %s, got %v", c.doc, c.pointer, problems)
+			t.Errorf("%s should be a deferred feature at %s, got %v", c.doc, c.pointer, problems)
 		}
 	}
 }

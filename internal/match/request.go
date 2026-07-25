@@ -121,8 +121,9 @@ func (r *ParsedRequest) Reset() {
 // Body returns the raw request body.
 func (r *ParsedRequest) Body() []byte { return r.body }
 
-// Header returns a single header value, matched case-insensitively.
-func (r *ParsedRequest) Header(name string) string { return r.header.Get(name) }
+// HeaderValues returns every value sent for a header, looked up
+// case-insensitively.
+func (r *ParsedRequest) HeaderValues(name string) []string { return r.header.Values(name) }
 
 // BodySubject returns the subject for body criteria.
 func (r *ParsedRequest) BodySubject() matchers.Subject { return &r.bodySubject }

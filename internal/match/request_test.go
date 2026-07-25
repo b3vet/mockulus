@@ -129,6 +129,48 @@ func TestCookies(t *testing.T) {
 	}
 }
 
+// Cookie names are case-sensitive, unlike the name of the header carrying them.
+// Verified against pinned WireMock, which reports a differently-cased name as
+// "Cookie is not present" rather than as a value mismatch.
+//
+// The oracle can be made to disagree, and the disagreement is not real: Jetty
+// reuses a connection's previously parsed cookies when the new Cookie header
+// differs only by case, so on a keep-alive connection the preceding request's
+// cookies answer this one. The differential harness gives the oracle a fresh
+// connection per request so that artefact cannot be mistaken for a rule.
+func TestCookieNamesAreCaseSensitive(t *testing.T) {
+	r := newRequest(t, "GET", "/x", "", map[string]string{
+		"Cookie": "session=abc123",
+	})
+	defer ReleaseRequest(r)
+
+	if !r.CookieSubject("session").Present() {
+		t.Error("exact name should be found")
+	}
+	for _, name := range []string{"SESSION", "Session", "sEsSiOn"} {
+		if r.CookieSubject(name).Present() {
+			t.Errorf("cookie %q must not match a differently-cased name", name)
+		}
+	}
+}
+
+// A cookie name that only differs by case leaves the criterion's cookie absent,
+// which is what lets an `absent` criterion keep matching. Pinned the same way
+// as the positive form, since the two share the lookup.
+func TestDifferentlyCasedCookieLeavesTheNameAbsent(t *testing.T) {
+	r := newRequest(t, "GET", "/x", "", map[string]string{
+		"Cookie": "LEGACY=1; other=2",
+	})
+	defer ReleaseRequest(r)
+
+	if r.CookieSubject("legacy").Present() {
+		t.Error("LEGACY must leave legacy absent")
+	}
+	if !r.CookieSubject("LEGACY").Present() {
+		t.Error("LEGACY itself is present")
+	}
+}
+
 func TestFormParametersOnlyForFormEncodedBodies(t *testing.T) {
 	form := newRequest(t, "POST", "/x", "a=1&b=2&b=3",
 		map[string]string{"Content-Type": "application/x-www-form-urlencoded"})

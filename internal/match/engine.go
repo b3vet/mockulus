@@ -5,6 +5,7 @@ package match
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync/atomic"
@@ -40,6 +41,10 @@ type Engine struct {
 	snapshot atomic.Pointer[Snapshot]
 	metrics  *metrics.Metrics
 	cfg      config.Config
+	log      *slog.Logger
+	// served counts requests for access-log sampling. Access logging is off by
+	// default because a log line per request is real work on the hot path.
+	served atomic.Uint64
 	// renderer is nil when templating is off; a stub with no templates never
 	// consults it either way.
 	renderer response.Renderer
@@ -62,8 +67,8 @@ type Recorder interface {
 }
 
 // NewEngine returns an engine serving an empty snapshot.
-func NewEngine(cfg config.Config, m *metrics.Metrics, renderer response.Renderer) *Engine {
-	e := &Engine{metrics: m, cfg: cfg, renderer: renderer}
+func NewEngine(cfg config.Config, m *metrics.Metrics, log *slog.Logger, renderer response.Renderer) *Engine {
+	e := &Engine{metrics: m, cfg: cfg, log: log, renderer: renderer}
 	e.snapshot.Store(EmptySnapshot())
 	return e
 }
@@ -166,7 +171,38 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		(*rec).Record(r, body, cs, status)
 	}
 
-	e.observe(cs != nil, status, candidates, time.Since(start))
+	took := time.Since(start)
+	e.accessLog(r, cs, status, took)
+	e.observe(cs != nil, status, candidates, took)
+}
+
+// accessLog writes a per-request line when log.requests is on.
+//
+// Sampled rather than complete: at 50k RPS a line per request is more work than
+// serving the request, so log.request_sample_n keeps the feature usable under
+// load instead of making it a switch nobody dares flip. Bodies and headers are
+// never logged — teams put real credentials in their mocks (SPEC §14.2).
+func (e *Engine) accessLog(r *http.Request, cs *stub.CompiledStub, status int, took time.Duration) {
+	if !e.cfg.Log.Requests {
+		return
+	}
+	n := e.served.Add(1)
+	if sample := uint64(e.cfg.Log.RequestSampleN); sample > 1 && n%sample != 0 {
+		return
+	}
+
+	stubID := ""
+	if cs != nil {
+		stubID = cs.ID
+	}
+	e.log.Info("request served",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"status", status,
+		"matched", cs != nil,
+		"stub", stubID,
+		"took_us", took.Microseconds(),
+		"sampled_of", e.cfg.Log.RequestSampleN)
 }
 
 // readBody reads the request body under the configured cap. Matching needs the

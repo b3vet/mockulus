@@ -92,6 +92,14 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 		header["Content-Type"] = nil
 	}
 
+	if resp.StatusMessage != "" {
+		// Only a stub that asked for a reason phrase leaves the ordinary path,
+		// and it rejoins it if the connection cannot be taken (HTTP/2).
+		if status, served := writeWithReason(w, r, resp, body, opts.WriteSlack); served {
+			return status
+		}
+	}
+
 	if resp.Dribble != nil && len(body) > 0 {
 		return dribble(w, resp, body)
 	}
@@ -200,24 +208,10 @@ func setDeadline(w http.ResponseWriter, resp *stub.CompiledResponse, slack time.
 // dribble spreads the body across several writes over a total duration, which
 // is how a slow or trickling upstream is simulated (SPEC §12.6).
 func dribble(w http.ResponseWriter, resp *stub.CompiledResponse, body []byte) int {
-	chunks := resp.Dribble.NumberOfChunks
-	if chunks > len(body) {
-		// More chunks than bytes would mean empty writes; one byte per chunk is
-		// the finest division that still transmits something each time.
-		chunks = len(body)
-	}
-	if chunks < 1 {
-		chunks = 1
-	}
-
-	// One interval per chunk, and the header block waits out the first one
-	// alongside chunk zero — so the total is the configured duration rather
-	// than the duration plus a free first chunk.
-	gap := resp.Dribble.TotalDuration / time.Duration(chunks)
+	chunks, size, gap := dribblePlan(resp.Dribble, len(body))
 
 	rc := http.NewResponseController(w)
 
-	size := len(body) / chunks
 	for i := range chunks {
 		if gap > 0 {
 			time.Sleep(gap)
@@ -236,6 +230,26 @@ func dribble(w http.ResponseWriter, resp *stub.CompiledResponse, body []byte) in
 		_ = rc.Flush()
 	}
 	return resp.Status
+}
+
+// dribblePlan resolves how a dribbled body is divided and how long each pause
+// is. It is shared with the hijacked writer so that adding a reason phrase to a
+// dribbling stub cannot change its timing.
+func dribblePlan(d *stub.ChunkedDribble, n int) (chunks, size int, gap time.Duration) {
+	chunks = d.NumberOfChunks
+	if chunks > n {
+		// More chunks than bytes would mean empty writes; one byte per chunk is
+		// the finest division that still transmits something each time.
+		chunks = n
+	}
+	if chunks < 1 {
+		chunks = 1
+	}
+
+	// One interval per chunk, and the header block waits out the first one
+	// alongside chunk zero — so the total is the configured duration rather
+	// than the duration plus a free first chunk.
+	return chunks, n / chunks, d.TotalDuration / time.Duration(chunks)
 }
 
 // randomDataSize is how many bytes RANDOM_DATA_THEN_CLOSE sends. Enough to be

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,7 +37,7 @@ func (h *Handler) updateMapping(w http.ResponseWriter, r *http.Request) {
 
 	existing, err := h.store.GetStub(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
-		h.mappingNotFound(w, id)
+		h.mappingNotFound(w)
 		return
 	}
 	if err != nil {
@@ -84,7 +85,8 @@ func (h *Handler) updateMapping(w http.ResponseWriter, r *http.Request) {
 	}
 	compiled.ID = id
 	compiled.Seq = existing.Seq
-	h.builder.SpliceStub(compiled)
+	compiled.Raw = doc
+	h.builder.SpliceStub(ctx, compiled)
 
 	h.log.Info("stub updated", "id", id, "seq", existing.Seq)
 	wmcompat.WriteJSON(w, http.StatusOK, json.RawMessage(doc))
@@ -315,8 +317,8 @@ func (h *Handler) findByMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mappings := make([]json.RawMessage, 0, len(matched))
-	for _, cs := range matched {
-		mappings = append(mappings, json.RawMessage(cs.Raw))
+	for _, s := range matched {
+		mappings = append(mappings, json.RawMessage(s.Mapping))
 	}
 	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
 		"mappings": mappings,
@@ -335,12 +337,12 @@ func (h *Handler) removeByMetadata(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	removed := make([]json.RawMessage, 0, len(matched))
-	for _, cs := range matched {
-		if err := h.store.DeleteStub(ctx, cs.ID); err != nil {
+	for _, s := range matched {
+		if err := h.store.DeleteStub(ctx, s.ID); err != nil {
 			h.storeError(w, "delete_stub", err)
 			return
 		}
-		removed = append(removed, json.RawMessage(cs.Raw))
+		removed = append(removed, json.RawMessage(s.Mapping))
 	}
 
 	if len(removed) > 0 {
@@ -359,8 +361,21 @@ func (h *Handler) removeByMetadata(w http.ResponseWriter, r *http.Request) {
 }
 
 // metadataMatch compiles the request body as a content matcher and applies it
-// to every stub's metadata.
-func (h *Handler) metadataMatch(w http.ResponseWriter, r *http.Request) ([]*stub.CompiledStub, bool) {
+// to the metadata of every stub in the deployment.
+//
+// The candidates come from the store rather than this pod's snapshot. A cleanup
+// call that only saw the stubs this replica happens to hold would report an
+// empty removal for stubs another replica registered a moment earlier — a
+// silent no-op on the one path teams rely on to leave a shared deployment
+// clean. Reading every document costs a store round trip, which is affordable
+// because this is an admin call and not the hot path (P1); it is the same trade
+// getMapping and deleteStubsNotIn already make.
+//
+// It also means a store outage answers 503 rather than a local subset. The
+// search exists to decide what to delete, so an answer that silently covers
+// one pod is the wrong kind of available — and find and remove have to agree
+// on the candidate set, or "found 3, removed 0" becomes the report.
+func (h *Handler) metadataMatch(w http.ResponseWriter, r *http.Request) ([]store.StoredStub, bool) {
 	raw, ok := h.readBody(w, r)
 	if !ok {
 		return nil, false
@@ -383,16 +398,29 @@ func (h *Handler) metadataMatch(w http.ResponseWriter, r *http.Request) ([]*stub
 		return nil, false
 	}
 
-	var matched []*stub.CompiledStub
-	for _, cs := range h.engine.Snapshot().Ordered {
+	stubs, _, _, err := h.store.LoadAll(r.Context())
+	if err != nil {
+		h.storeError(w, "load_all", err)
+		return nil, false
+	}
+
+	var matched []store.StoredStub
+	for _, s := range stubs {
 		// A stub with no metadata has nothing for the matcher to match, and
-		// must never be swept up by a cleanup call.
-		if len(cs.Metadata) == 0 {
+		// must never be swept up by a cleanup call (SPEC §5.5 deviation 20).
+		// stub.Metadata is what decides that, so an explicit null reads as the
+		// absence it spells.
+		meta := stub.Metadata(s.Mapping)
+		if len(meta) == 0 {
 			continue
 		}
-		if matcher.Match(matchers.NewDocument(cs.Metadata)) {
-			matched = append(matched, cs)
+		if matcher.Match(matchers.NewDocument(meta)) {
+			matched = append(matched, s)
 		}
 	}
+	// Registration order, so the report is stable whichever store answered:
+	// LoadAll is only required to return the set, and the couchbase collection
+	// scan returns it unordered.
+	sort.Slice(matched, func(i, j int) bool { return matched[i].Seq < matched[j].Seq })
 	return matched, true
 }

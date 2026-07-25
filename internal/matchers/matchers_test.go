@@ -26,10 +26,24 @@ func testOpts() Options {
 	}}
 }
 
-// compile is a test helper that fails the test on any compilation problem.
+// compile is a test helper that fails the test on any compilation problem. It
+// compiles in the key-criterion position, which is the restrictive one.
 func compile(t *testing.T, doc string) Matcher {
 	t.Helper()
 	m, probs := Compile(json.RawMessage(doc), "", testOpts())
+	if len(probs) > 0 {
+		t.Fatalf("compile %s: %v", doc, probs)
+	}
+	return m
+}
+
+// compileBody compiles in the bodyPatterns position, where the byte-oriented
+// matchers are admitted.
+func compileBody(t *testing.T, doc string) Matcher {
+	t.Helper()
+	opts := testOpts()
+	opts.AllowContentPatterns = true
+	m, probs := Compile(json.RawMessage(doc), "", opts)
 	if len(probs) > 0 {
 		t.Fatalf("compile %s: %v", doc, probs)
 	}
@@ -144,7 +158,7 @@ func TestAbsent(t *testing.T) {
 
 func TestBinaryEqualTo(t *testing.T) {
 	// "hello" in base64.
-	m := compile(t, `{"binaryEqualTo":"aGVsbG8="}`)
+	m := compileBody(t, `{"binaryEqualTo":"aGVsbG8="}`)
 	if !m.Match(NewBody([]byte("hello"))) {
 		t.Error("decoded operand should match the raw bytes")
 	}
@@ -155,9 +169,48 @@ func TestBinaryEqualTo(t *testing.T) {
 		t.Error("a longer body should not match")
 	}
 
-	if _, probs := Compile(json.RawMessage(`{"binaryEqualTo":"not!base64!"}`), "", testOpts()); len(probs) == 0 {
+	bodyOpts := testOpts()
+	bodyOpts.AllowContentPatterns = true
+	if _, probs := Compile(json.RawMessage(`{"binaryEqualTo":"not!base64!"}`), "", bodyOpts); len(probs) == 0 {
 		t.Error("an invalid base64 operand must be rejected at registration")
 	}
+}
+
+// binaryEqualTo is a content matcher over byte[], which WireMock accepts only
+// in bodyPatterns. A stub that registers here but is a 422 there is a hole a
+// team only finds on the way back, so the key-criterion positions refuse it —
+// and so does any position reached by nesting, because the combinators and the
+// nested form of matchesJsonPath are declared over string patterns.
+func TestBinaryEqualToIsBodyOnly(t *testing.T) {
+	t.Run("refused in a key criterion", func(t *testing.T) {
+		_, probs := Compile(json.RawMessage(`{"binaryEqualTo":"aGVsbG8="}`),
+			"/request/headers/X-Sig", testOpts())
+		if len(probs) == 0 {
+			t.Fatal("binaryEqualTo must not register as a header criterion")
+		}
+		// WireMock blames the criterion, not the key inside it: what was written
+		// is not a match operation it has.
+		if probs[0].Pointer != "/request/headers/X-Sig" {
+			t.Errorf("pointer should name the criterion, got %q", probs[0].Pointer)
+		}
+		if probs[0].Kind != ProblemMalformed {
+			t.Errorf("a matcher that cannot exist there is a schema violation, got kind %v", probs[0].Kind)
+		}
+	})
+
+	t.Run("refused inside a combinator even in a body position", func(t *testing.T) {
+		bodyOpts := testOpts()
+		bodyOpts.AllowContentPatterns = true
+		for _, doc := range []string{
+			`{"not":{"binaryEqualTo":"aGVsbG8="}}`,
+			`{"and":[{"binaryEqualTo":"aGVsbG8="},{"contains":"h"}]}`,
+			`{"or":[{"binaryEqualTo":"aGVsbG8="},{"contains":"h"}]}`,
+		} {
+			if _, probs := Compile(json.RawMessage(doc), "/request/bodyPatterns/0", bodyOpts); len(probs) == 0 {
+				t.Errorf("%s should be refused: the combinators take string patterns", doc)
+			}
+		}
+	})
 }
 
 func TestEqualToJSON(t *testing.T) {
@@ -451,6 +504,157 @@ func TestCombinators(t *testing.T) {
 	})
 }
 
+// A combinator is a whole criterion, so the multi-value any-of rule applies to
+// it and not to the leaves underneath it: WireMock evaluates the complete
+// pattern once per value and takes any-of. Applying any-of leaf by leaf instead
+// lets one value satisfy one branch while a different value satisfies the next,
+// which inverts both combinators below. Every expectation here was read off the
+// pinned WireMock with the values arriving as ?tag=a&tag=b.
+func TestCombinatorsAreEvaluatedPerValue(t *testing.T) {
+	multi := NewKeyValues("a", "b")
+
+	// No single value fails "a", so `not` holds on the strength of "b" — even
+	// though the operand it wraps is satisfied by the key as a whole.
+	for _, doc := range []string{
+		`{"not":{"matches":"a"}}`,
+		`{"not":{"contains":"a"}}`,
+		`{"not":{"equalTo":"a"}}`,
+		`{"not":{"equalTo":"z"}}`,
+		// doesNotMatch is itself any-of, so negating it is not a double
+		// negative that cancels: "a" fails it, which satisfies the `not`.
+		`{"not":{"doesNotMatch":"a"}}`,
+	} {
+		if !compile(t, doc).Match(multi) {
+			t.Errorf(`%s should hold over ["a","b"]`, doc)
+		}
+	}
+
+	// …and conversely, no single value satisfies both branches, so the
+	// conjunction does not hold at all.
+	for _, doc := range []string{
+		`{"and":[{"matches":"a"},{"matches":"b"}]}`,
+		`{"and":[{"contains":"a"},{"contains":"b"}]}`,
+		`{"and":[{"matches":"a"},{"doesNotMatch":"a"}]}`,
+	} {
+		if compile(t, doc).Match(multi) {
+			t.Errorf(`%s should not hold over ["a","b"]: no one value satisfies both`, doc)
+		}
+	}
+
+	if !compile(t, `{"or":[{"equalTo":"a"},{"equalTo":"z"}]}`).Match(multi) {
+		t.Error("or should hold when a value satisfies a branch")
+	}
+	if compile(t, `{"or":[{"equalTo":"y"},{"equalTo":"z"}]}`).Match(multi) {
+		t.Error("or should not hold when no value satisfies any branch")
+	}
+
+	three := NewKeyValues("a", "b", "c")
+	if !compile(t, `{"and":[{"matches":"."},{"not":{"equalTo":"a"}}]}`).Match(three) {
+		t.Error(`"b" satisfies both branches, so the conjunction should hold`)
+	}
+	if !compile(t, `{"not":{"matches":"a|b"}}`).Match(three) {
+		t.Error(`"c" fails the pattern, so not should hold`)
+	}
+	if compile(t, `{"not":{"matches":"a|b|c"}}`).Match(three) {
+		t.Error("every value matching leaves nothing for not to hold on")
+	}
+
+	// Over a single value there is nothing to split, and the combinators are
+	// the plain logical operators again — which is why the rule is easy to miss.
+	single := NewKeyValues("a")
+	if !compile(t, `{"and":[{"matches":"a"},{"contains":"a"}]}`).Match(single) {
+		t.Error("single value: both branches satisfied should hold")
+	}
+	if compile(t, `{"not":{"matches":"a"}}`).Match(single) {
+		t.Error("single value: not should invert")
+	}
+}
+
+// memberPath is a JSONPathEvaluator over a single top-level member, which is
+// all these tests need: the package deliberately does not depend on the path
+// engine, so the criterion is built rather than compiled.
+type memberPath string
+
+func (p memberPath) Match(doc any) bool {
+	_, found := p.Select(doc)
+	return found
+}
+
+func (p memberPath) Select(doc any) ([]any, bool) {
+	obj, ok := doc.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	v, ok := obj[string(p)]
+	if !ok {
+		return nil, false
+	}
+	return []any{v}, true
+}
+
+func (p memberPath) Source() string { return "$." + string(p) }
+
+// The criteria that read the subject as one document take the same per-value
+// rule, because a subject's JSON() is the FIRST value's document: without the
+// split they answer for one value of a repeated key and never look at the rest.
+// A header carrying {"a":1} and {"b":2} satisfies matchesJsonPath $.b on the
+// pinned WireMock, on the strength of the second value.
+func TestJSONCriteriaAreEvaluatedPerValue(t *testing.T) {
+	multi := NewKeyValues(`{"a":1}`, `{"b":2}`)
+
+	for _, doc := range []string{
+		`{"equalToJson":"{\"a\":1}"}`,
+		`{"equalToJson":"{\"b\":2}"}`,
+	} {
+		if !compile(t, doc).Match(multi) {
+			t.Errorf(`%s should hold: one value satisfies it`, doc)
+		}
+	}
+	if compile(t, `{"equalToJson":"{\"c\":3}"}`).Match(multi) {
+		t.Error("equalToJson should not hold when no value satisfies it")
+	}
+
+	for _, c := range []struct {
+		path string
+		want bool
+	}{{"a", true}, {"b", true}, {"zz", false}} {
+		m := &MatchesJSONPath{Path: memberPath(c.path)}
+		if got := m.Match(multi); got != c.want {
+			t.Errorf("matchesJsonPath $.%s over two values: got %v, want %v", c.path, got, c.want)
+		}
+	}
+
+	// The nested form is split as one criterion, so the value that supplies the
+	// path is the value the inner matcher is applied to.
+	nested := &MatchesJSONPath{Path: memberPath("b"), Inner: &EqualTo{Expected: "2"}}
+	if !nested.Match(multi) {
+		t.Error("the second value selects $.b = 2, which the inner matcher accepts")
+	}
+
+	// A value that is not JSON at all is skipped rather than deciding the
+	// criterion, which is the same any-of rule seen from the other side.
+	ragged := NewKeyValues("notjson", `{"b":2}`)
+	if !(&MatchesJSONPath{Path: memberPath("b")}).Match(ragged) {
+		t.Error("an unparseable first value must not mask a later one that matches")
+	}
+	if !compile(t, `{"equalToJson":"{\"b\":2}"}`).Match(ragged) {
+		t.Error("equalToJson should reach past an unparseable value too")
+	}
+
+	// The inconsistency this closes: wrapping a criterion in a one-armed `or`
+	// is a no-op, and has to stay one.
+	for _, m := range []Matcher{
+		&MatchesJSONPath{Path: memberPath("b")},
+		compile(t, `{"equalToJson":"{\"b\":2}"}`),
+	} {
+		bare := m.Match(multi)
+		wrapped := (&Or{Matchers: []Matcher{m}}).Match(multi)
+		if bare != wrapped {
+			t.Errorf("%s: bare gave %v, or-wrapped gave %v", m.Describe(), bare, wrapped)
+		}
+	}
+}
+
 // Several matcher keys on one document are a conjunction, which is how
 // WireMock reads them.
 func TestSeveralKeysOnOneDocumentAreAnd(t *testing.T) {
@@ -464,6 +668,259 @@ func TestSeveralKeysOnOneDocumentAreAnd(t *testing.T) {
 	if m.Match(NewKeyValues("my-invoice")) {
 		t.Error("the first criterion should still be applied")
 	}
+}
+
+// ignoreArrayOrder has to be independent of the order it is given, which is
+// less obvious than it sounds: as soon as an expected element can pair with
+// more than one actual element, pairing them first-come-first-served can
+// consume the partner a later element needed and report a non-match for an
+// array that matches. Placeholders and ignoreExtraElements both create exactly
+// that ambiguity. Every pair below matched on the pinned WireMock in both
+// orders.
+func TestIgnoreArrayOrderIsIndependentOfOrder(t *testing.T) {
+	body := func(s string) Subject { return NewBody([]byte(s)) }
+
+	t.Run("a placeholder competing with a literal", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.any-number}\",2]}","ignoreArrayOrder":true}`)
+		// The placeholder matches 2 as readily as 7, so taking 2 first strands
+		// the literal.
+		for _, actual := range []string{`{"xs":[7,2]}`, `{"xs":[2,7]}`, `{"xs":[2,2]}`} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s should match whichever order it arrives in", actual)
+			}
+		}
+		if m.Match(body(`{"xs":[7,9]}`)) {
+			t.Error("order-independence must not turn into accepting a wrong element")
+		}
+	})
+
+	t.Run("a placeholder competing with a string literal", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.any-string}\",\"b\"]}","ignoreArrayOrder":true}`)
+		for _, actual := range []string{`{"xs":["a","b"]}`, `{"xs":["b","a"]}`, `{"xs":["b","b"]}`} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s should match whichever order it arrives in", actual)
+			}
+		}
+	})
+
+	t.Run("ignoreExtraElements makes objects ambiguous", func(t *testing.T) {
+		// {"a":1} matches both actual objects once extra members are ignored.
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[{\"a\":1},{\"a\":1,\"b\":2}]}",`+
+			`"ignoreArrayOrder":true,"ignoreExtraElements":true}`)
+		for _, actual := range []string{
+			`{"xs":[{"a":1},{"a":1,"b":2}]}`,
+			`{"xs":[{"a":1,"b":2},{"a":1}]}`,
+		} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s should match whichever order it arrives in", actual)
+			}
+		}
+	})
+
+	t.Run("three-way ambiguity", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.any-number}\",`+
+			`\"${json-unit.any-string}\",\"z\"]}","ignoreArrayOrder":true}`)
+		// "z" satisfies any-string as well as itself, so every permutation has
+		// to be resolved rather than walked.
+		for _, actual := range []string{
+			`{"xs":[1,"y","z"]}`, `{"xs":["z","y",1]}`, `{"xs":["z",1,"y"]}`,
+			`{"xs":["y","z",1]}`,
+		} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s should match whichever order it arrives in", actual)
+			}
+		}
+	})
+
+	t.Run("a pairing that genuinely does not exist is still refused", func(t *testing.T) {
+		// Two any-number placeholders and one number: there is no way to pair
+		// them off, whatever order the search takes.
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.any-number}\",`+
+			`\"${json-unit.any-number}\"]}","ignoreArrayOrder":true}`)
+		if m.Match(body(`{"xs":[1,"s"]}`)) {
+			t.Error("a string cannot stand in for the second any-number")
+		}
+		if !m.Match(body(`{"xs":[1,2]}`)) {
+			t.Error("two numbers should pair with two any-number placeholders")
+		}
+	})
+
+	t.Run("duplicates are still counted", func(t *testing.T) {
+		// Pairing is one-to-one, so ignoreArrayOrder compares multisets and not
+		// sets: one actual element cannot answer two expected ones.
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[1,1,2]}","ignoreArrayOrder":true}`)
+		if !m.Match(body(`{"xs":[2,1,1]}`)) {
+			t.Error("the same multiset in another order should match")
+		}
+		if m.Match(body(`{"xs":[1,2,2]}`)) {
+			t.Error("a different multiset should not match")
+		}
+	})
+}
+
+// ignoreExtraElements forgives elements the expected document never accounted
+// for, in arrays as well as in objects. Which elements those are depends on the
+// other flag: positionally they are the tail of the actual array, and under
+// ignoreArrayOrder they are whichever ones no expected element claims. Every
+// pairing below was probed against the pinned WireMock.
+func TestIgnoreExtraElementsRelaxesArrayLength(t *testing.T) {
+	body := func(s string) Subject { return NewBody([]byte(s)) }
+
+	t.Run("a longer array matches from the front", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[1,2]}","ignoreExtraElements":true}`)
+		for _, actual := range []string{`{"xs":[1,2,3]}`, `{"xs":[1,2,3,4,5]}`} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s should match: the elements past the expected ones are ignored", actual)
+			}
+		}
+		// Ignored where they fall, not wherever they would help — otherwise the
+		// flag would quietly imply ignoreArrayOrder as well.
+		for _, actual := range []string{`{"xs":[2,1,3]}`, `{"xs":[1,3,2]}`, `{"xs":[3,1,2]}`} {
+			if m.Match(body(actual)) {
+				t.Errorf("%s should not match: the expected elements must be the leading ones", actual)
+			}
+		}
+		// Nor does the relaxation reach the elements it does compare.
+		if m.Match(body(`{"xs":[1,"2",3]}`)) {
+			t.Error("the string \"2\" is not the number 2, extra elements or not")
+		}
+	})
+
+	t.Run("a shorter array is still a mismatch", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[1,2]}","ignoreExtraElements":true}`)
+		for _, actual := range []string{`{"xs":[1]}`, `{"xs":[]}`} {
+			if m.Match(body(actual)) {
+				t.Errorf("%s is missing an expected element, which the flag does not forgive", actual)
+			}
+		}
+	})
+
+	t.Run("an empty expected array accounts for nothing", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[]}","ignoreExtraElements":true}`)
+		if !m.Match(body(`{"xs":[1,2]}`)) {
+			t.Error("every element is extra, so every element is ignored")
+		}
+	})
+
+	t.Run("the relaxation applies at every depth", func(t *testing.T) {
+		nested := compileBody(t, `{"equalToJson":"{\"o\":{\"xs\":[1,2]}}","ignoreExtraElements":true}`)
+		if !nested.Match(body(`{"o":{"xs":[1,2,3]}}`)) {
+			t.Error("an array below the root should be relaxed too")
+		}
+		root := compileBody(t, `{"equalToJson":"[1,2]","ignoreExtraElements":true}`)
+		if !root.Match(body(`[1,2,3]`)) {
+			t.Error("the root array should be relaxed as well")
+		}
+		arrays := compileBody(t, `{"equalToJson":"{\"xs\":[[1,2],[3]]}","ignoreExtraElements":true}`)
+		if !arrays.Match(body(`{"xs":[[1,2,9],[3,4],[5]]}`)) {
+			t.Error("arrays inside arrays should be relaxed at both levels")
+		}
+	})
+
+	t.Run("without the flag the length stays exact", func(t *testing.T) {
+		strict := compileBody(t, `{"equalToJson":"{\"xs\":[1,2]}"}`)
+		if strict.Match(body(`{"xs":[1,2,3]}`)) {
+			t.Error("the length relaxation must come from ignoreExtraElements")
+		}
+		unordered := compileBody(t, `{"equalToJson":"{\"xs\":[1,2]}","ignoreArrayOrder":true}`)
+		if unordered.Match(body(`{"xs":[1,2,3]}`)) {
+			t.Error("ignoreArrayOrder gives up the positions, not the count")
+		}
+		if !unordered.Match(body(`{"xs":[2,1]}`)) {
+			t.Error("a permutation of the same elements should still match")
+		}
+	})
+
+	t.Run("placeholders keep their rule in the leading slots", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.any-string}\",2]}",`+
+			`"ignoreExtraElements":true}`)
+		for _, actual := range []string{`{"xs":["s",2]}`, `{"xs":["s",2,9]}`} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s should match", actual)
+			}
+		}
+		if m.Match(body(`{"xs":[9,"s",2]}`)) {
+			t.Error("a wildcard slot is still a position, so the leading element must satisfy it")
+		}
+		typed := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.any-number}\",2]}",`+
+			`"ignoreExtraElements":true}`)
+		if typed.Match(body(`{"xs":["s",2,9]}`)) {
+			t.Error("the placeholder still constrains its own type")
+		}
+	})
+
+	t.Run("ignore-element does not make an array slot optional", func(t *testing.T) {
+		// It stands in for an absent *member*; an array has no member names, so
+		// the slot it occupies still has to exist.
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.ignore-element}\"]}",`+
+			`"ignoreExtraElements":true}`)
+		if m.Match(body(`{"xs":[]}`)) {
+			t.Error("an empty array is short of the slot the placeholder occupies")
+		}
+		for _, actual := range []string{`{"xs":[5]}`, `{"xs":[5,9]}`} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s should match", actual)
+			}
+		}
+	})
+
+	t.Run("with ignoreArrayOrder it becomes a subset test", func(t *testing.T) {
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[1,2]}",`+
+			`"ignoreArrayOrder":true,"ignoreExtraElements":true}`)
+		for _, actual := range []string{
+			`{"xs":[1,2]}`, `{"xs":[3,2,1]}`, `{"xs":[2,1,9]}`, `{"xs":[1,2,3]}`,
+		} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s contains both expected elements, so it should match", actual)
+			}
+		}
+		for _, actual := range []string{`{"xs":[1]}`, `{"xs":[]}`, `{"xs":[1,9]}`} {
+			if m.Match(body(actual)) {
+				t.Errorf("%s cannot answer both expected elements", actual)
+			}
+		}
+		empty := compileBody(t, `{"equalToJson":"{\"xs\":[]}",`+
+			`"ignoreArrayOrder":true,"ignoreExtraElements":true}`)
+		if !empty.Match(body(`{"xs":[1]}`)) {
+			t.Error("an expected array claiming nothing is satisfied by anything")
+		}
+	})
+
+	t.Run("the subset test keeps the pairing one-to-one", func(t *testing.T) {
+		// Relaxed cardinality is not a relaxed pairing: two expected 1s need two
+		// actual 1s, however many other elements arrive.
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[1,1]}",`+
+			`"ignoreArrayOrder":true,"ignoreExtraElements":true}`)
+		if m.Match(body(`{"xs":[1,2,3]}`)) {
+			t.Error("one actual element cannot answer two expected ones")
+		}
+		if !m.Match(body(`{"xs":[1,1,2]}`)) {
+			t.Error("two actual 1s should answer two expected 1s")
+		}
+	})
+
+	t.Run("the subset test resolves ambiguity rather than walking it", func(t *testing.T) {
+		// The unclaimed elements make the pairing harder, not easier: the search
+		// still has to find the assignment that leaves no expected element
+		// stranded (deviation #25 — WireMock stops looking here).
+		m := compileBody(t, `{"equalToJson":"{\"xs\":[\"${json-unit.any-number}\",2]}",`+
+			`"ignoreArrayOrder":true,"ignoreExtraElements":true}`)
+		for _, actual := range []string{
+			`{"xs":[2,5,9]}`, `{"xs":[5,2,9]}`, `{"xs":[9,2,5]}`, `{"xs":[2,5]}`,
+		} {
+			if !m.Match(body(actual)) {
+				t.Errorf("%s has a number for the placeholder and a 2 beside it", actual)
+			}
+		}
+		if m.Match(body(`{"xs":[2,"s","t"]}`)) {
+			t.Error("the placeholder and the literal cannot share the one 2")
+		}
+		objects := compileBody(t, `{"equalToJson":"{\"xs\":[{\"a\":1}]}",`+
+			`"ignoreArrayOrder":true,"ignoreExtraElements":true}`)
+		if !objects.Match(body(`{"xs":[{"z":9},{"a":1,"b":2}]}`)) {
+			t.Error("the expected object should pair with the actual one that contains it")
+		}
+	})
 }
 
 // Every deferred matcher must be rejected by name, so a team migrating from
@@ -662,7 +1119,7 @@ func TestEmptyBodyIsAbsent(t *testing.T) {
 			`{"matches":".*"}`, `{"matches":"a*"}`, `{"equalTo":""}`,
 			`{"contains":""}`, `{"equalToJson":"{}"}`, `{"binaryEqualTo":""}`,
 		} {
-			if compile(t, doc).Match(subject) {
+			if compileBody(t, doc).Match(subject) {
 				t.Errorf("%s should fail against an empty body", doc)
 			}
 		}
@@ -713,5 +1170,50 @@ func TestAbsenceStrictnessIsPerFieldKind(t *testing.T) {
 	present.SetStrictAbsence(true, []string{"abc"})
 	if !compile(t, `{"doesNotMatch":"zzz"}`).Match(present) {
 		t.Error("a present cookie failing the pattern should satisfy doesNotMatch")
+	}
+}
+
+// The stricter rule is decided before the criterion is looked at, so wrapping a
+// matcher in a combinator does not get round it: an absent cookie matches only
+// a bare `absent`, and `or(absent, …)` is not one. Probed directly — the same
+// criteria against an absent header all match, which is what makes this a rule
+// about the field kind rather than about the operands.
+func TestStrictAbsenceSurvivesCombinators(t *testing.T) {
+	cookie := func() Subject {
+		k := &KeyValues{}
+		k.SetStrictAbsence(false, nil)
+		return k
+	}
+
+	for _, doc := range []string{
+		`{"not":{"matches":"zzz"}}`,
+		`{"not":{"contains":"zzz"}}`,
+		`{"not":{"absent":true}}`,
+		`{"and":[{"doesNotMatch":"zzz"},{"doesNotContain":"zzz"}]}`,
+		`{"or":[{"absent":true},{"equalTo":"a"}]}`,
+	} {
+		if compile(t, doc).Match(cookie()) {
+			t.Errorf("%s should not match an absent cookie", doc)
+		}
+	}
+
+	// The one criterion that does, and the reason the others cannot be allowed
+	// to: `absent` is how a stub asserts the cookie is missing.
+	if !compile(t, `{"absent":true}`).Match(cookie()) {
+		t.Error("absent:true should match an absent cookie")
+	}
+
+	// An absent header takes the ordinary path, combinators included.
+	for _, doc := range []string{
+		`{"not":{"matches":"zzz"}}`,
+		`{"and":[{"doesNotMatch":"zzz"},{"doesNotContain":"zzz"}]}`,
+		`{"or":[{"absent":true},{"equalTo":"a"}]}`,
+	} {
+		if !compile(t, doc).Match(AbsentKey()) {
+			t.Errorf("%s should match an absent header", doc)
+		}
+	}
+	if compile(t, `{"not":{"absent":true}}`).Match(AbsentKey()) {
+		t.Error("not(absent) should not match an absent header")
 	}
 }

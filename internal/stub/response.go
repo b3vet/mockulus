@@ -45,6 +45,7 @@ func parseResponse(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledSt
 
 	parseStatus(errs, doc, resp)
 	decodeString(errs, doc, "statusMessage", "/response/statusMessage", &resp.StatusMessage)
+	resp.StatusMessage = reasonPhrase(resp.StatusMessage)
 	parseResponseHeaders(errs, doc, resp)
 	parseBody(errs, doc, resp)
 	parseDelays(errs, doc, resp)
@@ -59,6 +60,48 @@ func parseResponse(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledSt
 		errs.Addf(wmcompat.CodeMalformed, "/response/fault",
 			"a fault replaces the response, so it cannot be combined with a body")
 	}
+}
+
+// reasonPhrase encodes a statusMessage into the bytes that go on the status
+// line, which is not a plain copy of what was registered.
+//
+// The status line is terminated by CRLF and carries no encoding, so a phrase
+// containing either would split the response, and a phrase containing anything
+// above Latin-1 has no representation there at all. WireMock 3.13.2 resolves
+// both the same way, established by probing it: CR and LF each become '?', a
+// rune outside Latin-1 becomes '?', and everything else — tabs and the other
+// control characters included — goes out as its Latin-1 byte.
+//
+// Encoding rather than rejecting is what P3 asks for here: the point of
+// rejecting is to avoid accepting a stub and then behaving differently, and
+// this behaves identically to the server being mocked. A 422 would instead fail
+// stubs that WireMock serves.
+//
+// Done once at compile time so serving a stub with a reason phrase stays a
+// string copy, like every other pre-resolved part of a response.
+func reasonPhrase(s string) string {
+	// The common phrase is plain ASCII, which is already its own encoding.
+	clean := true
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 0x80 || c == '\r' || c == '\n' {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\r' || r == '\n' || r > 0xFF {
+			b.WriteByte('?')
+			continue
+		}
+		b.WriteByte(byte(r))
+	}
+	return b.String()
 }
 
 func parseStatus(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp *CompiledResponse) {

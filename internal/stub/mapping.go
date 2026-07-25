@@ -59,10 +59,15 @@ type TemplateCompiler func(source string) (*handlebars.Template, error)
 
 // matcherOptions projects the compile options onto what the matcher package
 // needs, so every matcher in the process is built the same way.
-func (o Options) matcherOptions() matchers.Options {
+//
+// allowContent admits the byte-oriented matchers. They compare the subject's
+// raw bytes, which only means something where the subject is a body, so a
+// criterion over a header or a query parameter is compiled without them.
+func (o Options) matcherOptions(allowContent bool) matchers.Options {
 	return matchers.Options{
-		CompileRegex:    o.CompileRegex,
-		CompileJSONPath: o.CompileJSONPath,
+		CompileRegex:         o.CompileRegex,
+		CompileJSONPath:      o.CompileJSONPath,
+		AllowContentPatterns: allowContent,
 	}
 }
 
@@ -80,17 +85,35 @@ var supportedRequestFields = map[string]bool{
 	"formParameters": true, "basicAuthCredentials": true, "bodyPatterns": true,
 }
 
-// deferredFields maps a field to the roadmap feature it belongs to, so the 422
-// tells a team what they are waiting for rather than just "no".
+// deferredFields are the fields WireMock defines and this build does not
+// implement, mapped to the feature the 422 names so a team learns what it is
+// waiting for rather than just "no".
+//
+// Membership is what separates the two refusals a stub field can earn, so it is
+// kept against the pinned version rather than against the roadmap: every field
+// listed here registers on WireMock 3.13.2, and every field not listed here and
+// not supported is one WireMock itself rejects. The ones with no roadmap entry
+// of their own are still WireMock features, and calling them typos would send
+// their author looking for a misspelling that is not there.
+//
+// The rule cuts both ways, which is easy to miss while reading a proxy-mode
+// list: `additionalHeaders` sounds like one of these and is not a WireMock
+// field at all — ResponseDefinition answers it "Unrecognized field" — so it is
+// absent here and earns the schema refusal like any other name nothing defines.
 var deferredFields = map[string]string{
 	"postServeActions":              "postServeActions (webhooks)",
+	"serveEventListeners":           "serveEventListeners",
+	"insertionIndex":                "insertionIndex",
 	"multipartPatterns":             "multipartPatterns",
 	"customMatcher":                 "customMatcher",
+	"host":                          "the host request matcher",
+	"port":                          "the port request matcher",
+	"scheme":                        "the scheme request matcher",
 	"proxyBaseUrl":                  "proxyBaseUrl (proxy mode)",
 	"additionalProxyRequestHeaders": "additionalProxyRequestHeaders (proxy mode)",
+	"removeProxyRequestHeaders":     "removeProxyRequestHeaders (proxy mode)",
 	"proxyUrlPrefixToRemove":        "proxyUrlPrefixToRemove (proxy mode)",
 	"fromConfiguredStub":            "fromConfiguredStub (proxy mode)",
-	"additionalHeaders":             "additionalHeaders (proxy mode)",
 }
 
 // ScenarioRef is a stub's participation in a scenario (SPEC §9).
@@ -146,9 +169,7 @@ func Compile(raw []byte, seq uint64, opts Options) (*CompiledStub, *wmcompat.Err
 	decodeString(errs, doc, "name", "/name", &cs.Name)
 	parsePriority(errs, doc, cs)
 	decodeBool(errs, doc, "persistent", "/persistent", &cs.Persistent)
-	if v, ok := doc["metadata"]; ok {
-		cs.Metadata = v
-	}
+	cs.Metadata = metadataOf(doc["metadata"])
 	parseScenario(errs, doc, cs)
 
 	parseRequest(errs, doc["request"], cs, opts)
@@ -159,6 +180,18 @@ func Compile(raw []byte, seq uint64, opts Options) (*CompiledStub, *wmcompat.Err
 	}
 	return cs, nil
 }
+
+// canonicalUUIDLen is the length of the 8-4-4-4-12 spelling, the one form both
+// deserializers agree on.
+//
+// They disagree in both directions. uuid.Parse additionally takes the
+// 32-character dashless, `urn:uuid:`-prefixed and brace-wrapped variants, none
+// of which WireMock accepts; WireMock additionally takes a 24-character base64
+// encoding of the raw 16 bytes, which uuid.Parse never accepts. Requiring this
+// length rejects everything in the first group, so nothing registers here under
+// an id WireMock would have refused. The second group is the divergence that
+// leaves — SPEC §5.5 deviation 24.
+const canonicalUUIDLen = 36
 
 // parseIdentity reads the id and uuid aliases, which WireMock treats as two
 // spellings of the same field.
@@ -177,10 +210,12 @@ func parseIdentity(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, cs 
 			continue
 		}
 		parsed, err := uuid.Parse(s)
-		if err != nil {
+		if err != nil || len(s) != canonicalUUIDLen {
 			// WireMock deserializes this field as a UUID, so a non-UUID id is
 			// rejected there too. Accepting one here would let a stub register
-			// that could never be migrated back.
+			// that could never be migrated back — and accepting a spelling
+			// mockulus would rewrite silently hands the client back an id it
+			// did not choose.
 			errs.Addf(wmcompat.CodeMalformed, "/"+field,
 				field+" must be a canonical 36-character UUID")
 			continue
@@ -195,6 +230,36 @@ func parseIdentity(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, cs 
 		}
 		cs.ID = canonical
 	}
+}
+
+// Metadata returns a stored mapping document's metadata, or nil when the stub
+// has none. It is how the admin metadata endpoints read a document they have
+// not compiled, so that one rule decides what "has metadata" means.
+func Metadata(raw []byte) json.RawMessage {
+	var doc struct {
+		Metadata json.RawMessage `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil
+	}
+	return metadataOf(doc.Metadata)
+}
+
+// metadataOf normalises the `metadata` field, treating an explicit null as no
+// metadata at all.
+//
+// WireMock drops a null on deserialization and reports the stub as untagged, so
+// this is its behavior — and it is what SPEC §5.5 deviation 20 rests on: only
+// stubs that HAVE metadata are candidates for find/remove-by-metadata. A stub
+// spelling its absence out, which is exactly what a document round-tripped
+// through WireMock does, must not be reachable by a broad cleanup matcher when
+// its untagged neighbour is not. The document itself is unchanged: a GET still
+// returns the field as it was registered.
+func metadataOf(raw json.RawMessage) json.RawMessage {
+	if string(raw) == "null" {
+		return nil
+	}
+	return raw
 }
 
 func parsePriority(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, cs *CompiledStub) {
@@ -407,7 +472,7 @@ func parseKeyCriteria(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 
 	out := make([]KeyCriterion, 0, len(entries))
 	for _, name := range sortedKeys(entries) {
-		m, problems := matchers.Compile(entries[name], pointer+"/"+name, opts.matcherOptions())
+		m, problems := matchers.Compile(entries[name], pointer+"/"+name, opts.matcherOptions(false))
 		if len(problems) > 0 {
 			addMatcherProblems(errs, problems)
 			continue
@@ -455,7 +520,7 @@ func parseBodyPatterns(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 
 	for i, item := range items {
 		m, problems := matchers.Compile(item, fmt.Sprintf("/request/bodyPatterns/%d", i),
-			opts.matcherOptions())
+			opts.matcherOptions(true))
 		if len(problems) > 0 {
 			addMatcherProblems(errs, problems)
 			continue
@@ -522,12 +587,21 @@ func addMatcherProblems(errs *wmcompat.ErrorList, problems []matchers.Problem) {
 	}
 }
 
+// reportUnsupported refuses a field this build does not serve, choosing between
+// the two refusals by whether the field is a feature at all.
+//
+// A deferred WireMock feature earns 1000 and a pointer at the roadmap: the
+// document is well-formed, mockulus is behind, and the author wants to know
+// when it catches up. A name that is in neither vocabulary earns 10, because it
+// is a schema violation and nothing more — WireMock answers a typo'd field with
+// exactly that code and pointer, and sending its author to the roadmap to look
+// for `postServeActionz` would waste the trip.
 func reportUnsupported(errs *wmcompat.ErrorList, pointer, field string) {
 	if feature, deferred := deferredFields[field]; deferred {
 		errs.Unsupported(pointer, feature)
 		return
 	}
-	errs.Unsupported(pointer, field)
+	errs.Addf(wmcompat.CodeMalformed, pointer, "unknown field "+field)
 }
 
 func decodeString(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, field, pointer string, dst *string) {

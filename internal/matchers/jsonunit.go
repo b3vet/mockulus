@@ -100,9 +100,9 @@ func resolvePlaceholders(expected any, compileRegex RegexCompiler, pointer strin
 		if !hasPlaceholder(v) {
 			return v, false, nil
 		}
-		ph, err := compilePlaceholder(v, compileRegex)
+		ph, kind, err := compilePlaceholder(v, compileRegex)
 		if err != nil {
-			return nil, false, []Problem{{Pointer: pointer, Detail: err.Error()}}
+			return nil, false, []Problem{{Kind: kind, Pointer: pointer, Detail: err.Error()}}
 		}
 		return ph, true, nil
 
@@ -135,39 +135,44 @@ func resolvePlaceholders(expected any, compileRegex RegexCompiler, pointer strin
 	}
 }
 
-// compilePlaceholder turns a placeholder string into a matcher node.
-func compilePlaceholder(s string, compileRegex RegexCompiler) (*jsonPlaceholder, error) {
+// compilePlaceholder turns a placeholder string into a matcher node, and
+// reports which catalog code its failure belongs to.
+func compilePlaceholder(s string, compileRegex RegexCompiler) (*jsonPlaceholder, ProblemKind, error) {
 	switch s {
 	case placeholderIgnore:
-		return &jsonPlaceholder{kind: phAny, source: s}, nil
+		return &jsonPlaceholder{kind: phAny, source: s}, ProblemMalformed, nil
 	case placeholderIgnoreElement:
 		// Not a synonym for ignore, despite the name: probing shows `ignore`
 		// requires the member to be present while `ignore-element` also accepts
 		// its absence. Expected {"a": ignore} rejects {}; ignore-element accepts it.
-		return &jsonPlaceholder{kind: phAnyOrAbsent, source: s}, nil
+		return &jsonPlaceholder{kind: phAnyOrAbsent, source: s}, ProblemMalformed, nil
 	case placeholderAnyString:
-		return &jsonPlaceholder{kind: phAnyString, source: s}, nil
+		return &jsonPlaceholder{kind: phAnyString, source: s}, ProblemMalformed, nil
 	case placeholderAnyNumber:
-		return &jsonPlaceholder{kind: phAnyNumber, source: s}, nil
+		return &jsonPlaceholder{kind: phAnyNumber, source: s}, ProblemMalformed, nil
 	case placeholderAnyBoolean:
-		return &jsonPlaceholder{kind: phAnyBoolean, source: s}, nil
+		return &jsonPlaceholder{kind: phAnyBoolean, source: s}, ProblemMalformed, nil
 	}
 
 	if pattern, found := strings.CutPrefix(s, placeholderRegexPrefix); found {
 		if compileRegex == nil {
-			return nil, fmt.Errorf("no regex engine is configured for %s", placeholderRegexPrefix)
+			return nil, ProblemMalformed,
+				fmt.Errorf("no regex engine is configured for %s", placeholderRegexPrefix)
 		}
 		// json-unit applies the pattern as a full match, verified against the
 		// pinned WireMock: [a-z]+ accepts "abc" and rejects "abc1".
 		compiled, err := compileRegex(pattern)
 		if err != nil {
-			return nil, fmt.Errorf("the pattern in %q does not compile: %w", s, err)
+			// A regex problem, not a document problem: the author needs to look
+			// at the pattern, not at the placeholder syntax.
+			return nil, ProblemRegex,
+				fmt.Errorf("the pattern in %q does not compile: %w", s, err)
 		}
-		return &jsonPlaceholder{kind: phRegex, pattern: compiled, source: s}, nil
+		return &jsonPlaceholder{kind: phRegex, pattern: compiled, source: s}, ProblemMalformed, nil
 	}
 
 	// An unrecognised placeholder is refused rather than compared literally:
 	// comparing it as text would mean the stub silently never matches, which is
 	// the failure mode the whole fail-loud contract exists to prevent.
-	return nil, fmt.Errorf("unknown json-unit placeholder %q", s)
+	return nil, ProblemMalformed, fmt.Errorf("unknown json-unit placeholder %q", s)
 }

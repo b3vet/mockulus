@@ -50,6 +50,10 @@ type Options struct {
 	// StubOptions carries the regex policy, so admin writes compile a stub
 	// exactly as a snapshot rebuild would.
 	StubOptions stub.Options
+	// Shutdown begins the ordinary drain sequence, as SIGTERM would. It backs
+	// POST /__admin/shutdown, which is registered only when the operator has
+	// enabled it.
+	Shutdown func()
 }
 
 // Handler serves the admin API.
@@ -65,6 +69,7 @@ type Handler struct {
 	scenarios *scenario.Client
 	journal   store.JournalStore
 	stubOpts  stub.Options
+	shutdown  func()
 	// started backs the uptime the health endpoint reports.
 	started time.Time
 
@@ -84,6 +89,7 @@ func New(opts Options) *Handler {
 		scenarios: opts.Scenarios,
 		journal:   opts.Journal,
 		stubOpts:  opts.StubOptions,
+		shutdown:  opts.Shutdown,
 		started:   time.Now(),
 	}
 
@@ -130,6 +136,16 @@ func New(opts Options) *Handler {
 
 	mux.HandleFunc("GET /__admin/health", h.health)
 	mux.HandleFunc("GET /__admin/version", h.versionInfo)
+
+	// The shutdown route is registered only when it is enabled, so when it is
+	// not, the request falls through to the unsupported-endpoint 404 that
+	// deviation #8 specifies — the endpoint does not exist rather than existing
+	// and refusing. Kubernetes owns the pod lifecycle in the deployment this is
+	// built for, and an unauthenticated caller that can stop a replica is a
+	// denial of service with an HTTP interface.
+	if h.cfg.AdminShutdownEnabled && h.shutdown != nil {
+		mux.HandleFunc("POST /__admin/shutdown", h.shutdownServer)
+	}
 
 	// Anything else under /__admin is outside the supported matrix.
 	mux.HandleFunc("/__admin/", h.notFound)
@@ -211,6 +227,21 @@ func (r *statusRecorder) WriteHeader(status int) {
 }
 
 // notFound answers any admin path outside the supported matrix.
+// shutdownServer begins the drain and answers before it starts.
+//
+// The response is written first and the drain runs after, because a caller that
+// asked the process to stop still deserves to be told it will: draining takes
+// shutdown_drain seconds by design, and a client that has to wait it out cannot
+// distinguish a graceful stop from a hang.
+func (h *Handler) shutdownServer(w http.ResponseWriter, _ *http.Request) {
+	h.log.Info("shutdown requested through the admin API")
+	w.WriteHeader(http.StatusOK)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go h.shutdown()
+}
+
 func (h *Handler) notFound(w http.ResponseWriter, r *http.Request) {
 	wmcompat.WriteError(w, wmcompat.UnsupportedEndpoint(r.URL.Path))
 }
