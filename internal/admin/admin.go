@@ -21,6 +21,7 @@ import (
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/match"
 	"github.com/b3vet/mockulus/internal/metrics"
+	"github.com/b3vet/mockulus/internal/scenario"
 	"github.com/b3vet/mockulus/internal/store"
 	"github.com/b3vet/mockulus/internal/stub"
 	"github.com/b3vet/mockulus/internal/wmcompat"
@@ -40,6 +41,9 @@ type Options struct {
 	Store   store.StubStore
 	Engine  *match.Engine
 	Builder *match.Builder
+	// Scenarios is nil when no scenario store is configured, which is the case
+	// only in degraded startup.
+	Scenarios *scenario.Client
 	// StubOptions carries the regex policy, so admin writes compile a stub
 	// exactly as a snapshot rebuild would.
 	StubOptions stub.Options
@@ -52,10 +56,11 @@ type Handler struct {
 	metrics *metrics.Metrics
 	version string
 
-	store    store.StubStore
-	engine   *match.Engine
-	builder  *match.Builder
-	stubOpts stub.Options
+	store     store.StubStore
+	engine    *match.Engine
+	builder   *match.Builder
+	scenarios *scenario.Client
+	stubOpts  stub.Options
 	// started backs the uptime the health endpoint reports.
 	started time.Time
 
@@ -65,15 +70,16 @@ type Handler struct {
 // New builds the admin handler and its routing table.
 func New(opts Options) *Handler {
 	h := &Handler{
-		cfg:      opts.Config,
-		log:      opts.Logger,
-		metrics:  opts.Metrics,
-		version:  opts.Version,
-		store:    opts.Store,
-		engine:   opts.Engine,
-		builder:  opts.Builder,
-		stubOpts: opts.StubOptions,
-		started:  time.Now(),
+		cfg:       opts.Config,
+		log:       opts.Logger,
+		metrics:   opts.Metrics,
+		version:   opts.Version,
+		store:     opts.Store,
+		engine:    opts.Engine,
+		builder:   opts.Builder,
+		scenarios: opts.Scenarios,
+		stubOpts:  opts.StubOptions,
+		started:   time.Now(),
 	}
 
 	mux := http.NewServeMux()
@@ -97,6 +103,11 @@ func New(opts Options) *Handler {
 	mux.HandleFunc("GET /__admin/files/{name...}", h.getFile)
 	mux.HandleFunc("PUT /__admin/files/{name...}", h.putFile)
 	mux.HandleFunc("DELETE /__admin/files/{name...}", h.deleteFile)
+
+	// Scenarios.
+	mux.HandleFunc("GET /__admin/scenarios", h.listScenarios)
+	mux.HandleFunc("POST /__admin/scenarios/reset", h.resetScenarios)
+	mux.HandleFunc("PUT /__admin/scenarios/{name}/state", h.setScenarioState)
 
 	mux.HandleFunc("GET /__admin/health", h.health)
 	mux.HandleFunc("GET /__admin/version", h.versionInfo)
