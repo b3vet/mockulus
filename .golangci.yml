@@ -1,0 +1,91 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - asasalint
+    - bodyclose
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - gocritic
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - perfsprint
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - wastedassign
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+        - name: var-naming
+    staticcheck:
+      checks:
+        - all
+
+  exclusions:
+    generated: lax
+    rules:
+      # The vendored Handlebars fork keeps upstream style; we only prune it.
+      - path: internal/handlebars/
+        linters:
+          - errcheck
+          - gocritic
+          - revive
+          - staticcheck
+          - unparam
+          - unused
+      - path: _test\.go$
+        linters:
+          - errcheck
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/b3vet/mockulus
+  exclusions:
+    paths:
+      - internal/handlebars

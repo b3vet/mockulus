@@ -1,0 +1,22 @@
+# Build output
+/bin/
+/dist/
+mockulus
+*.exe
+
+# Test & coverage artifacts
+/test/e2e/.artifacts/
+/test/load/.results/
+*.out
+*.test
+coverage.txt
+covdata/
+
+# Local tooling
+/.tools/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
