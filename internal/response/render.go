@@ -47,6 +47,13 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 	for _, h := range resp.Headers {
 		header.Add(h.Name, h.Value)
 	}
+	if _, declared := header["Content-Type"]; !declared {
+		// A stub that declares no Content-Type gets none on the wire. Left to
+		// itself net/http would sniff the body and invent one, so a JSON body
+		// would arrive labelled text/plain — a header the stub author never
+		// wrote and cannot remove. Assigning nil suppresses the sniffing.
+		header["Content-Type"] = nil
+	}
 
 	if resp.Dribble != nil && len(resp.Body) > 0 {
 		return dribble(w, resp)

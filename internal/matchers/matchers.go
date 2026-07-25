@@ -77,6 +77,35 @@ func matchAnyValue(s Subject, pred func(string) bool) bool {
 	return false
 }
 
+// matchNegatedValue applies the negative form of a predicate under the
+// multi-value rule.
+//
+// The negative matchers are NOT the logical complement of their positive twins
+// over a repeated key: both use any-of, so `doesNotMatch` is satisfied when at
+// least one value fails the pattern, not when every value fails it. A header
+// carrying both "a" and "b" therefore satisfies matches("a") AND
+// doesNotMatch("a") at once. Verified against the pinned WireMock; the shape is
+// surprising enough that inverting the positive result — the obvious
+// implementation — is wrong.
+//
+// An absent subject satisfies a negative matcher: there is no value there to
+// match the pattern.
+func matchNegatedValue(s Subject, pred func(string) bool) bool {
+	if !s.Present() {
+		return true
+	}
+	values := s.Values()
+	if len(values) == 0 {
+		return true
+	}
+	for _, v := range values {
+		if !pred(v) {
+			return true
+		}
+	}
+	return false
+}
+
 // EqualTo compares the subject to an exact string.
 type EqualTo struct {
 	Expected        string
@@ -138,13 +167,10 @@ type Contains struct {
 
 // Match implements Matcher.
 func (m *Contains) Match(s Subject) bool {
-	found := matchAnyValue(s, func(v string) bool { return strings.Contains(v, m.Expected) })
 	if m.Negate {
-		// doesNotContain is satisfied by an absent subject: there is nothing
-		// there to contain the text.
-		return !found
+		return matchNegatedValue(s, func(v string) bool { return strings.Contains(v, m.Expected) })
 	}
-	return found
+	return matchAnyValue(s, func(v string) bool { return strings.Contains(v, m.Expected) })
 }
 
 // Describe implements Matcher.
@@ -172,11 +198,10 @@ type PatternMatcher interface {
 
 // Match implements Matcher.
 func (m *Regex) Match(s Subject) bool {
-	found := matchAnyValue(s, m.Pattern.MatchString)
 	if m.Negate {
-		return !found
+		return matchNegatedValue(s, m.Pattern.MatchString)
 	}
-	return found
+	return matchAnyValue(s, m.Pattern.MatchString)
 }
 
 // Describe implements Matcher.

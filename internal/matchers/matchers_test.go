@@ -470,3 +470,42 @@ func BenchmarkEqualToJSONBody(b *testing.B) {
 		}
 	}
 }
+
+// Over a repeated key the negative matchers are NOT the complement of their
+// positive twins: both use any-of, so a header carrying "a" and "b" satisfies
+// matches("a") and doesNotMatch("a") at the same time. Inverting the positive
+// result — the obvious implementation — gets this wrong.
+func TestNegativeMatchersUseAnyOfNotComplement(t *testing.T) {
+	multi := NewKeyValues("a", "b")
+
+	if !compile(t, `{"matches":"a"}`).Match(multi) {
+		t.Error("matches should hold: one value matches")
+	}
+	if !compile(t, `{"doesNotMatch":"a"}`).Match(multi) {
+		t.Error("doesNotMatch should also hold: one value does not match")
+	}
+	if !compile(t, `{"contains":"a"}`).Match(multi) {
+		t.Error("contains should hold: one value contains it")
+	}
+	if !compile(t, `{"doesNotContain":"a"}`).Match(multi) {
+		t.Error("doesNotContain should also hold: one value does not contain it")
+	}
+
+	// Over a single value the two ARE complements, which is why the difference
+	// is easy to miss.
+	single := NewKeyValues("a")
+	if !compile(t, `{"matches":"a"}`).Match(single) {
+		t.Error("single value: matches should hold")
+	}
+	if compile(t, `{"doesNotMatch":"a"}`).Match(single) {
+		t.Error("single value: doesNotMatch should not hold")
+	}
+
+	// Every value failing satisfies the negative form.
+	if !compile(t, `{"doesNotMatch":"z"}`).Match(multi) {
+		t.Error("no value matching should satisfy doesNotMatch")
+	}
+	if compile(t, `{"matches":"z"}`).Match(multi) {
+		t.Error("no value matching should not satisfy matches")
+	}
+}

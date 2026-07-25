@@ -20,17 +20,18 @@ func testStubOptions() stub.Options {
 	}
 }
 
-// mustCompile builds a stub from JSON, failing the test on any problem. seq
-// fixes precedence, so tests that care about ordering pass it explicitly.
-func mustCompile(t *testing.T, seq uint64, doc string) *stub.CompiledStub {
+// mustCompile builds a stub from JSON, failing the test on any problem.
+//
+// seq fixes precedence, so tests that care about ordering pass it explicitly.
+// The id is supplied here rather than in the document because a registered stub
+// id must be a UUID, and a readable name makes the assertions legible.
+func mustCompile(t *testing.T, seq uint64, id, doc string) *stub.CompiledStub {
 	t.Helper()
 	cs, errs := stub.Compile([]byte(doc), seq, testStubOptions())
 	if errs != nil {
 		t.Fatalf("compile %s: %v", doc, errs.Errors())
 	}
-	if cs.ID == "" {
-		cs.ID = strings.ReplaceAll(t.Name(), "/", "-") + "-" + string(rune('a'+seq))
-	}
+	cs.ID = id
 	return cs
 }
 
@@ -54,8 +55,8 @@ func match(t *testing.T, snap *Snapshot, method, target string, body string, hea
 
 func TestMethodMatching(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"get","request":{"method":"GET","urlPath":"/x"},"response":{}}`),
-		mustCompile(t, 2, `{"id":"post","request":{"method":"POST","urlPath":"/x"},"response":{}}`),
+		mustCompile(t, 1, "get", `{"request":{"method":"GET","urlPath":"/x"},"response":{}}`),
+		mustCompile(t, 2, "post", `{"request":{"method":"POST","urlPath":"/x"},"response":{}}`),
 	}, 1)
 
 	if got := match(t, snap, "GET", "/x", "", nil); got != "get" {
@@ -73,7 +74,7 @@ func TestMethodMatching(t *testing.T) {
 // well as through the pattern list.
 func TestAnyMethodIsAWildcard(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"any","request":{"method":"ANY","urlPath":"/x"},"response":{}}`),
+		mustCompile(t, 1, "any", `{"request":{"method":"ANY","urlPath":"/x"},"response":{}}`),
 	}, 1)
 
 	for _, method := range []string{"GET", "POST", "PUT", "DELETE", "PATCH"} {
@@ -86,7 +87,7 @@ func TestAnyMethodIsAWildcard(t *testing.T) {
 // An absent request object matches everything, as WireMock's anyUrl() does.
 func TestAbsentRequestMatchesEverything(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"catchall","response":{"status":418}}`),
+		mustCompile(t, 1, "catchall", `{"response":{"status":418}}`),
 	}, 1)
 
 	if got := match(t, snap, "GET", "/anything/at/all?x=1", "", nil); got != "catchall" {
@@ -96,8 +97,8 @@ func TestAbsentRequestMatchesEverything(t *testing.T) {
 
 func TestURLCriteriaDistinguishPathFromQuery(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"full","request":{"url":"/x?a=1"},"response":{}}`),
-		mustCompile(t, 2, `{"id":"path","request":{"urlPath":"/y"},"response":{}}`),
+		mustCompile(t, 1, "full", `{"request":{"url":"/x?a=1"},"response":{}}`),
+		mustCompile(t, 2, "path", `{"request":{"urlPath":"/y"},"response":{}}`),
 	}, 1)
 
 	// `url` is byte-exact over path and query.
@@ -124,7 +125,7 @@ func TestURLCriteriaDistinguishPathFromQuery(t *testing.T) {
 // WireMock's semantics and a real source of surprise, so it is pinned here.
 func TestExactURLIsSensitiveToQueryOrder(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"ordered","request":{"url":"/x?a=1&b=2"},"response":{}}`),
+		mustCompile(t, 1, "ordered", `{"request":{"url":"/x?a=1&b=2"},"response":{}}`),
 	}, 1)
 
 	if got := match(t, snap, "GET", "/x?a=1&b=2", "", nil); got != "ordered" {
@@ -137,8 +138,8 @@ func TestExactURLIsSensitiveToQueryOrder(t *testing.T) {
 
 func TestURLPatterns(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"pat","request":{"urlPattern":"/orders/[0-9]+\\?full=true"},"response":{}}`),
-		mustCompile(t, 2, `{"id":"pathpat","request":{"urlPathPattern":"/items/[a-z]+"},"response":{}}`),
+		mustCompile(t, 1, "pat", `{"request":{"urlPattern":"/orders/[0-9]+\\?full=true"},"response":{}}`),
+		mustCompile(t, 2, "pathpat", `{"request":{"urlPathPattern":"/items/[a-z]+"},"response":{}}`),
 	}, 1)
 
 	if got := match(t, snap, "GET", "/orders/42?full=true", "", nil); got != "pat" {
@@ -162,8 +163,7 @@ func TestURLPatterns(t *testing.T) {
 
 func TestPathTemplateAndPathParameters(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"tpl",
-			"request":{"urlPathTemplate":"/orders/{id}/items/{itemId}",
+		mustCompile(t, 1, "tpl", `{"request":{"urlPathTemplate":"/orders/{id}/items/{itemId}",
 			           "pathParameters":{"id":{"matches":"[0-9]+"}}},
 			"response":{}}`),
 	}, 1)
@@ -185,11 +185,11 @@ func TestPathTemplateAndPathParameters(t *testing.T) {
 func TestPathVariablesDoNotLeakBetweenCandidates(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
 		// Higher priority, evaluated first, binds {id} then fails on its matcher.
-		mustCompile(t, 1, `{"id":"first","priority":1,
+		mustCompile(t, 1, "first", `{"priority":1,
 			"request":{"urlPathTemplate":"/x/{id}","pathParameters":{"id":{"equalTo":"nope"}}},
 			"response":{}}`),
 		// Lower priority; its criterion names a variable its own template binds.
-		mustCompile(t, 2, `{"id":"second","priority":2,
+		mustCompile(t, 2, "second", `{"priority":2,
 			"request":{"urlPathTemplate":"/x/{id}","pathParameters":{"id":{"equalTo":"real"}}},
 			"response":{}}`),
 	}, 1)
@@ -204,11 +204,11 @@ func TestPathVariablesDoNotLeakBetweenCandidates(t *testing.T) {
 
 func TestHeaderQueryCookieCriteria(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"hdr","request":{"urlPath":"/h",
+		mustCompile(t, 1, "hdr", `{"request":{"urlPath":"/h",
 			"headers":{"Content-Type":{"contains":"json"},"X-Legacy":{"absent":true}}},"response":{}}`),
-		mustCompile(t, 2, `{"id":"qry","request":{"urlPath":"/q",
+		mustCompile(t, 2, "qry", `{"request":{"urlPath":"/q",
 			"queryParameters":{"dryRun":{"equalTo":"true"}}},"response":{}}`),
-		mustCompile(t, 3, `{"id":"cke","request":{"urlPath":"/c",
+		mustCompile(t, 3, "cke", `{"request":{"urlPath":"/c",
 			"cookies":{"session":{"matches":"[a-f0-9]+"}}},"response":{}}`),
 	}, 1)
 
@@ -240,7 +240,7 @@ func TestHeaderQueryCookieCriteria(t *testing.T) {
 
 func TestBasicAuthCriterion(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"auth","request":{"urlPath":"/secure",
+		mustCompile(t, 1, "auth", `{"request":{"urlPath":"/secure",
 			"basicAuthCredentials":{"username":"user","password":"pass"}},"response":{}}`),
 	}, 1)
 
@@ -259,7 +259,7 @@ func TestBasicAuthCriterion(t *testing.T) {
 
 func TestBodyPatternsAreConjunctive(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"body","request":{"method":"POST","urlPath":"/b",
+		mustCompile(t, 1, "body", `{"request":{"method":"POST","urlPath":"/b",
 			"bodyPatterns":[{"contains":"order"},{"doesNotContain":"draft"}]},"response":{}}`),
 	}, 1)
 
@@ -276,7 +276,7 @@ func TestBodyPatternsAreConjunctive(t *testing.T) {
 
 func TestFormParameters(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"form","request":{"method":"POST","urlPath":"/f",
+		mustCompile(t, 1, "form", `{"request":{"method":"POST","urlPath":"/f",
 			"formParameters":{"kind":{"equalTo":"order"}}},"response":{}}`),
 	}, 1)
 
@@ -294,8 +294,8 @@ func TestFormParameters(t *testing.T) {
 func TestSelectionOrder(t *testing.T) {
 	t.Run("lower priority number wins", func(t *testing.T) {
 		snap := BuildSnapshot([]*stub.CompiledStub{
-			mustCompile(t, 1, `{"id":"low","priority":5,"request":{"urlPath":"/p"},"response":{}}`),
-			mustCompile(t, 2, `{"id":"high","priority":1,"request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 1, "low", `{"priority":5,"request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 2, "high", `{"priority":1,"request":{"urlPath":"/p"},"response":{}}`),
 		}, 1)
 		if got := match(t, snap, "GET", "/p", "", nil); got != "high" {
 			t.Errorf("selected %q, want high (priority 1)", got)
@@ -304,8 +304,8 @@ func TestSelectionOrder(t *testing.T) {
 
 	t.Run("newest wins among equal priorities", func(t *testing.T) {
 		snap := BuildSnapshot([]*stub.CompiledStub{
-			mustCompile(t, 1, `{"id":"older","request":{"urlPath":"/p"},"response":{}}`),
-			mustCompile(t, 2, `{"id":"newer","request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 1, "older", `{"request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 2, "newer", `{"request":{"urlPath":"/p"},"response":{}}`),
 		}, 1)
 		if got := match(t, snap, "GET", "/p", "", nil); got != "newer" {
 			t.Errorf("selected %q, want newer", got)
@@ -314,8 +314,8 @@ func TestSelectionOrder(t *testing.T) {
 
 	t.Run("priority beats recency", func(t *testing.T) {
 		snap := BuildSnapshot([]*stub.CompiledStub{
-			mustCompile(t, 1, `{"id":"old-high","priority":1,"request":{"urlPath":"/p"},"response":{}}`),
-			mustCompile(t, 9, `{"id":"new-low","priority":9,"request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 1, "old-high", `{"priority":1,"request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 9, "new-low", `{"priority":9,"request":{"urlPath":"/p"},"response":{}}`),
 		}, 1)
 		if got := match(t, snap, "GET", "/p", "", nil); got != "old-high" {
 			t.Errorf("selected %q, want old-high", got)
@@ -324,8 +324,8 @@ func TestSelectionOrder(t *testing.T) {
 
 	t.Run("an absent priority behaves as 5", func(t *testing.T) {
 		snap := BuildSnapshot([]*stub.CompiledStub{
-			mustCompile(t, 9, `{"id":"default","request":{"urlPath":"/p"},"response":{}}`),
-			mustCompile(t, 1, `{"id":"four","priority":4,"request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 9, "default", `{"request":{"urlPath":"/p"},"response":{}}`),
+			mustCompile(t, 1, "four", `{"priority":4,"request":{"urlPath":"/p"},"response":{}}`),
 		}, 1)
 		// Priority 4 beats the default 5 even though the default was added later.
 		if got := match(t, snap, "GET", "/p", "", nil); got != "four" {
@@ -338,9 +338,9 @@ func TestSelectionOrder(t *testing.T) {
 // matches: iteration continues rather than stopping at the first candidate.
 func TestNonMatchingHigherPrecedenceStubDoesNotShadow(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 2, `{"id":"specific","request":{"urlPath":"/s",
+		mustCompile(t, 2, "specific", `{"request":{"urlPath":"/s",
 			"headers":{"X-Want":{"equalTo":"yes"}}},"response":{}}`),
-		mustCompile(t, 1, `{"id":"general","request":{"urlPath":"/s"},"response":{}}`),
+		mustCompile(t, 1, "general", `{"request":{"urlPath":"/s"},"response":{}}`),
 	}, 1)
 
 	if got := match(t, snap, "GET", "/s", "", map[string]string{"X-Want": "yes"}); got != "specific" {
@@ -355,16 +355,16 @@ func TestNonMatchingHigherPrecedenceStubDoesNotShadow(t *testing.T) {
 // must interleave them by precedence rather than preferring one index.
 func TestExactAndPatternCandidatesMergeByPrecedence(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"pattern","priority":1,"request":{"urlPathPattern":"/m/.*"},"response":{}}`),
-		mustCompile(t, 2, `{"id":"exact","priority":2,"request":{"urlPath":"/m/x"},"response":{}}`),
+		mustCompile(t, 1, "pattern", `{"priority":1,"request":{"urlPathPattern":"/m/.*"},"response":{}}`),
+		mustCompile(t, 2, "exact", `{"priority":2,"request":{"urlPath":"/m/x"},"response":{}}`),
 	}, 1)
 	if got := match(t, snap, "GET", "/m/x", "", nil); got != "pattern" {
 		t.Errorf("selected %q, want pattern — priority must win across indexes", got)
 	}
 
 	snap2 := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"pattern","priority":2,"request":{"urlPathPattern":"/m/.*"},"response":{}}`),
-		mustCompile(t, 2, `{"id":"exact","priority":1,"request":{"urlPath":"/m/x"},"response":{}}`),
+		mustCompile(t, 1, "pattern", `{"priority":2,"request":{"urlPathPattern":"/m/.*"},"response":{}}`),
+		mustCompile(t, 2, "exact", `{"priority":1,"request":{"urlPath":"/m/x"},"response":{}}`),
 	}, 1)
 	if got := match(t, snap2, "GET", "/m/x", "", nil); got != "exact" {
 		t.Errorf("selected %q, want exact", got)
@@ -373,9 +373,9 @@ func TestExactAndPatternCandidatesMergeByPrecedence(t *testing.T) {
 
 func TestScenarioGateSkipsAndContinues(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 2, `{"id":"gated","scenarioName":"flow","requiredScenarioState":"Started",
+		mustCompile(t, 2, "gated", `{"scenarioName":"flow","requiredScenarioState":"Started",
 			"request":{"urlPath":"/g"},"response":{}}`),
-		mustCompile(t, 1, `{"id":"plain","request":{"urlPath":"/g"},"response":{}}`),
+		mustCompile(t, 1, "plain", `{"request":{"urlPath":"/g"},"response":{}}`),
 	}, 1)
 
 	req := httptest.NewRequest("GET", "/g", nil)
@@ -405,9 +405,9 @@ func idOf(cs *stub.CompiledStub) string {
 
 func TestSnapshotDerivesScenarioStates(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"a","scenarioName":"order","requiredScenarioState":"Started",
+		mustCompile(t, 1, "a", `{"scenarioName":"order","requiredScenarioState":"Started",
 			"newScenarioState":"created","request":{"urlPath":"/o"},"response":{}}`),
-		mustCompile(t, 2, `{"id":"b","scenarioName":"order","requiredScenarioState":"created",
+		mustCompile(t, 2, "b", `{"scenarioName":"order","requiredScenarioState":"created",
 			"newScenarioState":"shipped","request":{"urlPath":"/o"},"response":{}}`),
 	}, 1)
 
@@ -435,9 +435,9 @@ func TestCandidateCountReflectsWork(t *testing.T) {
 	// Priorities force the evaluation order: the two stubs that cannot match are
 	// tried before the one that can.
 	snap := BuildSnapshot([]*stub.CompiledStub{
-		mustCompile(t, 1, `{"id":"a","priority":1,"request":{"urlPath":"/c","headers":{"X":{"equalTo":"1"}}},"response":{}}`),
-		mustCompile(t, 2, `{"id":"b","priority":2,"request":{"urlPath":"/c","headers":{"X":{"equalTo":"2"}}},"response":{}}`),
-		mustCompile(t, 3, `{"id":"c","priority":3,"request":{"urlPath":"/c"},"response":{}}`),
+		mustCompile(t, 1, "a", `{"priority":1,"request":{"urlPath":"/c","headers":{"X":{"equalTo":"1"}}},"response":{}}`),
+		mustCompile(t, 2, "b", `{"priority":2,"request":{"urlPath":"/c","headers":{"X":{"equalTo":"2"}}},"response":{}}`),
+		mustCompile(t, 3, "c", `{"priority":3,"request":{"urlPath":"/c"},"response":{}}`),
 	}, 1)
 
 	req := httptest.NewRequest("GET", "/c", nil)
@@ -458,11 +458,12 @@ func BenchmarkMatchExactURL(b *testing.B) {
 	stubs := make([]*stub.CompiledStub, 0, 1000)
 	for i := range 1000 {
 		cs, errs := stub.Compile([]byte(
-			`{"id":"s`+string(rune('a'+i%26))+`","request":{"method":"GET","urlPath":"/api/resource/`+
-				itoa(i)+`"},"response":{"status":200,"body":"x"}}`), uint64(i), testStubOptions())
+			`{"request":{"method":"GET","urlPath":"/api/resource/`+itoa(i)+
+				`"},"response":{"status":200,"body":"x"}}`), uint64(i), testStubOptions())
 		if errs != nil {
 			b.Fatal(errs.Errors())
 		}
+		cs.ID = "s" + itoa(i)
 		stubs = append(stubs, cs)
 	}
 	snap := BuildSnapshot(stubs, 1)

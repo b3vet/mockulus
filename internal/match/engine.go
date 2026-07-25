@@ -120,7 +120,9 @@ func (e *Engine) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool)
 }
 
 func writeUnmatched(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/plain")
+	// The charset spelling has no space after the semicolon, matching the
+	// pinned WireMock byte for byte.
+	w.Header().Set("Content-Type", "text/plain;charset=UTF-8")
 	w.WriteHeader(http.StatusNotFound)
 	_, _ = w.Write([]byte(UnmatchedBody))
 }
