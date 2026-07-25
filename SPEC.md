@@ -163,7 +163,7 @@ Components (each maps to a package, §18):
    legal (WM parity); the reference resolves at snapshot build (§6.9).
 3. Persist doc to StubStore (durability per config, default none). POST/creates draw a fresh
    insertion sequence from the CB atomic counter (§7.3); PUT/overwrite of an existing id
-   PRESERVES its seq — editing a stub must not change its match precedence (§5.3) [DH].
+   PRESERVES its seq — editing a stub must not change its match precedence (§5.3).
 4. Increment epoch counter.
 5. Swap immediately on this pod via incremental splice: clone the current snapshot with just
    this one compiled stub inserted/replaced at its sorted position (known from priority+seq;
@@ -214,17 +214,17 @@ Legend: ✅ implement in v1 · 🔶 implement with documented deviation · ❌ 4
 
 | Method & path | v1 | Notes |
 |---|---|---|
-| `POST /__admin/mappings` | ✅ | Create. Returns 201 + created stub (server assigns `id`/`uuid` if absent) |
+| `POST /__admin/mappings` | ✅ | Create. Returns 201 + created stub (server assigns `id`/`uuid` if absent). An `id` that already exists is rejected 422 code 109 — create is not an upsert |
 | `GET /__admin/mappings` | ✅ | List, WM envelope `{"mappings":[...],"meta":{"total":n}}`; `limit`/`offset` params |
 | `DELETE /__admin/mappings` | ✅ | Delete all (persistent and not) |
 | `POST /__admin/mappings/reset` | ✅ | Remove non-persistent stubs; reload snapshot |
 | `GET /__admin/mappings/{id}` | ✅ | 404 WM-style if absent |
-| `PUT /__admin/mappings/{id}` | ✅ | Full replace of an **existing** stub — 404 WM-style if id unknown **[DH]** (store-level upsert is not exposed here); preserves the stub's `seq` (§7.3); 422 on unsupported fields |
+| `PUT /__admin/mappings/{id}` | ✅ | Full replace of an **existing** stub; 404 with an empty body if the id is unknown, and the existence check precedes body parsing (so an invalid body against an unknown id is 404, not 422). A body `id` disagreeing with the path is ignored — the path wins. Preserves the stub's `seq` (§7.3); 422 on unsupported fields |
 | `DELETE /__admin/mappings/{id}` | ✅ | |
 | `POST /__admin/mappings/save` | 🔶 | WM: persist in-memory stubs to backing store. Ours: set `persistent=true` on all current stubs (removes TTL). Documented deviation |
-| `POST /__admin/mappings/import` | ✅ | `{"mappings":[...], "importOptions":{...}}`; `duplicatePolicy: OVERWRITE\|IGNORE`, `deleteAllNotInImport` **[DH]** exact semantics |
+| `POST /__admin/mappings/import` | ✅ | `{"mappings":[...], "importOptions":{...}}`; `duplicatePolicy: OVERWRITE\|IGNORE` (default `OVERWRITE`; `OVERWRITE` replaces in place preserving `seq`, `IGNORE` leaves the existing stub untouched), `deleteAllNotInImport` removes every stub whose id is not in the payload. 200 on success |
 | `POST /__admin/mappings/find-by-metadata` | ✅ | Body = one content matcher applied to stub `metadata` (reuses §5.3 matchers) |
-| `POST /__admin/mappings/remove-by-metadata` | ✅ | Same matcher; returns removed mappings **[DH]** response shape |
+| `POST /__admin/mappings/remove-by-metadata` | ✅ | Same matcher. WM answers `{}` with no detail; ours additionally returns the removed mappings under the standard list envelope — a catalogued extension, not a diff (§5.6) |
 | `GET /__admin/requests` (+`limit`,`since`) | ✅ | Journal-backed. Journal disabled → WM's journal-disabled error **[DH]** (provisionally 500, code in Appendix B) |
 | `DELETE /__admin/requests` | ✅ | Clear journal (this deployment's journal collection) |
 | `GET /__admin/requests/{id}` | ✅ | |
@@ -256,9 +256,9 @@ Top level:
 
 | Field | v1 | Behavior |
 |---|---|---|
-| `id`, `uuid` | ✅ | Aliases; server-generated UUIDv4 when absent; both echoed |
+| `id`, `uuid` | ✅ | Aliases; must be a canonical 36-character UUID (parsed case-insensitively, canonicalised to lower case); server-generated UUIDv4 when absent; both echoed |
 | `name` | ✅ | Stored/returned; shown in near-miss output |
-| `priority` | ✅ | 1 = highest; absent ⇒ effective 5 (WM default) **[DH]** |
+| `priority` | ✅ | Arbitrary signed integer compared numerically — no clamping, no range validation; lower wins. Absent ⇒ effective 5 |
 | `persistent` | 🔶 | `true` ⇒ durable doc. `false`/absent ⇒ doc with TTL `ephemeral_stub_ttl` (default 24 h) and removed by `mappings/reset`. WM keeps non-persistent stubs until process restart — TTL is our (documented) equivalent for a long-running cluster |
 | `scenarioName`, `requiredScenarioState`, `newScenarioState` | ✅ | §9 |
 | `metadata` | ✅ | Arbitrary JSON, stored/returned; searchable via find-by-metadata |
@@ -276,8 +276,8 @@ Top level:
 | `urlPath` | ✅ | Exact path only |
 | `urlPathPattern` | ✅ | Regex on path only |
 | `urlPathTemplate` + `pathParameters` | ✅ | WM 3 templates `/x/{id}`; per-param matchers |
-| `queryParameters` | ✅ | Per-param matcher; multi-value param matches if **any** value satisfies the matcher **[DH]**; `absent` supported |
-| `headers` | ✅ | Case-insensitive names; multi-value: any-value-matches **[DH]**; `absent` supported |
+| `queryParameters` | ✅ | Per-param matcher; a repeated param matches if **any** value satisfies the matcher; `absent` supported. `?x=` and bare `?x` are both present-with-empty-string, never absent |
+| `headers` | ✅ | Case-insensitive names (both directions); a repeated header matches if **any** value satisfies the matcher; values are case-sensitive unless `caseInsensitive`; `absent` supported |
 | `cookies` | ✅ | |
 | `formParameters` | ✅ | `application/x-www-form-urlencoded` bodies; parsed lazily |
 | `basicAuthCredentials` | ✅ | Sugar over `Authorization` |
@@ -294,7 +294,7 @@ Content matchers (used in `bodyPatterns`, and as values in `headers`/`queryParam
 | `contains`, `doesNotContain` | ✅ | |
 | `matches`, `doesNotMatch` | ✅ | Java-regex compat strategy §6.6 |
 | `before`, `after`, `equalToDateTime` (+`truncateExpectedTo` etc.) | ❌ 422 | Roadmap (date-time matchers) |
-| `equalToJson` (+`ignoreArrayOrder`, `ignoreExtraElements`) | 🔶 | Structural JSON equality. **json-unit placeholders (`${json-unit.ignore}` …) are NOT interpreted** — compared literally. Documented deviation; roadmap item |
+| `equalToJson` (+`ignoreArrayOrder`, `ignoreExtraElements`) | ✅ | Structural JSON equality; numbers compared by value, so `1` equals `1.0`. json-unit placeholders are interpreted as WM does: `ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, and `regex` (full match). An **unrecognised** placeholder is rejected at registration (deviation #5) |
 | `matchesJsonPath` | ✅ | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. JSONPath dialect: §6.7 |
 | `matchesJsonSchema` | ❌ 422 | Roadmap |
 | `equalToXml`, `matchesXPath` | ❌ 422 | Roadmap |
@@ -308,7 +308,7 @@ Content matchers (used in `bodyPatterns`, and as values in `headers`/`queryParam
 | `status` | ✅ | Default 200 |
 | `statusMessage` | 🔶 | Sent on HTTP/1.1; HTTP/2 has no reason phrase (protocol limitation, documented) |
 | `headers` | ✅ | Templated when templating active |
-| `body` / `jsonBody` / `base64Body` / `bodyFileName` | ✅ | Exactly one; `bodyFileName` resolved from the files store **at snapshot build** (body inlined into memory — P1); file missing at build ⇒ stub serves 500 code 1022 until the file appears (§6.9) |
+| `body` / `jsonBody` / `base64Body` / `bodyFileName` | ✅ | Exactly one — more than one is rejected 422 (deviation #19). No `Content-Type` is emitted unless the stub sets one. `bodyFileName` resolved from the files store **at snapshot build** (body inlined into memory — P1); file missing at build ⇒ stub serves 500 code 1022 until the file appears (§6.9) |
 | `fixedDelayMilliseconds` | ✅ | §12.4 |
 | `delayDistribution` | ✅ | `uniform` (lower/upper) and `lognormal` (median/sigma) |
 | `chunkedDribbleDelay` | ✅ | `numberOfChunks`, `totalDuration` |
@@ -327,7 +327,7 @@ Content matchers (used in `bodyPatterns`, and as values in `headers`/`queryParam
 
 ### 5.4 Unmatched requests
 
-- Default: fast `404`, `Content-Type: text/plain`, WM-compatible body text ("Request was not matched" diagnostic header line **[DH]** exact text), **no near-miss computation** (P2 — WM computes near-misses on every unmatched request; we don't).
+- Default: fast `404`, `Content-Type: text/plain;charset=UTF-8` (WM's exact spelling, no space after the semicolon), **no near-miss computation** (P2 — WM computes near-misses on every unmatched request; we don't). Body: `No response could be served as there are no stub mappings in this mockulus instance.` when the snapshot is empty, else `Request was not matched`. WM names itself in both; we name ourselves (deviation #18).
 - `diagnostics_on_unmatched: true` (config) restores WM-style near-miss detail in the 404 body for debugging sessions.
 - Near-miss **endpoints** (§5.1) always work — they compute on demand at admin-request time against the current snapshot using the scoring in §6.8.
 
@@ -339,7 +339,7 @@ Every deviation is deliberate, documented here, and (where sensible) has a confi
 2. Unmatched-request near-miss diagnostics off by default (WM: on). Knob above.
 3. Non-persistent stubs get a TTL (default 24 h) instead of living until process restart.
 4. `mappings/save` = mark-all-persistent (no filesystem write in couchbase mode).
-5. `equalToJson` placeholders compared literally (no json-unit engine).
+5. An **unrecognised** `${json-unit.*}` placeholder inside `equalToJson` is rejected at registration. WM compares it as literal text, which means the stub silently never matches — the failure mode P3 exists to prevent. The documented placeholders are interpreted exactly as WM does (§5.2).
 6. Max request body default 10 MiB → 413 beyond (WM: unbounded). Knob `max_body_bytes` (0 = unbounded).
 7. `statusMessage` not conveyed over HTTP/2 (protocol).
 8. `POST /__admin/shutdown` disabled by default.
@@ -352,6 +352,10 @@ Every deviation is deliberate, documented here, and (where sensible) has a confi
 15. Fault injection is byte-faithful on HTTP/1.1 only; over HTTP/2 faults degrade to a stream reset. h2c is therefore **off by default** (§12.1).
 16. Journal-backed verification has bounds: criteria queries scan the newest `journal_query_scan_limit` (10k) entries, and stored bodies are capped at `journal_max_body` (64 KiB) — counts beyond the scan window and body-criteria matches past the cap under-report. Functional suites stay well inside both; load tests keep the journal off.
 17. A `persistent:false` stub whose TTL expires naturally may keep matching on pods that already hold it for up to `resync_interval` (5 m) — expiry doesn't bump the epoch. Explicit deletes/resets propagate within `sync_interval` (§7.4).
+18. Unmatched-request diagnostic text names mockulus where WM names itself ("…no stub mappings in this **mockulus** instance"). Shape, status and `Content-Type` are identical. Diagnostic text is outside the strict-compat surface (§6.8).
+19. A `response` setting more than one body form is rejected 422 naming both fields. WM accepts it and silently discards all but `body` — accept-and-ignore, which P3 rules out.
+20. `find-by-metadata` and `remove-by-metadata` consider only stubs that **have** metadata. WM serializes absent metadata to the literal `null` and matches against that, so a broad matcher there can remove every untagged stub in the deployment — unacceptable for the shared-deployment cleanup path §1 recommends.
+21. Malformed admin payloads are answered 422/400 with the error envelope where WM raises an unhandled 500 (a `null` `mappings` array on import, a missing `deleteAllNotInImport`). Ours also applies the import atomically — the batch is validated in full before anything is written, where WM's partially applies.
 
 ### 5.6 Differential compatibility verification (the compat tiebreaker)
 
@@ -383,7 +387,7 @@ type Snapshot struct {
 type CompiledStub struct {
     Raw          json.RawMessage  // exact JSON returned by GET (round-trip fidelity)
     ID           string
-    Priority     int32            // effective default per §5.2 [DH]
+    Priority     int32            // arbitrary signed integer; effective 5 when absent (§5.2)
     Seq          uint64           // cluster-global insertion sequence
     Method       string           // "" == ANY
     URLKind      uint8            // exactFull | exactPath | patternFull | patternPath | template | any
@@ -436,14 +440,19 @@ Per stub: method → URL → headers → query → cookies → basic-auth → fo
 
 1. Try Go `regexp` (RE2, linear time). Covers most patterns.
 2. On RE2 compile failure (lookaround, backreferences, possessive quantifiers): compile with `dlclark/regexp2` (.NET-style ≈ Java semantics) with `MatchTimeout = regex_timeout` (default 100 ms). Timeout ⇒ non-match + `mockulus_regex_timeouts_total` + WARN log naming the stub.
-3. Both anchored per WM semantics: `urlPattern`/`urlPathPattern`/`matches` require **full match** **[DH]** — implement via `\A(?:...)\z` wrapping.
+3. Both anchored per WM semantics: `urlPattern`/`urlPathPattern`/`matches` require a **full match** — implemented via `\A(?:...)\z` wrapping (rather than `^`/`$`, so a newline in the subject cannot satisfy the anchor at a line boundary). WM compiles stub patterns with **DOTALL on and MULTILINE off** — `a.b` matches `"a\nb"`, `^a$` does not — so patterns are wrapped with `(?s)`; a pattern wanting the other behavior can still write `(?-s)`. `urlPattern` matches path+query; `urlPathPattern` matches the path only.
 4. Semantics divergences RE2-vs-Java for patterns that compile on both (rare; e.g. `\d` Unicode behavior) are accepted; differential corpus carries the known cases.
+5. The negative matchers are **not** the complement of their positive twins over a repeated key: both use any-of, so `doesNotMatch` holds when at least one value fails the pattern. A header carrying `a` and `b` satisfies `matches("a")` and `doesNotMatch("a")` at once.
 
 ### 6.7 JSONPath dialect
 
 Target: Jayway-compatible subset (what WM uses): dot/bracket child, deep scan `..`, wildcards, array indexes/slices/unions, filter expressions `?(@.x == 'y')` with comparison/&&/||, `length()`. Implementation: evaluate candidate Go libraries (`ohler55/ojg` first) against a Jayway conformance mini-corpus in M3 — plus the license criterion of §22.1 (must classify cleanly under `go-licenses`); wrap behind `internal/jsonpath.Compile/Eval` so the library is swappable. Unsupported syntax → 422 at registration (compile-time), never a silent non-match.
 
-`matchesJsonPath` result semantics (WM/Jayway): bare form matches when the path selects a non-empty result (with WM's truthiness quirks **[DH]**); nested form applies the inner matcher to the selected value (single match: the value; multiple: any-of **[DH]**).
+`matchesJsonPath` result semantics, verified against pinned WM:
+
+- **Bare form** matches when the path selects a present, non-empty result. The emptiness test applies to **collections only**: an empty array and an empty object do not match, but an empty *string* does, as do `false` and `0`. A selected `null` does not match, and neither does a path that selects nothing. The null test applies only to the top-level result — an array of nulls matches.
+- **Nested form** is **any-of**: the stub matches when at least one selected value satisfies the inner matcher. A selected non-string is rendered to text first, exactly (`5` becomes `"5"`, `5.0` becomes `"5.0"`), and a directly-selected `null` never matches whatever the inner matcher says.
+- A body that is not valid JSON is a plain non-match, never an error.
 
 ### 6.8 Near-miss scoring
 
@@ -520,7 +529,7 @@ Stored stub doc = the WM-compatible stub JSON verbatim under `"mapping"`, plus m
 
 ### 7.3 Counters & ordering
 
-- `seq`: incremented once per **newly created** stub (POST, or import items creating a new id); stored in the envelope; gives the cluster-global total order that reproduces WM's newest-wins (§5.3). PUT and import-`OVERWRITE` of an existing id **preserve** the stored seq — editing a stub must not change its match precedence **[DH]**. Counter gaps are irrelevant (ordering only).
+- `seq`: incremented once per **newly created** stub (POST, or import items creating a new id); stored in the envelope; gives the cluster-global total order that reproduces WM's newest-wins (§5.3). PUT and import-`OVERWRITE` of an existing id **preserve** the stored seq — editing a stub must not change its match precedence (verified against pinned WM: an edit leaves the stub in place, and a stub that was losing to a later-inserted peer keeps losing). Counter gaps are irrelevant (ordering only).
 - `epoch`: bumped on any mutation of `mappings` or `files` (create/update/delete/reset/import/save). Level-triggered reload keys off inequality, not +1 steps.
 
 ### 7.4 Persistence semantics
@@ -679,7 +688,15 @@ Read fully into a pooled buffer up to `max_body_bytes` (default 10 MiB) — matc
 
 ### 12.4 Delays
 
-`fixedDelayMilliseconds`, `delayDistribution` (uniform, lognormal — median/sigma per WM), global settings delay (§5.1 settings) — additive semantics WM-parity **[DH]**. Implementation: `time.Timer` await (goroutine-cheap, no blocked OS threads); delayed requests don't count against any worker pool because there isn't one — net/http's goroutine-per-conn + timer scales to tens of thousands of concurrent sleepers.
+`fixedDelayMilliseconds`, `delayDistribution` (uniform, lognormal — median/sigma per WM), global settings delay (§5.1 settings). Verified WM semantics: the fixed and distributed parts are **summed**, and within each part the stub value **overrides** the global one rather than adding to it —
+
+```
+fixed = stub.fixedDelayMilliseconds ?? settings.fixedDelay ?? 0
+dist  = sample(stub.delayDistribution ?? settings.delayDistribution ?? 0)
+total = fixed + dist
+```
+
+The global delay applies to **matched** responses only; an unmatched request 404s immediately. Implementation: `time.Timer` await (goroutine-cheap, no blocked OS threads); delayed requests don't count against any worker pool because there isn't one — net/http's goroutine-per-conn + timer scales to tens of thousands of concurrent sleepers.
 
 ### 12.5 Fault injection
 
@@ -1116,7 +1133,8 @@ Error body shape (WM-compatible envelope):
 
 | Code | HTTP | Meaning |
 |---|---|---|
-| 10 | 422 | Malformed JSON / schema violation (WM parity code **[DH]**) |
+| 10 | 422 | Malformed JSON / schema violation (WM parity code, verified) |
+| 109 | 422 | Stub id already exists on create (WM parity code) |
 | 1000 | 422 | Unsupported stub feature (pointer names the field) |
 | 1001 | 404 | Unsupported admin endpoint (body links ROADMAP) |
 | 1002 | 422 | Unknown template helper / template parse error |
@@ -1134,4 +1152,24 @@ Every 422 lists **all** problems in one response (collect, don't fail-fast) — 
 
 ## Appendix C — Items pending differential verification
 
-Tracked as issues labeled `compat-dh`; resolved answers get edited into the body of this spec. Initial set: priority default value & tie-break order · multi-value header/query any-match semantics · full-match anchoring of `urlPattern`/`matches` · `matchesJsonPath` truthiness & multi-result semantics · unmatched-404 body text · journal-disabled error shape & code · `ServeEvent` JSON shape · scenarios listing shape & PUT-state validation · import `duplicatePolicy`/`deleteAllNotInImport` semantics · remove-by-metadata response shape · templating activation matrix (global default, per-stub disable — resolve at M3 **start**, gates §10.1 `wm-compat`) & `request.path` alias set & path-template variable binding · `now`/`randomValue` output formats · delay additivity with global settings · render-error-in-body behavior · near-miss distance weighting · PUT on unknown stub id (404 vs create — resolve in M1) · seq/precedence preservation on PUT & import-OVERWRITE (resolve in M1 — gates §5.3).
+Tracked as issues labeled `compat-dh`; resolved answers get edited into the body of this spec.
+
+**Resolved in M1** (probed against pinned WM 3.13.2, each finding independently re-verified, and folded into the sections named):
+
+| Item | Answer | Now in |
+|---|---|---|
+| Priority default & tie-break order | Absent ⇒ 5; arbitrary signed integer, no clamping; priority asc then insertion desc | §5.2, §5.3 |
+| Multi-value header/query semantics | Any-of, both for headers and query params — and for the **negative** matchers too, which are therefore not complements | §5.2, §6.6 |
+| Full-match anchoring of `urlPattern`/`matches` | Full match everywhere; DOTALL on, MULTILINE off | §6.6 |
+| `matchesJsonPath` truthiness & multi-result | Emptiness applies to collections only; `null` never matches; nested form is any-of | §6.7 |
+| Unmatched-404 body text | Two bodies (empty snapshot vs no match); `text/plain;charset=UTF-8` | §5.4, deviation #18 |
+| Import `duplicatePolicy`/`deleteAllNotInImport` | Default OVERWRITE; OVERWRITE preserves `seq`; IGNORE leaves the existing stub | §5.1 |
+| remove-by-metadata response shape | WM returns `{}`; ours adds the removed mappings as a catalogued extension | §5.1, deviation #20 |
+| Delay additivity with global settings | Fixed and distributed parts summed; stub overrides global within each part; matched responses only | §12.4 |
+| PUT on unknown stub id | 404 with an empty body; existence checked before the body is parsed | §5.1 |
+| seq/precedence preservation on PUT & import-OVERWRITE | Preserved — an edit does not change what matches | §7.3 |
+| json-unit placeholders in `equalToJson` | WM **does** interpret them by default; the set and their semantics are pinned | §5.2, deviation #5 |
+| Stub `id` format | Must be a canonical UUID; case-insensitive, canonicalised to lower case | §5.2 |
+| Create over an existing id | Rejected 422 code 109, not an upsert | §5.1, Appendix B |
+
+**Still open**, each owned by the milestone that implements it: journal-disabled error shape & code (M5) · `ServeEvent` JSON shape (M5) · scenarios listing shape & PUT-state validation (M4) · templating activation matrix (global default, per-stub disable — resolve at M3 **start**, gates §10.1 `wm-compat`) & `request.path` alias set & path-template variable binding (M3) · `now`/`randomValue` output formats (M3) · render-error-in-body behavior (M3) · near-miss distance weighting (M5).

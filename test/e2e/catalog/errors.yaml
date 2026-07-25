@@ -7,7 +7,7 @@
 behaviors:
   - id: "B-ERR-10"
     spec_row: "spec:B:error-catalog|10"
-    spec_hash: "7eff8abeddeae517"
+    spec_hash: "fdb467adf91977ed"
     spec: "#appendix-b--error-catalog"
     kind: "functional"
     impl_milestone: "M1"
@@ -134,4 +134,14 @@ behaviors:
     summary: "1031"
     evidence: "an unknown scenario or invalid target state is 400 code 1031"
     evidence_tokens: ["1031"]
+    status: "ok"
+  - id: "B-ERR-109"
+    spec_row: "spec:B:error-catalog|109"
+    spec_hash: "fac8b53c911b37d9"
+    spec: "#appendix-b--error-catalog"
+    kind: "functional"
+    impl_milestone: "M1"
+    summary: "109"
+    evidence: "a create over an existing id is 422 with code 109"
+    evidence_tokens: ["109", "422"]
     status: "ok"
