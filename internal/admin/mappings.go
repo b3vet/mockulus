@@ -31,21 +31,23 @@ func (h *Handler) createMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mapping, errs := stub.Parse(raw)
+	// Compilation happens before anything is persisted, so a stub that would
+	// fail to compile can never enter the store (SPEC §4.3).
+	compiled, errs := stub.Compile(raw, 0, h.stubOpts)
 	if errs != nil {
 		errs.WriteList(w)
 		return
 	}
 
-	if mapping.ID == "" {
-		mapping.ID = uuid.NewString()
+	id := compiled.ID
+	if id == "" {
+		id = uuid.NewString()
 	}
-	doc, err := stub.WithIdentity(raw, mapping.ID)
+	doc, err := stub.WithIdentity(raw, id)
 	if err != nil {
 		wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeMalformed, err.Error()))
 		return
 	}
-	mapping.Raw = doc
 
 	ctx := r.Context()
 	seq, err := h.store.NextSeq(ctx)
@@ -55,10 +57,10 @@ func (h *Handler) createMapping(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stored := store.StoredStub{
-		ID:            mapping.ID,
+		ID:            id,
 		SchemaVersion: store.SchemaVersion,
 		Seq:           seq,
-		Persistent:    mapping.Persistent,
+		Persistent:    compiled.Persistent,
 		CreatedAt:     time.Now().UTC(),
 		Mapping:       doc,
 	}
@@ -72,7 +74,7 @@ func (h *Handler) createMapping(w http.ResponseWriter, r *http.Request) {
 	}
 	h.rebuild(r, "created stub")
 
-	h.log.Info("stub registered", "id", mapping.ID, "name", mapping.Name, "seq", seq)
+	h.log.Info("stub registered", "id", id, "name", compiled.Name, "seq", seq)
 	wmcompat.WriteJSON(w, http.StatusCreated, json.RawMessage(doc))
 }
 

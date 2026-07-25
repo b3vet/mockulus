@@ -43,8 +43,8 @@ var ErrTimeout = errors.New("regex match timed out")
 // Pattern is a compiled regular expression, ready to evaluate with no further
 // compilation work.
 type Pattern struct {
-	// Source is the pattern exactly as it was written in the stub.
-	Source string
+	// source is the pattern exactly as it was written in the stub.
+	source string
 	// Engine names the engine that compiled it.
 	Engine string
 
@@ -77,7 +77,7 @@ type Options struct {
 // refuses. A pattern neither engine accepts is an error, reported at
 // registration as a 422 — never a silent non-match (SPEC §6.6, P3).
 func Compile(source string, opts Options) (*Pattern, error) {
-	p := &Pattern{Source: source, onTimeout: opts.OnTimeout}
+	p := &Pattern{source: source, onTimeout: opts.OnTimeout}
 
 	expr := source
 	if opts.Anchored {
@@ -130,12 +130,16 @@ func (p *Pattern) MatchString(s string) bool {
 	ok, err := p.bt.MatchString(s)
 	if err != nil {
 		if p.onTimeout != nil {
-			p.onTimeout(p.Source)
+			p.onTimeout(p.source)
 		}
 		return false
 	}
 	return ok
 }
+
+// Source returns the pattern exactly as it was written in the stub, which is
+// what diagnostics and timeout warnings name.
+func (p *Pattern) Source() string { return p.source }
 
 // LiteralPrefix returns the leading literal text a subject must start with for
 // a match to be possible, or the empty string when nothing can be concluded.

@@ -193,3 +193,20 @@ func BenchmarkMatchRE2(b *testing.B) {
 		}
 	}
 }
+
+// Anchoring wraps the pattern, and the prefilter depends on the wrapper not
+// destroying the literal prefix — a lost prefix silently costs a regex
+// evaluation on every pattern candidate.
+func TestAnchoringPreservesTheLiteralPrefix(t *testing.T) {
+	for _, pattern := range []string{`/api/orders/[0-9]+`, `/api/.*`, `/exact`} {
+		anchored := MustCompile(pattern, Options{Anchored: true})
+		plain := MustCompile(pattern, Options{Anchored: false})
+		if anchored.LiteralPrefix() != plain.LiteralPrefix() {
+			t.Errorf("pattern %q: anchored prefix %q differs from unanchored %q",
+				pattern, anchored.LiteralPrefix(), plain.LiteralPrefix())
+		}
+		if anchored.LiteralPrefix() == "" {
+			t.Errorf("pattern %q lost its literal prefix when anchored", pattern)
+		}
+	}
+}
