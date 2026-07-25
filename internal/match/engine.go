@@ -148,7 +148,16 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		status = response.Write(w, r, &cs.Response, opts)
 	} else {
-		writeUnmatched(w, snap.Len() == 0)
+		body := UnmatchedBody
+		switch {
+		case snap.Len() == 0:
+			body = UnmatchedNoStubsBody
+		case e.cfg.DiagnosticsOnUnmatched:
+			// Off by default: WireMock computes near misses on every unmatched
+			// request and mockulus deliberately does not (deviation #2).
+			body = DiagnosticBody(snap, pr)
+		}
+		writeUnmatched(w, body)
 	}
 
 	if rec := e.recorder.Load(); rec != nil {
@@ -188,16 +197,12 @@ func (e *Engine) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool)
 	return body, true
 }
 
-func writeUnmatched(w http.ResponseWriter, noStubs bool) {
+func writeUnmatched(w http.ResponseWriter, body string) {
 	// The charset spelling has no space after the semicolon, matching the
 	// pinned WireMock byte for byte.
 	w.Header().Set("Content-Type", "text/plain;charset=UTF-8")
 	w.WriteHeader(http.StatusNotFound)
-	if noStubs {
-		_, _ = w.Write([]byte(UnmatchedNoStubsBody))
-		return
-	}
-	_, _ = w.Write([]byte(UnmatchedBody))
+	_, _ = w.Write([]byte(body))
 }
 
 // observe records the per-request metrics of SPEC §14.1. Label values come from

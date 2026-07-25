@@ -117,6 +117,9 @@ func New(opts Options) *Handler {
 	mux.HandleFunc("POST /__admin/requests/find", h.findRequests)
 	mux.HandleFunc("POST /__admin/requests/remove", h.removeRequests)
 	mux.HandleFunc("GET /__admin/requests/unmatched", h.unmatchedRequests)
+	mux.HandleFunc("GET /__admin/requests/unmatched/near-misses", h.unmatchedNearMisses)
+	mux.HandleFunc("POST /__admin/near-misses/request", h.nearMissesForRequest)
+	mux.HandleFunc("POST /__admin/near-misses/request-pattern", h.nearMissesForPattern)
 	mux.HandleFunc("GET /__admin/requests/{id}", h.getRequest)
 	mux.HandleFunc("DELETE /__admin/requests/{id}", h.deleteRequest)
 
