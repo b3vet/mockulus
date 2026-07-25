@@ -75,7 +75,24 @@ func StartWireMock(ctx context.Context, versionFile string) (*WireMock, error) {
 		Addr:      "http://" + hostPort,
 		Version:   image,
 		container: name,
-		client:    &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			// Never reuse a connection to the oracle. Jetty memoizes the parsed
+			// cookies of a connection's previous request and treats a new Cookie
+			// header that differs only by case as the same header, so a pooled
+			// connection answers one step with the cookies of the step before
+			// it. Verified against 3.13.2 with a cookies.session equalTo
+			// "abc123" stub: on one reused connection `session=abc123` then
+			// `SESSION=ABC123` both match, and those same two requests in the
+			// opposite order both miss — the answer depends on what the
+			// connection saw earlier, which no matching rule can produce.
+			//
+			// That is oracle-side connection state, not WireMock's cookie
+			// semantics, and diffing mockulus against it manufactures failures
+			// (and could just as easily manufacture agreement). A fresh
+			// connection per request is free at corpus scale.
+			Transport: &http.Transport{DisableKeepAlives: true},
+		},
 	}
 	if err := wm.waitReady(ctx); err != nil {
 		_ = wm.Stop()
@@ -188,7 +205,10 @@ func Normalize(resp *http.Response, body []byte) *NormalizedResponse {
 // must be present and equal in ours, and additive fields on either side are
 // ignored. That is what lets mockulus carry catalogued extras on /__admin/health
 // and /__admin/version without those counting as compatibility diffs.
-func DiffResponses(theirs, ours *NormalizedResponse, ignore []string) []string {
+// mockPort tells the body rules which listener answered, because the one
+// documented whole-body difference — the unmatched-request 404 — exists only on
+// the mock port.
+func DiffResponses(theirs, ours *NormalizedResponse, ignore []string, mockPort bool) []string {
 	var diffs []string
 
 	if theirs.Status != ours.Status {
@@ -206,16 +226,29 @@ func DiffResponses(theirs, ours *NormalizedResponse, ignore []string) []string {
 		}
 	}
 
-	diffs = append(diffs, diffBodies(theirs.Body, ours.Body, ignore)...)
+	diffs = append(diffs, diffBodies(theirs, ours, ignore, mockPort)...)
 	return diffs
 }
 
-func diffBodies(theirs, ours []byte, ignore []string) []string {
+func diffBodies(theirs, ours *NormalizedResponse, ignore []string, mockPort bool) []string {
 	for _, entry := range ignore {
 		if entry == IgnoreWholeBody {
 			return nil
 		}
+		if entry == IgnoreUnmatchedBody && mockPort &&
+			theirs.Status == http.StatusNotFound && ours.Status == http.StatusNotFound {
+			return nil
+		}
+		if entry == CompareListingByIdentity {
+			if diffs, isListing := diffListings(theirs.Body, ours.Body); isListing {
+				return diffs
+			}
+		}
 	}
+	return diffBodyBytes(theirs.Body, ours.Body, ignore)
+}
+
+func diffBodyBytes(theirs, ours []byte, ignore []string) []string {
 	var theirDoc, ourDoc any
 	theirJSON := json.Unmarshal(theirs, &theirDoc) == nil
 	ourJSON := json.Unmarshal(ours, &ourDoc) == nil
@@ -238,12 +271,161 @@ func diffBodies(theirs, ours []byte, ignore []string) []string {
 	return nil
 }
 
-// IgnoreWholeBody is the wm_ignore entry that skips body comparison entirely,
-// for a case whose body difference is itself a documented deviation — the
-// unmatched-request diagnostics, where WireMock renders a near-miss table and
-// mockulus deliberately does not (deviation #2). Status and headers are still
-// compared, so the case still proves the parts that are compatible.
+// IgnoreUnmatchedBody skips body comparison on the mock port's unmatched 404,
+// and only there.
+//
+// That 404 is the one body mockulus deliberately does not reproduce: WireMock
+// renders a near-miss table into it and mockulus does not, because scoring near
+// misses on the request path would put diagnostic work in front of every
+// unmatched request (deviation #2).
+//
+// It exists because the blunt instrument was being used for this: almost every
+// matcher case contains a deliberately non-matching step, so declaring $body
+// turned off body comparison for the case's *matching* steps too — and the
+// response body of a matching stub is exactly what compatibility means. This
+// entry gives up only the 404 body, on the one listener where the deviation
+// applies, and leaves every 200 body being compared.
+const IgnoreUnmatchedBody = "$unmatched-body"
+
+// IgnoreWholeBody skips body comparison for every step of a case.
+//
+// Reach for it only when the difference is not confined to the unmatched 404 —
+// otherwise use IgnoreUnmatchedBody, which keeps the matched bodies under
+// comparison. Status and headers are still compared either way.
 const IgnoreWholeBody = "$body"
+
+// CompareListingByIdentity compares a deployment-global listing entry by entry
+// instead of position by position.
+//
+// The admin listings are collections of the whole deployment. The oracle is
+// reset before each case and so holds only that case's stubs, while corpus cases
+// share one mockulus instance and so see every case's — ours is a superset of
+// theirs, and neither the ordering nor `meta.total` can agree. That is a
+// property of the harness, not a compatibility difference: pointed at a fresh
+// instance the two servers return the same listing byte for byte.
+//
+// So this does not give the body up. Every entry WireMock listed must still be
+// in our listing, matched by id and compared in full, and the rest of the
+// envelope is compared as usual — only the collection's order and size stop
+// being claims. It applies solely to a response actually shaped like a listing
+// envelope, so declaring it cannot quietly weaken a case's other steps.
+const CompareListingByIdentity = "$global-listing"
+
+// diffListings compares two collection envelopes by identity. isListing is false
+// when WireMock's body is not one, which leaves the ordinary body rules to run.
+func diffListings(theirs, ours []byte) (diffs []string, isListing bool) {
+	var theirDoc, ourDoc map[string]any
+	if json.Unmarshal(theirs, &theirDoc) != nil || json.Unmarshal(ours, &ourDoc) != nil {
+		return nil, false
+	}
+	collection, wanted, ok := collectionOf(theirDoc)
+	if !ok {
+		return nil, false
+	}
+	got, ok := ourDoc[collection].([]any)
+	if !ok {
+		return []string{fmt.Sprintf("body: WireMock returned a %s listing, mockulus did not",
+			collection)}, true
+	}
+
+	for _, want := range wanted {
+		if err := findListed(want, got); err != nil {
+			diffs = append(diffs, "body: "+err.Error())
+		}
+	}
+	if err := jsonSubset(withoutCollection(theirDoc, collection),
+		withoutCollection(ourDoc, collection), "$"); err != nil {
+		diffs = append(diffs, "body: "+err.Error())
+	}
+	return diffs, true
+}
+
+// collectionOf recognises WireMock's listing envelope — one array-valued field
+// alongside {"meta":{"total":n}} — and returns the collection.
+//
+// Requiring the counter keeps the recognition tight. An admin error body carries
+// an `errors` array and no meta, so it is not a listing and stays under the
+// ordinary comparison.
+func collectionOf(doc map[string]any) (name string, items []any, ok bool) {
+	meta, isEnvelope := doc["meta"].(map[string]any)
+	if !isEnvelope {
+		return "", nil, false
+	}
+	if _, counted := meta["total"]; !counted {
+		return "", nil, false
+	}
+	for field, value := range doc {
+		arr, isArray := value.([]any)
+		if !isArray {
+			continue
+		}
+		if name != "" {
+			// Two collections in one envelope is a shape nothing serves today,
+			// and guessing which one is "the" listing would be the wrong call.
+			return "", nil, false
+		}
+		name, items = field, arr
+	}
+	if name == "" {
+		return "", nil, false
+	}
+	return name, items, true
+}
+
+// withoutCollection drops the two things a shared instance cannot match — the
+// collection and its size — and leaves the rest of the envelope to be compared.
+// `meta` itself survives, so a listing that stopped carrying one is still a diff.
+func withoutCollection(doc map[string]any, collection string) map[string]any {
+	out := make(map[string]any, len(doc))
+	for field, value := range doc {
+		if field == collection {
+			continue
+		}
+		out[field] = value
+	}
+	if meta, ok := out["meta"].(map[string]any); ok {
+		counted := make(map[string]any, len(meta))
+		for field, value := range meta {
+			if field == "total" {
+				continue
+			}
+			counted[field] = value
+		}
+		out["meta"] = counted
+	}
+	return out
+}
+
+// findListed locates our copy of one of WireMock's entries.
+//
+// Entries are matched on their id so that a disagreement about a stub both
+// servers listed is reported as a difference in that stub, rather than as its
+// absence — which is the diff a reader can act on.
+func findListed(want any, got []any) error {
+	entry, _ := want.(map[string]any)
+	id, identified := entry["id"].(string)
+	if !identified {
+		for _, candidate := range got {
+			if jsonSubset(want, candidate, "$") == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("WireMock listed %s, mockulus's listing has no matching entry",
+			compactJSON(want))
+	}
+
+	for _, candidate := range got {
+		c, isObject := candidate.(map[string]any)
+		if !isObject || c["id"] != id {
+			continue
+		}
+		if err := jsonSubset(want, c, "$"); err != nil {
+			return fmt.Errorf("listed entry %s: %s", id, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("WireMock listed entry %s, mockulus's listing does not contain it", id)
+}
 
 // stripIgnored removes the declared identity fields from WireMock's document
 // before the subset check, so they are neither required nor compared.
