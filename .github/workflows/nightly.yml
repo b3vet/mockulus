@@ -1,0 +1,104 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The nightly pipeline of SPEC §19.5. Perf and fuzz failures block a release
+# but not a merge: they are statistical and environment-sensitive, so a
+# regression here opens an issue rather than flaking every PR.
+
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  perf:
+    name: full perf suite (S1–S10)
+    # Self-hosted perf runners never execute fork code (SPEC §22.4); the
+    # schedule and dispatch triggers cannot come from a fork.
+    runs-on: ${{ vars.PERF_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: grafana/setup-k6-action@v1
+
+      - name: build
+        run: go build -trimpath -ldflags "-s -w -X main.version=nightly" -o bin/mockulus ./cmd/mockulus
+
+      - name: S1 — baseline throughput and latency
+        run: |
+          MOCKULUS_LOG_LEVEL=warn ./bin/mockulus &
+          for i in $(seq 1 30); do curl -sf localhost:9090/readyz >/dev/null && break; sleep 1; done
+          k6 run -e MODE=latency -e RATE=20000 -e DURATION=60s test/load/s1.js
+          k6 run -e MODE=throughput test/load/s1.js
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-results
+          path: test/load/.results/
+          if-no-files-found: ignore
+
+  soak:
+    name: S8 — one-hour soak and leak gate
+    runs-on: ${{ vars.PERF_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: grafana/setup-k6-action@v1
+      - name: soak
+        run: |
+          go build -o bin/mockulus ./cmd/mockulus
+          MOCKULUS_LOG_LEVEL=warn ./bin/mockulus &
+          for i in $(seq 1 30); do curl -sf localhost:9090/readyz >/dev/null && break; sleep 1; done
+          k6 run --no-thresholds -e MODE=latency -e RATE=10000 -e DURATION=60m test/load/s1.js &
+          k6pid=$!
+          # RSS must not grow across the run: this is the leak gate.
+          start=$(curl -s localhost:9090/metrics | awk '/^process_resident_memory_bytes/ {print $2}')
+          wait $k6pid
+          end=$(curl -s localhost:9090/metrics | awk '/^process_resident_memory_bytes/ {print $2}')
+          echo "RSS start=$start end=$end"
+          awk -v s="$start" -v e="$end" 'BEGIN { if (e > s * 1.25) { print "RSS grew more than 25% over the soak"; exit 1 } }'
+
+  fuzz:
+    name: fuzzers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: fuzz the parsers
+        run: |
+          for pkg in ./internal/stub ./internal/config ./internal/match; do
+            for target in $(go test "$pkg" -list 'Fuzz.*' 2>/dev/null | grep '^Fuzz' || true); do
+              echo "== $pkg $target"
+              go test "$pkg" -run "^$target$" -fuzz "^$target$" -fuzztime=5m
+            done
+          done
+
+  vuln:
+    name: vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...

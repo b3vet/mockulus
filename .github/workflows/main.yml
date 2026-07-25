@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The merge-to-main pipeline of SPEC §19.5: the full corpus re-run against the
+# uninstrumented shippable image, plus the topologies a PR does not pay for.
+
+name: main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  e2e-shippable:
+    name: e2e on the shippable image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Not the instrumented build: the artifact that would ship is the one
+      # re-gated here.
+      - run: go build -trimpath -o bin/mockulus ./cmd/mockulus
+      - run: go run ./test/e2e/runner --binary bin/mockulus --parallel 16
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-shippable-artifacts
+          path: test/e2e/.artifacts/
+
+  kind:
+    name: T4 — kind and Helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build the image
+        run: docker build --build-arg VERSION=main-${{ github.sha }} -t mockulus:ci .
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: mockulus-ci
+
+      - name: load and install
+        run: |
+          kind load docker-image mockulus:ci --name mockulus-ci
+          helm install mockulus deploy/chart \
+            --set image.repository=mockulus \
+            --set image.tag=ci \
+            --set image.pullPolicy=Never \
+            --set replicaCount=3 \
+            --wait --timeout 180s
+
+      - name: probes, ports and serving across replicas
+        run: ./scripts/kind-smoke.sh
+
+      - name: the hardened preset installs and keeps the admin API off the mock port
+        run: |
+          kubectl create secret generic mockulus-admin-token --from-literal=token=ci-token
+          helm install mockulus-hardened deploy/chart \
+            -f deploy/chart/values-hardened.yaml \
+            --set image.repository=mockulus \
+            --set image.tag=ci \
+            --set image.pullPolicy=Never \
+            --set adminAuth.existingSecret=mockulus-admin-token \
+            --wait --timeout 180s
+          kubectl run hardened-check --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet -- \
+            sh -c 'curl -s -o /dev/null -w "%{http_code}" http://mockulus-hardened:8080/__admin/health' \
+            | grep -q 404
+
+      - name: no 5xx during a rolling restart
+        run: ./scripts/kind-rollout.sh
+
+      - name: diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe pods -l app.kubernetes.io/name=mockulus
+          kubectl logs -l app.kubernetes.io/name=mockulus --tail=200 --all-containers
+
+  perf-smoke:
+    name: perf liveness smoke (S1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: grafana/setup-k6-action@v1
+
+      # A sanity check that it still serves under load, not an SLO gate: the
+      # hosted runner is not the reference rig, so thresholds are not enforced
+      # here. The nightly job owns the SLOs.
+      - name: short S1 run
+        run: |
+          go build -o bin/mockulus ./cmd/mockulus
+          MOCKULUS_LOG_LEVEL=warn ./bin/mockulus &
+          for i in $(seq 1 30); do curl -sf localhost:9090/readyz >/dev/null && break; sleep 1; done
+          k6 run --no-thresholds -e MODE=latency -e RATE=5000 -e DURATION=20s test/load/s1.js

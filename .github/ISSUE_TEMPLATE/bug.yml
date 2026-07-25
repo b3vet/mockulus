@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Bug report
+description: Something is broken that is not a WireMock compatibility difference
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: mockulus version
+      placeholder: "0.3.1, or the image digest"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: store
+    attributes:
+      label: Store driver
+      options: [memory, couchbase, file, "not sure"]
+    validations:
+      required: true
+
+  - type: input
+    id: replicas
+    attributes:
+      label: Replica count
+      placeholder: "1, 3, autoscaling 2-10"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest sequence of admin calls and requests that shows it.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and metrics
+      description: |
+        Relevant log lines, and anything odd in /metrics — the snapshot,
+        store and journal counters are usually the informative ones.
+
+        Redact anything sensitive: stub bodies can carry real credentials.
+      render: text

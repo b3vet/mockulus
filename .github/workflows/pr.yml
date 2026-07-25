@@ -1,0 +1,178 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The PR pipeline of SPEC §19.5. Every stage here is required to merge, and the
+# E2E gate is the one that matters: no artifact ships without it.
+#
+# This pipeline needs no secrets, by design, so it runs for fork PRs on hosted
+# runners (SPEC §22.4).
+
+name: pr
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: SPDX headers
+        run: make spdx
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^internal/handlebars/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      - name: spec and code agree
+        # The §13 table is generated from the config struct; drift fails here
+        # rather than being discovered by a reader.
+        run: go test ./internal/config -run TestSpecConfigTable
+
+  unit:
+    name: unit + race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - run: go test -race -count=1 ./...
+
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: every commit is signed off
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          missing=0
+          while read -r sha; do
+            if ! git log -1 --format=%B "$sha" | grep -qi '^Signed-off-by: .\+ <.\+@.\+>'; then
+              echo "missing Signed-off-by: $(git log -1 --oneline "$sha")"
+              missing=1
+            fi
+          done < <(git rev-list "$base..$head")
+          if [ "$missing" -ne 0 ]; then
+            echo; echo "Sign your commits with: git commit -s"; exit 1
+          fi
+
+  license:
+    name: license gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: install go-licenses
+        run: go install github.com/google/go-licenses@latest
+      - name: every dependency is on the allowlist
+        # Copyleft is denied for the shipped binary's module graph with no
+        # exceptions (SPEC §22.1).
+        run: |
+          go-licenses check ./cmd/... ./internal/... \
+            --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC
+      - name: regenerate the module-derived attributions
+        run: |
+          go-licenses report ./cmd/mockulus \
+            --template=.github/licenses.tpl > /tmp/third-party.txt || true
+          cat /tmp/third-party.txt
+
+  e2e:
+    name: e2e gate (T1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Coverage is collected from the instrumented build; the shippable image
+      # is smoke-booted separately so nothing ships ungated.
+      - name: build instrumented mockulus
+        run: go build -cover -covermode=atomic -o bin/mockulus-cover ./cmd/mockulus
+
+      - name: run the gate
+        env:
+          GOCOVERDIR: ${{ github.workspace }}/.coverdata
+        run: |
+          mkdir -p "$GOCOVERDIR"
+          go run ./test/e2e/runner \
+            --binary bin/mockulus-cover \
+            --corpus test/e2e/corpus \
+            --catalog test/e2e/catalog \
+            --parallel 16
+
+      - name: coverage floor
+        env:
+          GOCOVERDIR: ${{ github.workspace }}/.coverdata
+        run: ./scripts/coverage-floor.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-artifacts
+          path: test/e2e/.artifacts/
+          if-no-files-found: warn
+
+  image:
+    name: image + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build the shippable image
+        run: docker build --build-arg VERSION=pr-${{ github.sha }} -t mockulus:pr .
+
+      - name: boot, serve, admin
+        # The ~20-case shippable-image smoke of SPEC §19.5: prove the artifact
+        # that would actually ship starts and serves.
+        run: |
+          docker run -d --name mockulus-smoke -p 18080:8080 -p 19090:9090 mockulus:pr
+          for i in $(seq 1 60); do
+            if curl -sf localhost:19090/readyz >/dev/null; then break; fi
+            sleep 1
+          done
+          set -e
+          curl -sf localhost:19090/healthz >/dev/null
+          curl -sf localhost:19090/readyz  >/dev/null
+          curl -sf localhost:18080/__admin/health | grep -q '"status":"healthy"'
+          curl -sf -X POST localhost:18080/__admin/mappings \
+            -H 'Content-Type: application/json' \
+            -d '{"request":{"method":"GET","urlPath":"/smoke"},"response":{"status":200,"body":"ok"}}' >/dev/null
+          test "$(curl -s localhost:18080/smoke)" = "ok"
+          curl -s localhost:19090/metrics | grep -q '^mockulus_build_info'
+          docker rm -f mockulus-smoke
