@@ -1,0 +1,146 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-metadata-untagged-006
+behaviors:
+  - B-DEV-DEVIATION-20
+  - B-ADMIN-MAPPINGS-FIND-BY-METADATA-POST
+  - B-ADMIN-MAPPINGS-REMOVE-BY-METADATA-POST
+# n/a by construction: this is deviation #20. WireMock serializes a stub's
+# absent metadata to the literal null and matches against that, so the searches
+# below would find — and the removal would delete — every untagged stub in the
+# deployment. There is no WireMock answer to diff against, only one to differ
+# from.
+wm: n/a
+steps:
+  # An untagged stub: no metadata key at all, the shape most stubs have.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0006-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-metadata-untagged-006/untagged"},
+         "response": {"status": 200, "body": "untagged"}}
+    expect: {status: 201}
+
+  # The same stub with its untaggedness spelled out. This is what a document
+  # round-tripped through WireMock looks like — WireMock serializes absent
+  # metadata as `null` and takes it back — so a suite that reads its mappings
+  # from one server and replays them into the other sends exactly this. An
+  # explicit null is the absence it spells: treating it as metadata the stub
+  # *has* would make this stub reachable by a broad cleanup matcher while its
+  # identical neighbour above stayed safe, and the guarantee would hold only for
+  # stubs that happened to be written by hand.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0006-0000-4000-8000-000000000003",
+         "metadata": null,
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-metadata-untagged-006/null-metadata"},
+         "response": {"status": 200, "body": "null-metadata"}}
+    expect: {status: 201}
+
+  # The field still round-trips as written: this is a matching rule, not a
+  # rewrite of the client's document (SPEC §6.1).
+  - admin: {method: GET, path: /__admin/mappings/ffff0006-0000-4000-8000-000000000003}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "ffff0006-0000-4000-8000-000000000003"
+        metadata: null
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0006-0000-4000-8000-000000000002",
+         "metadata": {"suite": "admin-bulk-metadata-untagged-006"},
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-metadata-untagged-006/tagged"},
+         "response": {"status": 200, "body": "tagged"}}
+    expect: {status: 201}
+
+  # The matcher that asks for exactly what WireMock stores for an untagged stub.
+  # Under WireMock this selects every stub in the deployment that nobody tagged;
+  # here it selects nothing at all, deployment-wide, because a stub with no
+  # metadata is not a candidate. The total is 0 rather than "0 of mine", which
+  # is the whole safety property: no matcher can reach an untagged stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"absent": true}
+    expect:
+      status: 200
+      body_json: {mappings: [], meta: {total: 0}}
+
+  # Broadened: absent-or-mine. The untagged stub stays invisible even when the
+  # matcher explicitly asks for absence alongside a tag that does match.
+  #
+  # The matcher is deliberately an `or` over `absent` rather than the blunter
+  # {"matches": ".*"}: the broad form would sweep up every *tagged* stub in this
+  # shared deployment, which is the hazard §5.5 deviation 20 is written about.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"or": [{"absent": true},
+                {"equalToJson": "{\"suite\":\"admin-bulk-metadata-untagged-006\"}"}]}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "ffff0006-0000-4000-8000-000000000002"
+        meta: {total: 1}
+
+  # A string matcher over the serialized metadata document. `{"contains":"null"}`
+  # is the shape a cleanup matcher takes when someone reasons about what an
+  # untagged stub "looks like" — under a naive implementation it reaches the
+  # null-metadata stub and nothing else, which is the worst possible outcome:
+  # the deletion looks targeted and is not.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"contains": "null"}
+    expect:
+      status: 200
+      body_json: {mappings: [], meta: {total: 0}}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings/remove-by-metadata
+      body: |
+        {"or": [{"absent": true},
+                {"equalToJson": "{\"suite\":\"admin-bulk-metadata-untagged-006\"}"}]}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "ffff0006-0000-4000-8000-000000000002"
+        meta: {total: 1}
+
+  # The deviation, stated as an outcome: the untagged stub survived a cleanup
+  # call that names its exact WireMock representation. Under WireMock this
+  # request would have deleted it — and every other untagged stub sharing the
+  # deployment with it.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-metadata-untagged-006/untagged}
+    expect: {status: 200, body: "untagged"}
+
+  - admin: {method: GET, path: /__admin/mappings/ffff0006-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset: {id: "ffff0006-0000-4000-8000-000000000001"}
+
+  # And so did the one that said so out loud. The two stubs describe the same
+  # thing, so a guarantee that covered only one of them would not be a guarantee.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-metadata-untagged-006/null-metadata}
+    expect: {status: 200, body: "null-metadata"}
+
+  - admin: {method: GET, path: /__admin/mappings/ffff0006-0000-4000-8000-000000000003}
+    expect:
+      status: 200
+      body_json_subset: {id: "ffff0006-0000-4000-8000-000000000003"}
+
+  # The tagged stub really was removed, so the survival above is the metadata
+  # rule and not a removal that failed to do anything.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-metadata-untagged-006/tagged}
+    expect: {status: 404}

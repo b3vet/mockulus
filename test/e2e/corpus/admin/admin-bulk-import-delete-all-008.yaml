@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-import-delete-all-008
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+# deleteAllNotInImport removes every stub whose id is absent from the payload —
+# deployment-wide, not namespace-wide. There is no way to exercise it without
+# destroying the stubs of every case sharing the instance, so it runs serially
+# after them.
+requires: [exclusive]
+# n/a: the final step asserts a deployment-wide stub count, which only holds on
+# an instance this case owns; the WireMock oracle is shared differently.
+wm: n/a
+steps:
+  # A stub that the import below will not mention. It stands in for every other
+  # suite's mappings on a shared deployment.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0008-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-delete-all-008/outsider"},
+         "response": {"status": 200, "body": "outsider"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-delete-all-008/outsider}
+    expect: {status: 200, body: "outsider"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "ffff0008-0000-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-delete-all-008/imported"},
+            "response": {"status": 200, "body": "imported"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": true}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-delete-all-008/imported}
+    expect: {status: 200, body: "imported"}
+
+  # Everything outside the payload is gone: the flag makes the import declare
+  # the complete desired state, not a delta.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-delete-all-008/outsider}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/ffff0008-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # The scope is the deployment, which is why this case has to be exclusive:
+  # exactly the one imported stub is left standing anywhere.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "ffff0008-0000-4000-8000-000000000002"
+        meta: {total: 1}

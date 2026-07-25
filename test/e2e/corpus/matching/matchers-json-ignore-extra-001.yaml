@@ -1,0 +1,222 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-ignore-extra-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Same operand registered twice, once relaxed and once strict, so every
+  # assertion below has its own control on the other path.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0003-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-ignore-extra-001/relaxed",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1,\"o\":{\"b\":2}}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "relaxed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0003-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-ignore-extra-001/strict",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1,\"o\":{\"b\":2}}"}]},
+         "response": {"status": 200, "body": "strict",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # An unexpected member at the root is ignored.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/relaxed
+      body: '{"a":1,"o":{"b":2},"extra":"ignored"}'
+    expect: {status: 200, body: "relaxed"}
+
+  # The relaxation applies at every depth, not only at the root — a nested
+  # object may carry members the expected document never mentions.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/relaxed
+      body: '{"a":1,"o":{"b":2,"deep":{"x":1}}}'
+    expect: {status: 200, body: "relaxed"}
+
+  # "Extra is fine" is not "anything is fine": every expected member is still
+  # required, at the root...
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/relaxed
+      body: '{"o":{"b":2},"extra":1}'
+    expect: {status: 404}
+
+  # ...and at depth, and every expected value must still be equal.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/relaxed
+      body: '{"a":1,"o":{"c":2}}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/relaxed
+      body: '{"a":2,"o":{"b":2}}'
+    expect: {status: 404}
+
+  # The control: without the flag the very same body is a mismatch, which is
+  # what makes the flag observable rather than decorative.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/strict
+      body: '{"a":1,"o":{"b":2},"extra":"ignored"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/strict
+      body: '{"a":1,"o":{"b":2}}'
+    expect: {status: 200, body: "strict"}
+
+  # The flag relaxes arrays as well as objects, and for the same reason: an
+  # element the expected document never accounted for is ignored. Positional
+  # comparison puts those elements at the tail.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0003-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-ignore-extra-001/array",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,2]}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "array",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/array
+      body: '{"xs":[1,2],"extra":true}'
+    expect: {status: 200, body: "array"}
+
+  # An element past the end of the expected array is one of those unaccounted
+  # elements, so it is ignored too.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/array
+      body: '{"xs":[1,2,3]}'
+    expect: {status: 200, body: "array"}
+
+  # Ignored where they fall, though, not wherever they would help: the expected
+  # elements still have to be the leading ones, in the order given. The same
+  # three elements shifted by one are a mismatch.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/array
+      body: '{"xs":[2,1,3]}'
+    expect: {status: 404}
+
+  # The relaxation only ever forgives elements that are there and unwanted, so a
+  # shorter array is still short of an expected element.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/array
+      body: '{"xs":[1]}'
+    expect: {status: 404}
+
+  # With ignoreArrayOrder as well, positions stop mattering and what is left is
+  # a subset test: every expected element must find its own actual element and
+  # the unclaimed ones are ignored.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0003-0000-4000-8000-000000000005",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-ignore-extra-001/unordered",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,2]}",
+                                       "ignoreArrayOrder": true,
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "unordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/unordered
+      body: '{"xs":[3,2,1]}'
+    expect: {status: 200, body: "unordered"}
+
+  # The shifted array the ordered stub refused above matches here, which is what
+  # separates the two flags: one gives up the positions, the other the count.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/unordered
+      body: '{"xs":[2,1,9]}'
+    expect: {status: 200, body: "unordered"}
+
+  # Neither flag gives up the pairing: an actual element answers one expected
+  # element, so an array too short to go round is still a mismatch.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/unordered
+      body: '{"xs":[1]}'
+    expect: {status: 404}
+
+  # Which makes the relaxed comparison a multiset test rather than a set test:
+  # two expected 1s need two actual 1s, however many other elements arrive.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0003-0000-4000-8000-000000000006",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-ignore-extra-001/duplicates",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,1]}",
+                                       "ignoreArrayOrder": true,
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "duplicates",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/duplicates
+      body: '{"xs":[1,2,3]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/duplicates
+      body: '{"xs":[1,1,2]}'
+    expect: {status: 200, body: "duplicates"}
+
+  # ignoreExtraElements and ${json-unit.ignore-element} both make a document
+  # more permissive, and they do it on opposite sides: the flag forgives members
+  # the expected document never named, the placeholder forgives a named member
+  # that is not there. This stub carries both to show they are independent.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0003-0000-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-ignore-extra-001/both",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1,\"opt\":\"${json-unit.ignore-element}\"}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "both",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The optional member absent and an unnamed member present at the same time.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/both
+      body: '{"a":1,"unexpected":true}'
+    expect: {status: 200, body: "both"}
+
+  # Neither relaxation reaches the required member.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-ignore-extra-001/both
+      body: '{"opt":9,"unexpected":true}'
+    expect: {status: 404}

@@ -1,0 +1,252 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-java-syntax-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18): WireMock renders a
+# near-miss table on a 404 and mockulus does not. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Stub patterns are Java patterns. Each pair below is a construct whose Java
+  # meaning is not the meaning RE2 or .NET would give it, so each carries a
+  # subject that matches and a subject that only matches under the wrong
+  # reading — a stub built on the wrong reading answers these two backwards.
+
+  # `\h` is horizontal whitespace in Java and a literal 'h' to .NET.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/h",
+                     "bodyPatterns": [{"matches": "\\h+"}]},
+         "response": {"status": 200, "body": "h"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/h, body: " \t"}
+    expect: {status: 200, body: "h"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/h, body: "hh"}
+    expect: {status: 404}
+
+  # `\v` is a vertical-whitespace class in Java 8 and later; to .NET and to RE2
+  # it is the single vertical-tab character, so a newline distinguishes them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/v",
+                     "bodyPatterns": [{"matches": "\\v"}]},
+         "response": {"status": 200, "body": "v"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/v, body: "\n"}
+    expect: {status: 200, body: "v"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/v, body: "v"}
+    expect: {status: 404}
+
+  # `\R` is any line break, including the CRLF pair as a single unit.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/r",
+                     "bodyPatterns": [{"matches": "a\\Rb"}]},
+         "response": {"status": 200, "body": "r"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/r, body: "a\r\nb"}
+    expect: {status: 200, body: "r"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/r, body: "aRb"}
+    expect: {status: 404}
+
+  # Java's POSIX classes are US-ASCII whatever the subject's alphabet: RE2
+  # accepts the name `Digit` and reads it as the Unicode decimal-digit category,
+  # which would take an Arabic-Indic digit this stub must refuse.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/digit",
+                     "bodyPatterns": [{"matches": "\\p{Digit}+"}]},
+         "response": {"status": 200, "body": "digit"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/digit, body: "123"}
+    expect: {status: 200, body: "digit"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/digit, body: "٣"}
+    expect: {status: 404}
+
+  # `\p{Punct}` is the same story in the other direction: Java's is the 32 ASCII
+  # punctuation characters, which includes `~` and excludes an em dash, where
+  # RE2's Unicode reading has it exactly the other way round.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000005",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/punct",
+                     "bodyPatterns": [{"matches": "\\p{Punct}+"}]},
+         "response": {"status": 200, "body": "punct"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/punct, body: "$+<=>^`|~"}
+    expect: {status: 200, body: "punct"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/punct, body: "—"}
+    expect: {status: 404}
+
+  # `\p{Alpha}` is a name neither engine has a table for at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000006",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/alpha",
+                     "bodyPatterns": [{"matches": "[\\p{Alpha}_]+"}]},
+         "response": {"status": 200, "body": "alpha"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/alpha, body: "aZ_"}
+    expect: {status: 200, body: "alpha"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/alpha, body: "é"}
+    expect: {status: 404}
+
+  # Java spells a Unicode script `\p{IsLatin}`; both engines spell it without
+  # the prefix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000007",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/script",
+                     "bodyPatterns": [{"matches": "\\p{IsLatin}+"}]},
+         "response": {"status": 200, "body": "script"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/script, body: "café"}
+    expect: {status: 200, body: "script"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/script, body: "αβγ"}
+    expect: {status: 404}
+
+  # A possessive quantifier: SPEC §6.6 step 2 names it as one of the three
+  # constructs the fallback engine exists to absorb. `.NET` spells the same idea
+  # as an atomic group, and the third subject is what makes it possessive rather
+  # than merely greedy — the run of a's may not be given back to let `a` match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000008",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/possessive",
+                     "bodyPatterns": [{"matches": "a++b"}]},
+         "response": {"status": 200, "body": "possessive"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/possessive, body: "aab"}
+    expect: {status: 200, body: "possessive"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/possessive, body: "ab"}
+    expect: {status: 200, body: "possessive"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/possessive, body: "b"}
+    expect: {status: 404}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-000000000009",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/atomic",
+                     "bodyPatterns": [{"matches": "a++a"}]},
+         "response": {"status": 200, "body": "atomic"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/atomic, body: "aa"}
+    expect: {status: 404}
+
+  # And the constructs that look like the ones above but are not: a quote block
+  # is literal text, so the `++` inside it is two plus signs and not a
+  # quantifier, and an escaped backslash before an h is not `\h`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-00000000000a",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/quoted",
+                     "bodyPatterns": [{"matches": "\\Qa++b\\E"}]},
+         "response": {"status": 200, "body": "quoted"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quoted, body: "a++b"}
+    expect: {status: 200, body: "quoted"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quoted, body: "aab"}
+    expect: {status: 404}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-00000000000b",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/literal",
+                     "bodyPatterns": [{"matches": "a\\++b"}]},
+         "response": {"status": 200, "body": "literal"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/literal, body: "a++b"}
+    expect: {status: 200, body: "literal"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/literal, body: "ab"}
+    expect: {status: 404}
+
+  # A quote block inside a character class contributes its characters as
+  # members. RE2 does not read quote blocks inside a class at all, so it takes
+  # the dash for a range and the class comes out as every letter a to z.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-00000000000c",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/quotedclass",
+                     "bodyPatterns": [{"matches": "[\\Qa-z\\E]+"}]},
+         "response": {"status": 200, "body": "quotedclass"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quotedclass, body: "a-z"}
+    expect: {status: 200, body: "quotedclass"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quotedclass, body: "b"}
+    expect: {status: 404}
+
+  # A quantifier after a quote block applies to the block's last character,
+  # which is the whole reason the block has to be resolved into characters.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-00000000000d",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/quotedquant",
+                     "bodyPatterns": [{"matches": "\\Qab\\E++"}]},
+         "response": {"status": 200, "body": "quotedquant"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quotedquant, body: "abb"}
+    expect: {status: 200, body: "quotedquant"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quotedquant, body: "abab"}
+    expect: {status: 404}
+
+  # A quote block next to a construct only the fallback engine accepts: that
+  # engine has no `\Q` at all, so a block left as written matches nothing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-00000000000e",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/quotedfallback",
+                     "bodyPatterns": [{"matches": "x\\Qa+\\E(?=b)b"}]},
+         "response": {"status": 200, "body": "quotedfallback"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quotedfallback, body: "xa+b"}
+    expect: {status: 200, body: "quotedfallback"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/quotedfallback, body: "xab"}
+    expect: {status: 404}
+
+  # Java's octal escape takes up to three digits after the 0; RE2 reads only
+  # two, so `\0101` is 'A' to one engine and a backspace followed by '1' to the
+  # other — the two subjects below are exactly those two readings.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110009-0000-4000-8000-00000000000f",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-java-syntax-001/octal",
+                     "bodyPatterns": [{"matches": "\\0101"}]},
+         "response": {"status": 200, "body": "octal"}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/octal, body: "A"}
+    expect: {status: 200, body: "octal"}
+  - request: {port: mock, method: POST, path: /e2e/regex-java-syntax-001/octal, body: "\b1"}
+    expect: {status: 404}

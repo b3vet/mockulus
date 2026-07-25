@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-bodypatterns-001
+behaviors: [B-REQ-BODYPATTERNS, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa000a-0000-4000-8000-000000000001",
+         "name": "three body patterns, all required",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-bodypatterns-001/all",
+                     "bodyPatterns": [{"contains": "alpha"},
+                                      {"doesNotContain": "beta"},
+                                      {"matches": "[a-z ]+"}]},
+         "response": {"status": 200, "body": "all",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa000a-0000-4000-8000-000000000002",
+         "name": "the first pattern alone, as a control",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-bodypatterns-001/first-only",
+                     "bodyPatterns": [{"contains": "alpha"}]},
+         "response": {"status": 200, "body": "first-only",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # All three patterns hold.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-bodypatterns-001/all
+      body: "xx alpha xx"
+    expect: {status: 200, body: "all"}
+
+  # bodyPatterns is a conjunction, so each of the next three bodies is rejected
+  # by exactly one of the three patterns while satisfying the other two. Any
+  # implementation that ORed the list would answer 200 to all three.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-bodypatterns-001/all
+      body: "gamma"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-bodypatterns-001/all
+      body: "alpha and beta"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-bodypatterns-001/all
+      body: "alpha1"
+    expect: {status: 404}
+
+  # The control: the same two bodies against a stub carrying only the first
+  # pattern do match, which is what proves the 404s above came from the other
+  # patterns rather than from the bodies being unmatchable.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-bodypatterns-001/first-only
+      body: "alpha and beta"
+    expect: {status: 200, body: "first-only"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-bodypatterns-001/first-only
+      body: "alpha1"
+    expect: {status: 200, body: "first-only"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-bodypatterns-001/first-only
+      body: "gamma"
+    expect: {status: 404}

@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: unmatched-no-diagnostics-detail-003
+behaviors:
+  - B-DEV-DEVIATION-2
+  - B-CFG-DIAGNOSTICS-ON-UNMATCHED
+# n/a: every step here asserts the absence of WireMock's near-miss report, which
+# is the deviation itself — the oracle answers with a diff table by design.
+wm: n/a
+steps:
+  # A stub with four independent criteria, so the requests below can each miss
+  # by exactly one of them. Under WireMock every one of these would produce a
+  # different near-miss body naming the criterion that failed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "04040003-0000-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/unmatched-no-diagnostics-detail-003/orders",
+                     "queryParameters": {"tenant": {"equalTo": "acme"}},
+                     "headers": {"X-Api-Key": {"equalTo": "secret"}},
+                     "bodyPatterns": [{"equalToJson": "{\"sku\": \"A1\"}"}]},
+         "response": {"status": 201, "body": "created"}}
+    expect: {status: 201}
+
+  # Positive control: all four criteria satisfied.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/unmatched-no-diagnostics-detail-003/orders?tenant=acme
+      headers: {X-Api-Key: secret}
+      body: '{"sku": "A1"}'
+    expect: {status: 201, body: "created"}
+
+  # Miss on the method alone.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/unmatched-no-diagnostics-detail-003/orders?tenant=acme
+      headers: {X-Api-Key: secret}
+      body: '{"sku": "A1"}'
+    expect: {status: 404, body: "Request was not matched"}
+
+  # Miss on the query parameter alone.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/unmatched-no-diagnostics-detail-003/orders?tenant=other
+      headers: {X-Api-Key: secret}
+      body: '{"sku": "A1"}'
+    expect: {status: 404, body: "Request was not matched"}
+
+  # Miss on the header alone.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/unmatched-no-diagnostics-detail-003/orders?tenant=acme
+      body: '{"sku": "A1"}'
+    expect: {status: 404, body: "Request was not matched"}
+
+  # Miss on the body alone. The request body is not echoed back either: an
+  # unmatched request reveals nothing about what was sent, which matters when
+  # the caller's payload carries credentials.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/unmatched-no-diagnostics-detail-003/orders?tenant=acme
+      headers: {X-Api-Key: secret}
+      body: '{"sku": "ZZZZ-secret-payload"}'
+    expect: {status: 404, body: "Request was not matched"}
+
+  # Miss on everything: nothing in common with any stub.
+  #
+  # Taken together with the four steps above, this is the observable proof that
+  # no near-miss scoring runs on the request path. A distance-ranked report
+  # would have to differ between "one criterion away" and "nothing in common";
+  # mockulus returns the identical 23 bytes for all five, which is why the 404
+  # costs the same whether the snapshot holds one stub or ten thousand.
+  - request: {port: mock, method: GET, path: /e2e/unmatched-no-diagnostics-detail-003/nowhere-near}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body: "Request was not matched"
+
+  - admin: {method: DELETE, path: /__admin/mappings/04040003-0000-4000-8000-000000000001}
+    expect: {status: 200}

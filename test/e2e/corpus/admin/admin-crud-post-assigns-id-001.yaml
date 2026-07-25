@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-crud-post-assigns-id-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+wm: verified
+# Both servers mint a fresh UUID here, so the two values can never be equal.
+# The contract under test is that an id *is* assigned and echoed under both
+# spellings, not which one — so the identity fields are excluded from the
+# differential diff and pinned by shape below instead.
+wm_ignore: ["$.id", "$.uuid"]
+steps:
+  # A create with no id gets one from the server. The regex pins the canonical
+  # 36-character lower-case UUID form rather than "some string": a client that
+  # feeds the returned id straight back into /__admin/mappings/{id} depends on
+  # it being a real UUID, and mockulus rejects non-UUID ids on the way in.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/admin-crud-post-assigns-id-001/gen"},
+         "response": {"status": 200, "body": "assigned"}}
+    expect:
+      status: 201
+      body_regex: '"id":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"'
+
+  # uuid is the alias of id, so the same document carries it too.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/admin-crud-post-assigns-id-001/gen2"},
+         "response": {"status": 200, "body": "assigned too"}}
+    expect:
+      status: 201
+      body_regex: '"uuid":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"'
+
+  # An id the caller never chose is still a live stub: assignment happens on the
+  # write path, not only in the echoed document.
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-post-assigns-id-001/gen}
+    expect: {status: 200, body: "assigned"}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-crud-post-assigns-id-001/gen2}
+    expect: {status: 200, body: "assigned too"}

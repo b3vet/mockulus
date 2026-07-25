@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: unmatched-names-mockulus-002
+behaviors:
+  - B-DEV-DEVIATION-18
+  - B-DEV-DEVIATION-2
+# The empty-snapshot body is only observable on an instance holding no stubs at
+# all, and the only way to reach that state on a shared deployment is to empty
+# it for everyone. So this case owns the instance and runs after the concurrent
+# ones, the same bargain admin-bulk-import-delete-all-008 makes.
+requires: [exclusive]
+# n/a: the whole point is that mockulus names itself where WireMock names
+# WireMock, so the body cannot agree with the oracle by construction.
+wm: n/a
+steps:
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  # Deviation #18: WireMock says "...in this WireMock instance"; we say mockulus.
+  # The body is asserted exactly rather than by substring so that the sentence
+  # stays WireMock's word for word apart from the product name — the shape is
+  # the compatibility contract, the name is the deliberate deviation. A tool
+  # scraping this line to tell "no stubs loaded" from "stubs loaded but none
+  # matched" keeps working across the port.
+  - request: {port: mock, method: GET, path: /e2e/unmatched-names-mockulus-002/anything}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body: "No response could be served as there are no stub mappings in this mockulus instance."
+
+  # An empty snapshot is a property of the deployment, not of the URL: every
+  # path answers the same way, so an operator sees the misconfiguration on the
+  # first request they try rather than only on the one they stubbed.
+  - request: {port: mock, method: POST, path: /e2e/unmatched-names-mockulus-002/other}
+    expect:
+      status: 404
+      body: "No response could be served as there are no stub mappings in this mockulus instance."
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "04040002-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/unmatched-names-mockulus-002/hello"},
+         "response": {"status": 200, "body": "hello"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/unmatched-names-mockulus-002/hello}
+    expect: {status: 200, body: "hello"}
+
+  # One unrelated stub is enough to flip the diagnosis: the same request that a
+  # moment ago reported an empty snapshot now reports a failed match. This is
+  # the pair of bodies §5.4 distinguishes, and asserting both on one instance is
+  # the only way to show the switch is driven by snapshot emptiness.
+  - request: {port: mock, method: GET, path: /e2e/unmatched-names-mockulus-002/anything}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body: "Request was not matched"
+
+  # And it flips back, so the choice tracks the live snapshot rather than a
+  # once-at-startup decision.
+  - admin: {method: DELETE, path: /__admin/mappings/04040002-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/unmatched-names-mockulus-002/anything}
+    expect:
+      status: 404
+      body: "No response could be served as there are no stub mappings in this mockulus instance."

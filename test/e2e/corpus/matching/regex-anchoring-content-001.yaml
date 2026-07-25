@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-anchoring-content-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18). Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Anchoring is a property of the regex seam, not of one call site, so it has
+  # to hold wherever a pattern is accepted. This stub carries the same pattern
+  # rule on a body and on a header at once.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110007-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-anchoring-content-001/token",
+                     "headers": {"X-Tenant": {"matches": "t[0-9]+"}},
+                     "bodyPatterns": [{"matches": "tok[0-9]+"}]},
+         "response": {"status": 200, "body": "both anchored"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/regex-anchoring-content-001/token
+      headers: {X-Tenant: "t7"}
+      body: "tok42"
+    expect: {status: 200, body: "both anchored"}
+
+  # Body surrounded by other text: a search-style matcher would find "tok42"
+  # inside and answer 200.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/regex-anchoring-content-001/token
+      headers: {X-Tenant: "t7"}
+      body: "xtok42x"
+    expect: {status: 404}
+
+  # Same question on the header, with the body left valid so the 404 can only
+  # come from the header criterion.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/regex-anchoring-content-001/token
+      headers: {X-Tenant: "xt7x"}
+      body: "tok42"
+    expect: {status: 404}
+
+  # doesNotMatch is the negated matcher, and it inherits the same full-match
+  # rule. Getting this wrong is worse than getting `matches` wrong: a search-
+  # style doesNotMatch rejects far more than the author asked it to.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110007-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-anchoring-content-001/negated",
+                     "bodyPatterns": [{"doesNotMatch": "tok[0-9]+"}]},
+         "response": {"status": 200, "body": "doesNotMatch"}}
+    expect: {status: 201}
+
+  # A body that fully matches the pattern is excluded, which is the positive
+  # control for the matcher doing anything at all.
+  - request: {port: mock, method: POST, path: /e2e/regex-anchoring-content-001/negated, body: "tok42"}
+    expect: {status: 404}
+
+  # A body that merely *contains* the pattern is not a full match, so
+  # doesNotMatch admits it.
+  - request: {port: mock, method: POST, path: /e2e/regex-anchoring-content-001/negated, body: "xtok42x"}
+    expect: {status: 200, body: "doesNotMatch"}
+
+  - request: {port: mock, method: POST, path: /e2e/regex-anchoring-content-001/negated, body: "nope"}
+    expect: {status: 200, body: "doesNotMatch"}
+
+  # The anchor is \A…\z rather than ^…$, which only becomes observable on the
+  # backtracking engine: there `$` also matches just before a final newline, so
+  # a ^…$ wrapper would accept a body with a stray trailing line break. The
+  # lookahead is what forces this pattern onto that engine — on RE2 the two
+  # spellings would be indistinguishable here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110007-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-anchoring-content-001/zanchor",
+                     "bodyPatterns": [{"matches": "(?!x)abc"}]},
+         "response": {"status": 200, "body": "z anchored"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/regex-anchoring-content-001/zanchor, body: "abc"}
+    expect: {status: 200, body: "z anchored"}
+
+  # The assertion: one trailing newline and the fallback engine must still say no.
+  - request: {port: mock, method: POST, path: /e2e/regex-anchoring-content-001/zanchor, body: "abc\n"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/regex-anchoring-content-001/zanchor, body: "xabc"}
+    expect: {status: 404}

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+id: lifecycle-readiness-001
+behaviors: [B-CFG-SHUTDOWN-DRAIN-SHUTDOWN-TIMEOUT]
+wm: n/a
+steps:
+  # Readiness is what Kubernetes routes on, and the drain sequence works by
+  # dropping it before the listeners close (SPEC §4.5). A running instance
+  # reports ready; the drain half is asserted by the kind rollout check, which
+  # proves no request is cut off during a rolling restart.
+  - admin: {port: admin, method: GET, path: /readyz}
+    expect: {status: 200, body: "ready\n"}
+
+  # Liveness never depends on the store, so it answers even when readiness
+  # would not.
+  - admin: {port: admin, method: GET, path: /healthz}
+    expect: {status: 200}

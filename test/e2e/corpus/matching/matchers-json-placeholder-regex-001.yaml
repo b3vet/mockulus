@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-placeholder-regex-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The pattern is everything after the ${json-unit.regex} prefix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0007-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-regex-001/code",
+                     "bodyPatterns": [{"equalToJson": "{\"code\":\"${json-unit.regex}[a-z]+\"}"}]},
+         "response": {"status": 200, "body": "regex",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/code
+      body: '{"code":"abc"}'
+    expect: {status: 200, body: "regex"}
+
+  # The three assertions that pin FULL match rather than a substring search: a
+  # trailing extra character, a leading one, and a value that merely contains a
+  # matching run all fail.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/code
+      body: '{"code":"abc1"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/code
+      body: '{"code":"1abc"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/code
+      body: '{"code":"-abc-"}'
+    expect: {status: 404}
+
+  # The pattern still has to be satisfied at all: [a-z]+ needs a character.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/code
+      body: '{"code":""}'
+    expect: {status: 404}
+
+  # A regex placeholder applies to strings: a number is not rendered to text
+  # first and then matched, it is simply the wrong type.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/code
+      body: '{"code":42}'
+    expect: {status: 404}
+
+  # A dot in the pattern is a pattern character, not a literal — the placeholder
+  # is a regex, not a glob.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0007-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-regex-001/dotted",
+                     "bodyPatterns": [{"equalToJson": "{\"v\":\"${json-unit.regex}a.c\"}"}]},
+         "response": {"status": 200, "body": "dotted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/dotted
+      body: '{"v":"abc"}'
+    expect: {status: 200, body: "dotted"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-regex-001/dotted
+      body: '{"v":"ac"}'
+    expect: {status: 404}

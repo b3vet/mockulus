@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: precedence-priority-extremes-001
+behaviors: [B-STUB-PRIORITY]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # priority is an arbitrary signed integer compared numerically — the familiar
+  # "1 is the highest priority" phrasing is convention, not a constraint. A
+  # server that validated a range, or clamped into one, fails at this first
+  # registration. (The int32 boundary values themselves live in
+  # precedence-priority-int32-bounds-001: the pinned WireMock's own comparator
+  # is unreliable there, so they cannot be diffed against it.)
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0003-0000-4000-8000-000000000001",
+         "priority": -1000000000,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-extremes-001/extremes"},
+         "response": {"status": 200, "body": "large-negative",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: -1000000000}
+
+  # Zero is a legal priority and not a synonym for "unset": it has to sort
+  # between the negative above and the positive below, and it must not be read
+  # as the absent-priority default of 5.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0003-0000-4000-8000-000000000002",
+         "priority": 0,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-extremes-001/extremes"},
+         "response": {"status": 200, "body": "zero",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 0}
+
+  # This one is registered under both spellings of its identity — they are
+  # aliases and agree — so the read-back at the end of the case can be compared
+  # field for field with WireMock's, which always echoes both.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0003-0000-4000-8000-000000000003",
+         "uuid": "dddd0003-0000-4000-8000-000000000003",
+         "priority": 1000000000,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-extremes-001/extremes"},
+         "response": {"status": 200, "body": "large-positive",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 1000000000}
+
+  # The most negative value wins although it was registered first, so the
+  # ordering is a numeric comparison over the signed range rather than an
+  # unsigned or magnitude one.
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-extremes-001/extremes}
+    expect: {status: 200, body: "large-negative"}
+
+  # With it gone, 0 still outranks the large positive: the previous step was
+  # not "any negative sorts first" but a full ordering.
+  - admin: {method: DELETE, path: /__admin/mappings/dddd0003-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-extremes-001/extremes}
+    expect: {status: 200, body: "zero"}
+
+  # The stored document keeps the value verbatim, so nothing was normalised on
+  # the way into the store either — only compared on the way out.
+  - admin: {method: GET, path: /__admin/mappings/dddd0003-0000-4000-8000-000000000003}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "dddd0003-0000-4000-8000-000000000003"
+        priority: 1000000000

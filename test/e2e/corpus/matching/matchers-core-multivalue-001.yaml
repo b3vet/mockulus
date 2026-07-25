@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-multivalue-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-MATCH-CONTAINS-DOESNOTCONTAIN]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0004-0000-4000-8000-000000000001",
+         "name": "matches over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-multivalue-001/matches",
+                     "queryParameters": {"tag": {"matches": "a"}}},
+         "response": {"status": 200, "body": "matches",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0004-0000-4000-8000-000000000002",
+         "name": "doesNotMatch over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-multivalue-001/does-not-match",
+                     "queryParameters": {"tag": {"doesNotMatch": "a"}}},
+         "response": {"status": 200, "body": "does-not-match",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0004-0000-4000-8000-000000000003",
+         "name": "doesNotContain over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/matchers-core-multivalue-001/does-not-contain",
+                     "queryParameters": {"tag": {"doesNotContain": "a"}}},
+         "response": {"status": 200, "body": "does-not-contain",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/matches?tag=a"}
+    expect: {status: 200, body: "matches"}
+
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/matches?tag=b"}
+    expect: {status: 404}
+
+  # A repeated key is any-of: the criterion holds as soon as ONE value satisfies
+  # it, and the satisfying value need not be the first.
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/matches?tag=b&tag=a"}
+    expect: {status: 200, body: "matches"}
+
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/matches?tag=b&tag=c"}
+    expect: {status: 404}
+
+  # An absent key satisfies no positive criterion.
+  - request: {method: GET, path: /e2e/matchers-core-multivalue-001/matches}
+    expect: {status: 404}
+
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/does-not-match?tag=a"}
+    expect: {status: 404}
+
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/does-not-match?tag=b"}
+    expect: {status: 200, body: "does-not-match"}
+
+  # THE surprising one, and the reason the negative matchers cannot be
+  # implemented by inverting the positive result: doesNotMatch is ALSO any-of,
+  # so it holds as soon as one value fails the pattern. Together with the
+  # ?tag=b&tag=a step above, this proves matches("a") and doesNotMatch("a") both
+  # hold for the same repeated key — they are not complements (SPEC §6.6 rule 5).
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/does-not-match?tag=a&tag=b"}
+    expect: {status: 200, body: "does-not-match"}
+
+  # An absent query parameter satisfies the negative form, as an absent header
+  # does. The cookie exception is pinned by matchers-core-cookie-absence-001.
+  - request: {method: GET, path: /e2e/matchers-core-multivalue-001/does-not-match}
+    expect: {status: 200, body: "does-not-match"}
+
+  # doesNotContain follows the same any-of rule as doesNotMatch.
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/does-not-contain?tag=a&tag=b"}
+    expect: {status: 200, body: "does-not-contain"}
+
+  - request: {method: GET, path: "/e2e/matchers-core-multivalue-001/does-not-contain?tag=a"}
+    expect: {status: 404}

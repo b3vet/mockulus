@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-body-null-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# Verified: probed against pinned WireMock 3.13.2, which accepts the same
+# document, drops the null on the way in and serves the jsonBody. Ours keeps the
+# submitted `"body": null` in the stored mapping, but that is an additive field
+# under the §5.6 subset rule, so the create echoes still diff clean.
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An explicitly null body field is absence, not a second body form. Clients
+  # that build stub JSON from a struct emit every field, so treating a null as a
+  # declared body would reject a stub WireMock accepts — and would turn the
+  # one-body-form rule (deviation #19) from a safety net into a nuisance.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990501-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-null-001/nulled"},
+         "response": {"status": 200, "body": null, "jsonBody": {"ok": true}}}
+    expect: {status: 201}
+
+  # The surviving form is the one that was actually set, so the null contributed
+  # nothing to the wire — not an empty body, not the literal text "null".
+  - request: {port: mock, method: GET, path: /e2e/responses-body-null-001/nulled}
+    expect:
+      status: 200
+      body: '{"ok":true}'
+
+  # The same rule from the other side: nulling every body form leaves a response
+  # with no body at all rather than one that fails to register.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990501-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-null-001/empty"},
+         "response": {"status": 204, "body": null, "jsonBody": null, "base64Body": null}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-body-null-001/empty}
+    expect:
+      status: 204
+      body: ""

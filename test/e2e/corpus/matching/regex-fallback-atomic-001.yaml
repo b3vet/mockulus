@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-fallback-atomic-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18): WireMock renders a
+# near-miss table on a 404 and mockulus does not. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An atomic group is a backtracking-engine construct — it forbids the engine
+  # from reconsidering the branch it took — so it has no meaning in RE2 and this
+  # stub can only register on the regexp2 fallback.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110003-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-fallback-atomic-001/atomic",
+                     "bodyPatterns": [{"matches": "(?>a|ab)c"}]},
+         "response": {"status": 200, "body": "atomic"}}
+    expect: {status: 201}
+
+  # The same alternation without the atomic marker, which RE2 accepts. The pair
+  # is the experiment: one subject, two patterns differing only in atomicity.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110003-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-fallback-atomic-001/plain",
+                     "bodyPatterns": [{"matches": "(?:a|ab)c"}]},
+         "response": {"status": 200, "body": "plain"}}
+    expect: {status: 201}
+
+  # The plain alternation tries "a", fails on "c" vs "b", backtracks into "ab"
+  # and succeeds. This is the control: "abc" genuinely satisfies the pattern
+  # once backtracking into the group is allowed.
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-atomic-001/plain, body: "abc"}
+    expect: {status: 200, body: "plain"}
+
+  # The atomic group takes the same first branch and is forbidden to reconsider
+  # it, so the identical subject fails. A fallback engine that quietly dropped
+  # `(?>` — reading it as a plain group — would answer 200 here, which is why
+  # this 404 is the assertion that pins real atomic-group semantics.
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-atomic-001/atomic, body: "abc"}
+    expect: {status: 404}
+
+  # And the atomic stub is live rather than a pattern that can never match: the
+  # branch it commits to does satisfy a subject that needs no reconsideration.
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-atomic-001/atomic, body: "ac"}
+    expect: {status: 200, body: "atomic"}

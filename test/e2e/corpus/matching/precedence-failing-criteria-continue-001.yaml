@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: precedence-failing-criteria-continue-001
+behaviors: [B-STUB-PRIORITY, B-REQ-HEADERS]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The strong stub is narrow: priority 1, but it only matches a request that
+  # carries the tenant header. It is registered first, so it is also the older
+  # of the two.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0005-0000-4000-8000-000000000001",
+         "priority": 1,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/precedence-failing-criteria-continue-001/gate",
+                     "headers": {"X-Tenant": {"equalTo": "gold"}}},
+         "response": {"status": 200, "body": "gold",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The weak stub is the open catch-all for the same path: priority 9, no
+  # header criterion, registered last.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0005-0000-4000-8000-000000000002",
+         "priority": 9,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/precedence-failing-criteria-continue-001/gate"},
+         "response": {"status": 200, "body": "fallback",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # When both stubs match, precedence picks the strong one — and it is the
+  # older of the two, so this is priority winning over recency again.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/precedence-failing-criteria-continue-001/gate
+      headers: {X-Tenant: gold}
+    expect: {status: 200, body: "gold"}
+
+  # The point of the case: a higher-precedence stub whose criteria fail must
+  # not swallow the request. Selection keeps walking the ordered list and the
+  # weaker stub serves — a "first candidate wins, matched or not" engine would
+  # answer 404 here (SPEC §5.3, §6.3).
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/precedence-failing-criteria-continue-001/gate
+      headers: {X-Tenant: silver}
+    expect: {status: 200, body: "fallback"}
+
+  # Same conclusion with the header absent rather than merely wrong, which is
+  # the other way the strong stub's criteria can fail.
+  - request: {port: mock, method: GET, path: /e2e/precedence-failing-criteria-continue-001/gate}
+    expect: {status: 200, body: "fallback"}
+
+  # And nothing about the fallback makes the narrow stub unreachable: it still
+  # wins the moment its criteria hold again.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/precedence-failing-criteria-continue-001/gate
+      headers: {X-Tenant: gold}
+    expect: {status: 200, body: "gold"}

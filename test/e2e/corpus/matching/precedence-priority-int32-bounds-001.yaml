@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: precedence-priority-int32-bounds-001
+behaviors: [B-STUB-PRIORITY]
+# Not diffable against the oracle, and the reason is the oracle's, not ours.
+# WireMock orders stubs with `StubMapping.comparePriorityWith`, which returns
+# `thisPriority - otherPriority`; that subtraction overflows as soon as the two
+# priorities are more than an int32 apart, so its ordering at these boundary
+# values depends on the order the stubs happened to be inserted in. Probed
+# against the pinned wiremock/wiremock:3.13.2:
+#
+#   registered [-2147483648, 0] -> the *0* stub served
+#   registered [0, -2147483648] -> the -2147483648 stub served
+#
+# Registration and the echo agree with WireMock; only the ordering does not, so
+# the case is recorded from the spec (SPEC §5.2: compared numerically).
+wm: n/a
+steps:
+  # Both int32 boundary values register and come back verbatim: the field is a
+  # signed 32-bit integer end to end, with no range check and no clamping.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0007-0000-4000-8000-000000000001",
+         "priority": -2147483648,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-int32-bounds-001/min-first"},
+         "response": {"status": 200, "body": "int32-min",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: -2147483648}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0007-0000-4000-8000-000000000002",
+         "priority": 2147483647,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-int32-bounds-001/min-first"},
+         "response": {"status": 200, "body": "int32-max",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 2147483647}
+
+  # The same pair on a second path, registered the other way round. The two
+  # paths together are the assertion that matters: comparing the widest pair of
+  # priorities the type allows is a plain numeric comparison, so the answer
+  # cannot depend on which stub was registered first.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0007-0000-4000-8000-000000000003",
+         "priority": 2147483647,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-int32-bounds-001/max-first"},
+         "response": {"status": 200, "body": "int32-max",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0007-0000-4000-8000-000000000004",
+         "priority": -2147483648,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-int32-bounds-001/max-first"},
+         "response": {"status": 200, "body": "int32-min",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-int32-bounds-001/min-first}
+    expect: {status: 200, body: "int32-min"}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-int32-bounds-001/max-first}
+    expect: {status: 200, body: "int32-min"}

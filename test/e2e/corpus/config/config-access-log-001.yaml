@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-access-log-001
+behaviors: [B-CFG-LOG-REQUESTS]
+config: access-log
+wm: n/a
+steps:
+  # The knob is bound before it is exercised. The startup config dump echoes
+  # every resolved setting as `key=value` (SPEC §14.2), which is what ties the
+  # environment variable to the config key it feeds; the assertions below would
+  # pass just as happily if the lines had come from somewhere else.
+  - logprobe:
+      json_fields:
+        msg: config
+        setting: log.requests=true
+
+  # A request then produces one line. It carries the outcome and nothing from
+  # the request itself: teams put real credentials in their mocks, so bodies
+  # and headers are never logged (SPEC §14.2).
+  - request: {method: GET, path: /e2e/config-access-log-001/hit}
+    expect: {status: 404}
+  - logprobe:
+      json_fields:
+        msg: request served
+        path: /e2e/config-access-log-001/hit
+        matched: "false"
+
+  # A matched request is logged too, and names the stub it matched. The flag is
+  # what decides whether the line exists, not the outcome — an access log that
+  # only recorded failures would be useless for the thing people reach for it
+  # for, which is finding out what a client actually asked for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999a10c-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/config-access-log-001/served"},
+         "response":{"status":200,"body":"ok"}}
+    expect: {status: 201}
+  - request: {method: GET, path: /e2e/config-access-log-001/served}
+    expect: {status: 200, body: "ok"}
+  - logprobe:
+      json_fields:
+        msg: request served
+        path: /e2e/config-access-log-001/served
+        matched: "true"
+        stub: 9999a10c-0000-4000-8000-000000000001

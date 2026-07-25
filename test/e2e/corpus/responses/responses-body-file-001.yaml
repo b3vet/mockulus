@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-body-file-001
+behaviors:
+  - B-ADMIN-GET-PUT-DELETE-FILES-NAME-GET-FILES
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# n/a: the endpoints exist in WireMock but their wire answers differ in ways
+# that are ours, not WireMock's — probed against 3.13.2, its PUT answers 200
+# where ours answers 201, and its file GET carries no Content-Type where ours
+# labels the bytes application/octet-stream. Only the listing shape matches.
+wm: n/a
+# The files collection is deployment-wide, so the file name carries the case id
+# for the same reason mock paths do: cases share one instance and must not
+# collide.
+#
+# The stub is registered before its file exists on purpose: that ordering is
+# legal (SPEC §4.3, §6.9), and it is the one the file write has to repair. The
+# opposite ordering — file first, then a stub that must serve it on the very
+# next request, with no rebuild in between — is pinned further down, because
+# that is the ordering a read-your-write test actually uses.
+steps:
+  # bodyFileName is the fourth body form: the stub names a file instead of
+  # carrying bytes, and the file's contents become the response body.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990701-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-file-001/greeting"},
+         "response": {"status": 200, "bodyFileName": "responses-body-file-001-greeting.json",
+                      "headers": {"Content-Type": "application/json"}}}
+    expect: {status: 201}
+
+  # A body uploaded once can be referenced by many stubs, which is the point of
+  # the files store: the payload lives in one place, not copied into every stub.
+  - admin:
+      method: PUT
+      path: /__admin/files/responses-body-file-001-greeting.json
+      body: '{"greeting":"served from the files store"}'
+    expect: {status: 201}
+
+  # The stub now serves the file's bytes, and the Content-Type it declared for
+  # itself rather than anything inferred from the file's name or contents.
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-001/greeting}
+    expect:
+      status: 200
+      headers: {Content-Type: application/json}
+      body: '{"greeting":"served from the files store"}'
+
+  # The read-your-write case, and the reason this file has more than one stub.
+  # This one is registered while the file already exists, and the very next
+  # request is the assertion — no upload, no delete, nothing in between that
+  # would force a full rebuild. The create must therefore resolve bodyFileName
+  # itself, because the only other thing that would is the poller, and it is up
+  # to a sync_interval away. Serving an empty 200 here is the exact regression
+  # this step exists to catch: not merely stale, but a different answer than the
+  # one the rebuild a second later would give.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990701-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-file-001/immediate"},
+         "response": {"status": 200, "bodyFileName": "responses-body-file-001-greeting.json"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-001/immediate}
+    expect:
+      status: 200
+      body: '{"greeting":"served from the files store"}'
+
+  # The same immediacy for the other outcome. A stub naming a file that was
+  # never uploaded serves the 1022 of §6.9 straight away rather than an empty
+  # 200 that quietly turns into a 500 once the poller catches up. Which answer
+  # a caller gets must not depend on how soon after registration they asked.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990701-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-file-001/immediate-missing"},
+         "response": {"status": 200, "bodyFileName": "responses-body-file-001-never-uploaded.json"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-001/immediate-missing}
+    expect:
+      status: 500
+      body_json_subset:
+        errors:
+          - code: 1022
+
+  - admin: {method: DELETE, path: /__admin/mappings/99990701-0000-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/99990701-0000-4000-8000-000000000003}
+    expect: {status: 200}
+
+  # The file reads back byte-identical, which is what makes the store usable as
+  # a fixture area rather than a write-only sink.
+  - admin: {method: GET, path: /__admin/files/responses-body-file-001-greeting.json}
+    expect:
+      status: 200
+      body: '{"greeting":"served from the files store"}'
+
+  # And it is listed. Asserted by regex rather than by equality: the listing is
+  # deployment-wide, so a concurrent case's file is legitimately in it too.
+  - admin: {method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"responses-body-file-001-greeting\.json"'
+
+  # A file is addressed by its exact name: a near-miss name is a 404, not a
+  # fuzzy match onto the file that does exist.
+  - admin: {method: GET, path: /__admin/files/responses-body-file-001-greeting.jsonx}
+    expect: {status: 404}
+
+  # DELETE removes it, and the removal is visible immediately on the pod that
+  # served the write — the same read-your-write rule as a stub edit.
+  - admin: {method: DELETE, path: /__admin/files/responses-body-file-001-greeting.json}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/files/responses-body-file-001-greeting.json}
+    expect: {status: 404}
+
+  # The stub outlives its file, and the reference is live rather than a one-time
+  # copy: it now dangles instead of serving stale bytes. The full contract of
+  # that state is pinned by responses-body-file-missing-001.
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-001/greeting}
+    expect: {status: 500}

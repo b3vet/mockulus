@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-empty-body-001
+behaviors:
+  - B-MATCH-ABSENT
+  - B-REQ-BODYPATTERNS
+  - B-MATCH-MATCHES-DOESNOTMATCH
+  - B-MATCH-CONTAINS-DOESNOTCONTAIN
+  - B-MATCH-EQUALTO-CASEINSENSITIVE
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0007-0000-4000-8000-000000000001",
+         "name": "matches anything",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-empty-body-001/matches-any",
+                     "bodyPatterns": [{"matches": ".*"}]},
+         "response": {"status": 200, "body": "matches-any",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0007-0000-4000-8000-000000000002",
+         "name": "equalTo the empty string",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-empty-body-001/equal-empty",
+                     "bodyPatterns": [{"equalTo": ""}]},
+         "response": {"status": 200, "body": "equal-empty",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0007-0000-4000-8000-000000000003",
+         "name": "contains the empty string",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-empty-body-001/contains-empty",
+                     "bodyPatterns": [{"contains": ""}]},
+         "response": {"status": 200, "body": "contains-empty",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0007-0000-4000-8000-000000000004",
+         "name": "absent body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-empty-body-001/absent",
+                     "bodyPatterns": [{"absent": true}]},
+         "response": {"status": 200, "body": "absent",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0007-0000-4000-8000-000000000005",
+         "name": "doesNotMatch over the body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-empty-body-001/does-not-match",
+                     "bodyPatterns": [{"doesNotMatch": "zzz"}]},
+         "response": {"status": 200, "body": "does-not-match",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A zero-length body is ABSENT, not the empty string. Every POSITIVE body
+  # matcher therefore fails on it, however permissive the operand looks — this
+  # is the surprising rule the whole case exists to pin, and the three steps
+  # below are the three most permissive operands there are.
+  - request: {method: POST, path: /e2e/matchers-core-empty-body-001/matches-any}
+    expect: {status: 404}
+
+  - request: {method: POST, path: /e2e/matchers-core-empty-body-001/equal-empty}
+    expect: {status: 404}
+
+  - request: {method: POST, path: /e2e/matchers-core-empty-body-001/contains-empty}
+    expect: {status: 404}
+
+  # {"absent": true} is the only positive way to match an empty body.
+  - request: {method: POST, path: /e2e/matchers-core-empty-body-001/absent}
+    expect: {status: 200, body: "absent"}
+
+  # The negative matchers still hold over an absent body — there is no value
+  # there to match the pattern — exactly as they do for an absent header. So
+  # "every matcher fails" is true of the positive matchers only.
+  - request: {method: POST, path: /e2e/matchers-core-empty-body-001/does-not-match}
+    expect: {status: 200, body: "does-not-match"}
+
+  # The same stubs behave normally the moment a body exists, which rules out
+  # the stubs simply being broken.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-empty-body-001/matches-any
+      body: "abc"
+    expect: {status: 200, body: "matches-any"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-empty-body-001/contains-empty
+      body: "abc"
+    expect: {status: 200, body: "contains-empty"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-empty-body-001/absent
+      body: "abc"
+    expect: {status: 404}

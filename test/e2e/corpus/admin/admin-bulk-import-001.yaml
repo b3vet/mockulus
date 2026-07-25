@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-import-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-ADMIN-MAPPINGS-FIND-BY-METADATA-POST
+# n/a: the case reads back the imported documents, and mockulus echoes the
+# mapping exactly as registered where WireMock round-trips it through its own
+# serializer and fills in defaults. The response *shape* is compatible; the
+# documents are not byte-comparable, so this is not a differential oracle.
+wm: n/a
+steps:
+  # One batch, two mappings: one carrying its own id, one with none at all.
+  # Both must land, which is what makes import a batch primitive rather than a
+  # loop over POST /__admin/mappings.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "ffff0001-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-001/alpha"},
+            "response": {"status": 200, "body": "alpha"}},
+           {"metadata": {"suite": "admin-bulk-import-001"},
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-001/beta"},
+            "response": {"status": 200, "body": "beta"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-001/alpha}
+    expect: {status: 200, body: "alpha"}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-001/beta}
+    expect: {status: 200, body: "beta"}
+
+  # An id supplied in the payload is the id the stub gets — an import must be
+  # addressable afterwards by the ids the author wrote down.
+  - admin: {method: GET, path: /__admin/mappings/ffff0001-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "ffff0001-0000-4000-8000-000000000001"
+        uuid: "ffff0001-0000-4000-8000-000000000001"
+        response: {body: "alpha"}
+
+  # The id-less mapping is reachable only through its metadata, which is the
+  # point: find-by-metadata takes a bare content matcher, with no envelope
+  # around it, applied straight to the stub's metadata document.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"admin-bulk-import-001\"}"}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - metadata: {suite: "admin-bulk-import-001"}
+            request: {urlPath: /e2e/admin-bulk-import-001/beta}
+        meta: {total: 1}
+      # The server assigned the missing id, and assigned a canonical lower-case
+      # UUIDv4 rather than any old unique string: a stub whose id is not a UUID
+      # could never be handed back to WireMock (SPEC §5.2).
+      body_regex: '"id":"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"'
+
+  # Import creates exactly what the payload listed and nothing else.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-001/gamma}
+    expect: {status: 404}

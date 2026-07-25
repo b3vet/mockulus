@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: admin-bulk-import-overwrite-002
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+# n/a: the case asserts that an OVERWRITE keeps the stub's place in the
+# selection order, which is mockulus' cluster-global insertion sequence
+# (SPEC §7.3) rather than anything WireMock exposes.
+wm: n/a
+steps:
+  # Two stubs on one URL, registered oldest-first. With equal priority the
+  # newer one wins (SPEC §5.3), which is the ordering the overwrite must not
+  # disturb.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0002-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-overwrite-002/pick"},
+         "response": {"status": 200, "body": "older-v1"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "ffff0002-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-overwrite-002/pick"},
+         "response": {"status": 200, "body": "newer"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-overwrite-002/pick}
+    expect: {status: 200, body: "newer"}
+
+  # Re-import the older stub under the same id with a different response.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "ffff0002-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/admin-bulk-import-overwrite-002/pick"},
+            "response": {"status": 200, "body": "older-v2"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE"}}
+    expect: {status: 200}
+
+  # The overwrite replaced the stub *in place*: it did not draw a fresh
+  # insertion sequence, so it did not jump ahead of its equal-priority peer.
+  # Re-importing an unchanged mapping must never silently repoint traffic.
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-overwrite-002/pick}
+    expect: {status: 200, body: "newer"}
+
+  # ...and the replacement really happened, so the previous step is precedence
+  # and not a no-op import.
+  - admin: {method: GET, path: /__admin/mappings/ffff0002-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "ffff0002-0000-4000-8000-000000000001"
+        response: {body: "older-v2"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/ffff0002-0000-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/admin-bulk-import-overwrite-002/pick}
+    expect: {status: 200, body: "older-v2"}

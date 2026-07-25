@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-core-binaryequalto-001
+behaviors: [B-MATCH-BINARYEQUALTO, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "aaaa0005-0000-4000-8000-000000000001",
+         "name": "binaryEqualTo over the body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/matchers-core-binaryequalto-001/bin",
+                     "bodyPatterns": [{"binaryEqualTo": "aGVsbG8="}]},
+         "response": {"status": 200, "body": "bin",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The operand is base64: "aGVsbG8=" decodes to the five bytes of "hello", and
+  # it is those bytes — not the base64 text — that the body is compared against.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-binaryequalto-001/bin
+      body: "hello"
+    expect: {status: 200, body: "bin"}
+
+  # Comparison is byte-exact: no case folding...
+  - request:
+      method: POST
+      path: /e2e/matchers-core-binaryequalto-001/bin
+      body: "hellO"
+    expect: {status: 404}
+
+  # ...and no prefix or suffix tolerance in either direction.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-binaryequalto-001/bin
+      body: "hello!"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-core-binaryequalto-001/bin
+      body: "hell"
+    expect: {status: 404}
+
+  # The operand is never compared as text: sending the base64 spelling itself
+  # is a non-match, which is what separates binaryEqualTo from equalTo.
+  - request:
+      method: POST
+      path: /e2e/matchers-core-binaryequalto-001/bin
+      body: "aGVsbG8="
+    expect: {status: 404}
+
+  # A zero-length body is absent, and binaryEqualTo fails an absent subject like
+  # every other positive body matcher (see matchers-core-empty-body-001).
+  - request: {method: POST, path: /e2e/matchers-core-binaryequalto-001/bin}
+    expect: {status: 404}

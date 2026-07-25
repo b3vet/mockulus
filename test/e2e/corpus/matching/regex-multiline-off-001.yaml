@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-multiline-off-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18). Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The companion to DOTALL: WireMock leaves MULTILINE off, so `^` and `$` are
+  # start- and end-of-input rather than line boundaries. The pairing matters —
+  # DOTALL on plus MULTILINE on would make `^a$` match the first line of any
+  # body, turning a strict matcher into a loose one without anyone noticing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110005-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-multiline-off-001/line",
+                     "bodyPatterns": [{"matches": "^a$"}]},
+         "response": {"status": 200, "body": "anchors are input-wide"}}
+    expect: {status: 201}
+
+  # The control: with a single-line body the anchors are satisfiable, so the
+  # stub is live and the negative below is about MULTILINE, not about a pattern
+  # that never matches anything.
+  - request: {port: mock, method: POST, path: /e2e/regex-multiline-off-001/line, body: "a"}
+    expect: {status: 200, body: "anchors are input-wide"}
+
+  # The assertion: "a" is a whole line here, and it still does not match. Under
+  # MULTILINE this would be a 200.
+  - request: {port: mock, method: POST, path: /e2e/regex-multiline-off-001/line, body: "a\nb"}
+    expect: {status: 404}
+
+  # The same question from the other side — "a" as the *last* line. Line-anchor
+  # semantics would accept this one too.
+  - request: {port: mock, method: POST, path: /e2e/regex-multiline-off-001/line, body: "b\na"}
+    expect: {status: 404}
+
+  # A trailing newline is where the anchor choice starts to show even with
+  # MULTILINE off: `$` in Java means "end of input, or just before a final line
+  # terminator", so a matcher built out of `$` rather than \z would accept this.
+  # The full-match requirement makes it a 404 on both. The sharper form of this
+  # assertion, on the backtracking engine, is in regex-anchoring-content-001.
+  - request: {port: mock, method: POST, path: /e2e/regex-multiline-off-001/line, body: "a\n"}
+    expect: {status: 404}

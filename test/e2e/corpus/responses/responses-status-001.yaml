@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-status-001
+behaviors:
+  - B-RESP-STATUS
+  - B-STUB-RESPONSE
+# Every stub here states its response in full — status, body and headers — so
+# WireMock's echo of the created mapping is byte-comparable with ours. The
+# omitted-field shapes, where WireMock normalises the echo and mockulus does
+# not, are quarantined in responses-status-default-001.
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A configured status is served literally, including one a client library is
+  # likely to treat as a failure: the point of a mock is to be able to ask for
+  # the unhappy path.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990101-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-status-001/unavailable"},
+         "response": {"status": 503, "body": "capacity", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {status: 503}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990101-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/responses-status-001/created"},
+         "response": {"status": 201, "body": "made", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {status: 201}
+
+  # The status on the wire is the one the response object asked for, not the
+  # 200 a body-bearing response would otherwise default to.
+  - request: {port: mock, method: GET, path: /e2e/responses-status-001/unavailable}
+    expect:
+      status: 503
+      headers: {Content-Type: text/plain}
+      body: "capacity"
+
+  - request: {port: mock, method: POST, path: /e2e/responses-status-001/created}
+    expect:
+      status: 201
+      body: "made"
+
+  # Each stub's status is its own: registering a second one does not move the
+  # first, so the 503 is still a 503 after the 201 stub joined the snapshot.
+  - request: {port: mock, method: GET, path: /e2e/responses-status-001/unavailable}
+    expect: {status: 503}

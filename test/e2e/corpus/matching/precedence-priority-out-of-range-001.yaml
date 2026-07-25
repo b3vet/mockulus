@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+id: precedence-priority-out-of-range-001
+behaviors: [B-STUB-PRIORITY]
+# WireMock rejects both payloads below with the same 422, the same code 10 and
+# the same `/priority` pointer — the servers agree on the contract. Only the
+# human-facing `title`/`detail` text differs (WireMock reports a Jackson parse
+# failure), and the differential diff compares whole error bodies, so this case
+# is recorded from the spec rather than replayed.
+wm: n/a
+steps:
+  # "No range validation" is not "any number": priority is a signed 32-bit
+  # integer, and a value past that range is rejected at registration rather
+  # than silently wrapped into a negative priority that would quietly outrank
+  # every other stub (SPEC §5.2, Appendix B code 10).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0004-0000-4000-8000-000000000001",
+         "priority": 2147483648,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-out-of-range-001/x"},
+         "response": {"status": 200, "body": "overflow"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/priority"}
+
+  # A non-numeric priority is a schema violation, not a zero.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0004-0000-4000-8000-000000000002",
+         "priority": "high",
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-priority-out-of-range-001/x"},
+         "response": {"status": 200, "body": "not-a-number"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/priority"}
+
+  # Neither rejected stub reached the store, so the path is still unmatched:
+  # validation runs before anything is persisted (SPEC §4.3).
+  - request: {port: mock, method: GET, path: /e2e/precedence-priority-out-of-range-001/x}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/dddd0004-0000-4000-8000-000000000001}
+    expect: {status: 404}

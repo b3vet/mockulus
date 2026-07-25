@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-operand-forms-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Form 1: the operand written inline as a JSON document.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0002-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-operand-forms-001/inline",
+                     "bodyPatterns": [{"equalToJson": {"a": 1, "b": {"c": "x"}, "xs": [1, 2]}}]},
+         "response": {"status": 200, "body": "inline",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Form 2: the same operand as an escaped JSON string. Both forms must compile
+  # to the same matcher — a client that serializes one way must not get a
+  # different answer from a client that serializes the other.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0002-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-operand-forms-001/escaped",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1,\"b\":{\"c\":\"x\"},\"xs\":[1,2]}"}]},
+         "response": {"status": 200, "body": "escaped",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-operand-forms-001/inline
+      body: '{"xs":[1,2],"b":{"c":"x"},"a":1}'
+    expect: {status: 200, body: "inline"}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-operand-forms-001/escaped
+      body: '{"xs":[1,2],"b":{"c":"x"},"a":1}'
+    expect: {status: 200, body: "escaped"}
+
+  # And both reject the same document, so the equivalence covers the negative
+  # side too rather than only the accepting one.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-operand-forms-001/inline
+      body: '{"a":1,"b":{"c":"y"},"xs":[1,2]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-operand-forms-001/escaped
+      body: '{"a":1,"b":{"c":"y"},"xs":[1,2]}'
+    expect: {status: 404}
+
+  # The operand is stored as written, so a client reading the stub back sees the
+  # form it registered rather than a normalised rewrite.
+  - admin: {method: GET, path: /__admin/mappings/bbbb0002-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_regex: '"equalToJson"'
+
+  # json-unit placeholders are interpreted in the inline operand form too. They
+  # are found by walking the parsed document, so a client that never produces
+  # the escaped-string form still gets them — this is the step that proves the
+  # placeholder pass is not tied to one serialization.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0002-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-operand-forms-001/inline-placeholder",
+                     "bodyPatterns": [{"equalToJson": {"a": "${json-unit.any-string}", "n": 1}}]},
+         "response": {"status": 200, "body": "inline-placeholder",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-operand-forms-001/inline-placeholder
+      body: '{"a":"whatever","n":1}'
+    expect: {status: 200, body: "inline-placeholder"}
+
+  # Interpreted as a rule, not accepted as a wildcard for everything: the inline
+  # form still constrains the type.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-operand-forms-001/inline-placeholder
+      body: '{"a":42,"n":1}'
+    expect: {status: 404}

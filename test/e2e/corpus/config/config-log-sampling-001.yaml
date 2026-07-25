@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-log-sampling-001
+behaviors: [B-CFG-LOG-REQUEST-SAMPLE-N]
+config: sampled-log
+wm: n/a
+steps:
+  # The knob is bound before it is exercised. The startup config dump echoes
+  # every resolved setting as `key=value` (SPEC §14.2), so this line is the one
+  # place that ties MOCKULUS_LOG_REQUEST_SAMPLE_N to the config key it feeds and
+  # to the value that survived defaulting. The sampling assertion below would
+  # pass just as happily if the value had arrived from somewhere else entirely.
+  - logprobe:
+      json_fields:
+        msg: config
+        setting: log.request_sample_n=2
+
+  # With sampling on, only every Nth request is logged — which is what makes
+  # per-request logging usable under load rather than a switch nobody dares
+  # flip. Several requests guarantee at least one lands on the sample boundary.
+  - request: {method: GET, path: /e2e/config-log-sampling-001/a}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/config-log-sampling-001/a}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/config-log-sampling-001/a}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/config-log-sampling-001/a}
+    expect: {status: 404}
+
+  # The line that is written names the divisor it was sampled against, so the
+  # configured N is observable on the hot path and not only at startup.
+  - logprobe:
+      json_fields:
+        msg: request served
+        path: /e2e/config-log-sampling-001/a
+        sampled_of: "2"

@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-absent-false-001
+behaviors:
+  - B-DEV-DEVIATION-23
+  - B-MATCH-ABSENT
+# n/a by construction: this is deviation #23. Pinned WireMock answers 201 and
+# echoes the criterion back as `{"absent": true}` — it deserializes the field as
+# a presence flag and never reads the value. There is no WireMock answer to diff
+# against, only one to differ from.
+wm: n/a
+steps:
+  # `{"absent": false}` reads as "this header must be present", and that is what
+  # the author meant. WireMock stores `absent: true` instead, so the stub matches
+  # only requests without the header — the exact inverse — and the suite sees a
+  # 404 it has no way to explain from the mapping it wrote. Registration is the
+  # last moment this is cheap to notice, so it is rejected there.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0111-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/errors-absent-false-001/inverted",
+                     "headers": {"X-Trace": {"absent": false}}},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Trace/absent"}
+      body_regex: 'omit the criterion instead'
+
+  # Nothing registered, so the inverted stub cannot be shadowing anything.
+  - request: {port: mock, method: GET, path: /e2e/errors-absent-false-001/inverted}
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/errors-absent-false-001/inverted
+      headers: {X-Trace: "1"}
+    expect: {status: 404}
+
+  # The rule is about the value, not about where the criterion sits: a query
+  # parameter is held to it too.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0111-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/errors-absent-false-001/query",
+                     "queryParameters": {"trace": {"absent": false}}},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/queryParameters/trace/absent"}
+
+  # And the supported spelling for what the author meant does register, and does
+  # mean it: present matches, missing does not. Rejecting `absent: false` without
+  # a way to say "must be present" would be a gap rather than a guardrail.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "eeee0111-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/errors-absent-false-001/present",
+                     "headers": {"X-Trace": {"not": {"absent": true}}}},
+         "response": {"status": 200, "body": "present"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/errors-absent-false-001/present
+      headers: {X-Trace: "1"}
+    expect: {status: 200, body: "present"}
+
+  - request: {port: mock, method: GET, path: /e2e/errors-absent-false-001/present}
+    expect: {status: 404}

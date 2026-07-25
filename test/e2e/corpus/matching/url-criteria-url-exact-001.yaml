@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-url-exact-001
+behaviors: [B-REQ-URL, B-REQ-METHOD, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `url` is the byte-exact criterion over path AND query as received.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0002-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/url-criteria-url-exact-001/items?a=1&b=2"},
+         "response": {"status": 200, "body": "exact-with-query", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/url-criteria-url-exact-001/items?a=1&b=2"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0002-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "url": "/e2e/url-criteria-url-exact-001/plain"},
+         "response": {"status": 200, "body": "exact-no-query", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/url-criteria-url-exact-001/items?a=1&b=2"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "exact-with-query"
+
+  # The load-bearing assertion of this case: the same two parameters with the
+  # same two values do NOT match when written in the other order. `url` compares
+  # the request target as a string, so it is not a query-parameter criterion in
+  # disguise — a client that reorders its query breaks a `url` stub, and callers
+  # who want order independence must use urlPath + queryParameters.
+  - request: {method: GET, path: "/e2e/url-criteria-url-exact-001/items?b=2&a=1"}
+    expect: {status: 404}
+
+  # Byte-exact both ways: dropping the query does not match, and neither does
+  # appending a parameter the criterion never mentioned.
+  - request: {method: GET, path: /e2e/url-criteria-url-exact-001/items}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/url-criteria-url-exact-001/items?a=1"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/url-criteria-url-exact-001/items?a=1&b=2&c=3"}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/url-criteria-url-exact-001/plain}
+    expect: {status: 200, body: "exact-no-query"}
+
+  # A `url` written without a query string therefore refuses every request that
+  # carries one — the criterion covers the query even when it does not name it.
+  - request: {method: GET, path: "/e2e/url-criteria-url-exact-001/plain?x=1"}
+    expect: {status: 404}
+
+  # And it is still an exact path, so a longer one is a non-match.
+  - request: {method: GET, path: /e2e/url-criteria-url-exact-001/plain/more}
+    expect: {status: 404}

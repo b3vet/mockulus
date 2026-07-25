@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-unsupported-toplevel-001
+behaviors: [B-ERR-10, B-ERR-1000, B-STUB-POSTSERVEACTIONS, B-DEV-DEVIATION-14]
+# The fail-loud contract is a deliberate deviation (#14): WireMock accepts the
+# postServeActions document and behaves differently, so there is nothing to diff
+# on that step. The typo step below is not a deviation at all — WireMock rejects
+# it too, with the same code and the same pointer.
+wm: n/a
+steps:
+  # postServeActions is deferred, so the stub is refused rather than registered
+  # with the webhook silently dropped. The detail names the feature and points
+  # at the roadmap so a team learns what it is waiting on, not just "no".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000010",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-unsupported-toplevel-001/hooked"},
+         "response": {"status": 200, "body": "hi"},
+         "postServeActions": [{"name": "webhook", "parameters": {"url": "http://elsewhere"}}]}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            title: "Unsupported feature"
+            source: {pointer: "/postServeActions"}
+      body_regex: 'postServeActions \(webhooks\) is not supported in mockulus v1.*ROADMAP\.md'
+
+  # Nothing is persisted when a stub is rejected. The document carried its own
+  # id, so this asks the store directly rather than inferring from a non-match.
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000010}
+    expect: {status: 404}
+
+  # …and the URL it named still does not match on the mock port.
+  - request: {port: mock, method: GET, path: /e2e/errors-unsupported-toplevel-001/hooked}
+    expect: {status: 404}
+
+  # An unrecognised top-level field is refused too — accept-and-ignore is the
+  # failure mode the fail-loud contract exists to prevent — but under the OTHER
+  # code. 1000 says "a feature you are waiting for"; `postServeActionz` is a
+  # feature nobody has, in WireMock or here, so it is a schema violation and
+  # gets 10. The distinction is what the code is for: sending the author of a
+  # one-character typo to the roadmap to look for it wastes the trip. WireMock
+  # 3.13.2 answers this exact document with code 10 at this exact pointer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000011",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-unsupported-toplevel-001/typo"},
+         "response": {"status": 200},
+         "postServeActionz": []}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/postServeActionz"}
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000011}
+    expect: {status: 404}
+
+  # The control: the identical document minus postServeActions registers and
+  # serves, which is what pins the 422 above on that one field.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000012",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-unsupported-toplevel-001/hooked"},
+         "response": {"status": 200, "body": "hi"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/errors-unsupported-toplevel-001/hooked}
+    expect: {status: 200, body: "hi"}

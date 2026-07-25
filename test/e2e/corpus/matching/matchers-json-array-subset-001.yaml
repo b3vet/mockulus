@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-array-subset-001
+behaviors:
+  - B-DEV-DEVIATION-25
+  - B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS
+# Mockulus-specific by construction: this is the one array shape where the two
+# servers answer differently, so there is no oracle to diff against — the point
+# of the case is the different answer.
+wm: n/a
+steps:
+  # ${json-unit.any-number} pairs with any of the three numbers below, and the
+  # literal 2 pairs with exactly one of them, so which element the placeholder
+  # takes decides whether the literal is left stranded.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb000e-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-array-subset-001/subset",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[\"${json-unit.any-number}\",2]}",
+                                       "ignoreArrayOrder": true,
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "subset",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Deviation #25. An assignment exists — the placeholder takes 5 or 9 and the
+  # literal takes the 2 — and we look for it. WireMock accepts a candidate
+  # pairing only when it leaves no actual element unclaimed, which the ignored
+  # third element makes impossible, so it stops at the first assignment and
+  # reports a mismatch.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-subset-001/subset
+      body: '{"xs":[2,5,9]}'
+    expect: {status: 200, body: "subset"}
+
+  # The same three elements in another order match on both servers, which is
+  # what makes this a difference in the search rather than in the semantics: on
+  # WireMock the verdict moves with the order of an array the stub declared
+  # order-irrelevant.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-subset-001/subset
+      body: '{"xs":[5,2,9]}'
+    expect: {status: 200, body: "subset"}
+
+  # Bounded in the direction that matters: ignoring the unclaimed elements does
+  # not loosen the pairing, so an array with nothing for the literal is still a
+  # mismatch here — as it is on WireMock.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-subset-001/subset
+      body: '{"xs":[5,9,7]}'
+    expect: {status: 404}
+
+  # And an array too short to answer both expected elements is a mismatch on
+  # both servers too: one actual element cannot stand in twice.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-array-subset-001/subset
+      body: '{"xs":[2]}'
+    expect: {status: 404}

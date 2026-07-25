@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: precedence-equal-priority-recency-001
+behaviors: [B-STUB-PRIORITY]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Three stubs, one path, the same explicit priority: priority cannot break
+  # this tie, so insertion order is the only thing left to decide it. The
+  # bodies name the registration order so the transcript reads as the answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0002-0000-4000-8000-000000000001",
+         "priority": 3,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-equal-priority-recency-001/tie"},
+         "response": {"status": 200, "body": "registered-first",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 3}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0002-0000-4000-8000-000000000002",
+         "priority": 3,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-equal-priority-recency-001/tie"},
+         "response": {"status": 200, "body": "registered-second",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Asserted before the third stub exists, so the case pins "newest of the two
+  # so far" rather than only the final state.
+  - request: {port: mock, method: GET, path: /e2e/precedence-equal-priority-recency-001/tie}
+    expect: {status: 200, body: "registered-second"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd0002-0000-4000-8000-000000000003",
+         "priority": 3,
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-equal-priority-recency-001/tie"},
+         "response": {"status": 200, "body": "registered-third",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Each new equal-priority stub takes the path over from the one before it.
+  - request: {port: mock, method: GET, path: /e2e/precedence-equal-priority-recency-001/tie}
+    expect: {status: 200, body: "registered-third"}
+
+  # Unwinding the registrations one at a time is what proves the losers were
+  # live and matching all along: an outranked stub is skipped, not shadowed out
+  # of the snapshot, so precedence is a choice among matches (SPEC §5.3).
+  - admin: {method: DELETE, path: /__admin/mappings/dddd0002-0000-4000-8000-000000000003}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-equal-priority-recency-001/tie}
+    expect: {status: 200, body: "registered-second"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/dddd0002-0000-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-equal-priority-recency-001/tie}
+    expect: {status: 200, body: "registered-first"}

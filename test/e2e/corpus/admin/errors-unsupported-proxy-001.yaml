@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-unsupported-proxy-001
+behaviors:
+  - B-ERR-1000
+  - B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR
+  - B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED
+  - B-DEV-DEVIATION-14
+# Proxy mode is deferred wholesale. WireMock would proxy the request upstream,
+# so there is no comparable answer to diff.
+wm: n/a
+steps:
+  # All three proxy-mode response fields are refused, and all three come back in
+  # one answer. Silently ignoring any of them would turn a proxy stub into a
+  # stub that serves an empty 200 — the request never reaches the upstream the
+  # author configured, and nothing says so.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000040",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/errors-unsupported-proxy-001/api/.*"},
+         "response": {"proxyBaseUrl": "http://upstream.invalid",
+                      "additionalProxyRequestHeaders": {"X-Trace": "e2e"},
+                      "proxyUrlPrefixToRemove": "/e2e/errors-unsupported-proxy-001"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            title: "Unsupported feature"
+            source: {pointer: "/response/additionalProxyRequestHeaders"}
+          - code: 1000
+            source: {pointer: "/response/proxyBaseUrl"}
+          - code: 1000
+            source: {pointer: "/response/proxyUrlPrefixToRemove"}
+      body_regex: 'proxyBaseUrl \(proxy mode\) is not supported in mockulus v1.*ROADMAP\.md'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000040}
+    expect: {status: 404}
+
+  # fromConfiguredStub is deferred on the same terms. `additionalHeaders` is
+  # not: it reads like a proxy field but WireMock has no such response field
+  # and answers it "Unrecognized field" with code 10, so pointing its author at
+  # the roadmap would send them to wait for something nobody is building. The
+  # two codes in one answer are the whole distinction — deferred feature versus
+  # name nothing defines.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000041",
+         "request": {"method": "GET", "urlPath": "/e2e/errors-unsupported-proxy-001/replay"},
+         "response": {"status": 200,
+                      "fromConfiguredStub": "e770e770-0000-4000-8000-000000000049",
+                      "additionalHeaders": {"X-Added": "1"}}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/response/additionalHeaders"}
+          - code: 1000
+            source: {pointer: "/response/fromConfiguredStub"}
+      body_regex: 'fromConfiguredStub \(proxy mode\) is not supported in mockulus v1.*ROADMAP\.md'
+
+  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000041}
+    expect: {status: 404}
+
+  # Neither rejected stub is servable: a proxy stub that half-registered would be
+  # worse than none, because the 404 here would instead be a silent empty 200.
+  - request: {port: mock, method: GET, path: /e2e/errors-unsupported-proxy-001/api/things}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/errors-unsupported-proxy-001/replay}
+    expect: {status: 404}
+
+  # The control: the same request criteria with a plain local response register
+  # and serve, pinning the two 422s on the proxy fields alone.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000042",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/errors-unsupported-proxy-001/api/.*"},
+         "response": {"status": 200, "body": "local"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/errors-unsupported-proxy-001/api/things}
+    expect: {status: 200, body: "local"}

@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-cookies-001
+behaviors: [B-REQ-COOKIES, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc000a-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-cookies-001/session",
+                     "cookies": {"session": {"equalTo": "abc123"}}},
+         "response": {"status": 200, "body": "cookie-matched", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          cookies:
+            session: {equalTo: "abc123"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc000a-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-cookies-001/legacy",
+                     "cookies": {"legacy": {"absent": true}}},
+         "response": {"status": 200, "body": "cookie-absent", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/session
+      headers: {Cookie: "session=abc123"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "cookie-matched"
+
+  # The cookie is found among several pairs in one Cookie header, so the header
+  # is genuinely being split rather than compared whole.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/session
+      headers: {Cookie: "other=1; session=abc123; last=z"}
+    expect: {status: 200, body: "cookie-matched"}
+
+  # Wrong value, and no Cookie header at all, are both non-matches.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/session
+      headers: {Cookie: "session=other"}
+    expect: {status: 404}
+  - request: {method: GET, path: /e2e/url-criteria-cookies-001/session}
+    expect: {status: 404}
+
+  # Cookie names are case-sensitive — unlike header names, and worth pinning
+  # because the cookie arrives inside a header whose own name is not. Both
+  # servers agree, and WireMock's own near-miss table calls it "Cookie is not
+  # present" rather than a value mismatch.
+  #
+  # Do not "correct" this to 200 if a differential run reports the oracle
+  # serving one. Jetty reuses the cookies it parsed for the previous request on
+  # the same connection whenever the new Cookie header differs from it only by
+  # case, so a keep-alive connection makes the step above answer this one. The
+  # oracle client disables keep-alives for exactly this reason; on a fresh
+  # connection WireMock 404s here.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/session
+      headers: {Cookie: "SESSION=abc123"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/session
+      headers: {Cookie: "sEsSiOn=abc123"}
+    expect: {status: 404}
+
+  # A mixed-case name among several pairs still leaves the cookie absent, so
+  # the split of the header is not where the case-sensitivity is lost either.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/session
+      headers: {Cookie: "other=1; SESSION=abc123"}
+    expect: {status: 404}
+
+  # The value is case-sensitive too — the pair below is the one that would
+  # start passing if either half of the comparison ever went case-insensitive.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/session
+      headers: {Cookie: "session=ABC123"}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/url-criteria-cookies-001/legacy}
+    expect: {status: 200, body: "cookie-absent"}
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/legacy
+      headers: {Cookie: "legacy=1"}
+    expect: {status: 404}
+
+  # Absence reads the same name the same way: a differently-cased LEGACY is a
+  # different cookie, so `legacy` is still absent and the stub still matches.
+  - request:
+      method: GET
+      path: /e2e/url-criteria-cookies-001/legacy
+      headers: {Cookie: "LEGACY=1"}
+    expect: {status: 200, body: "cookie-absent"}

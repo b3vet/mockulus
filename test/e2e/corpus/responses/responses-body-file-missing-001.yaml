@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-body-file-missing-001
+behaviors:
+  - B-ERR-1022
+  - B-ADMIN-GET-PUT-DELETE-FILES-NAME-GET-FILES
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+# n/a: 1022 is a mockulus catalog code. Probed against pinned WireMock 3.13.2,
+# which answers the same case with a Jetty HTML error page — same 500, entirely
+# different body and Content-Type.
+wm: n/a
+# Two stubs and one file, so the dangling reference is observed next to a
+# healthy one. That pairing is also what makes the case runnable: a create
+# splices the compiled stub into the snapshot without resolving bodyFileName,
+# so the reference is only classified on the next full rebuild — which the
+# fixture upload in step 3 is what triggers. Serving stub A before that step
+# yields an empty 200 rather than either correct answer; see the report filed
+# with this case.
+steps:
+  # Registering a stub before uploading its file is legal: ordering the two
+  # writes would otherwise be the client's problem, and a CI job that seeds
+  # stubs and fixtures concurrently has no way to guarantee it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990801-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-file-missing-001/orphan"},
+         "response": {"status": 200, "bodyFileName": "responses-body-file-missing-001-orphan.json"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990801-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-body-file-missing-001/healthy"},
+         "response": {"status": 200, "bodyFileName": "responses-body-file-missing-001-healthy.json"}}
+    expect: {status: 201}
+
+  # Only the second stub's fixture is uploaded.
+  - admin:
+      method: PUT
+      path: /__admin/files/responses-body-file-missing-001-healthy.json
+      body: '{"payload":"uploaded"}'
+    expect: {status: 201}
+
+  # The stub whose file never arrived serves the dangling-reference error rather
+  # than an empty 200. An empty 200 is the dangerous answer: a test using this
+  # stub would pass against a body that was never uploaded.
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-missing-001/orphan}
+    expect:
+      status: 500
+      body_json_subset:
+        errors:
+          - code: 1022
+            title: "Body file not found"
+      # The file name is in the detail, so an operator learns which upload is
+      # missing without going back to the mapping.
+      body_regex: 'responses-body-file-missing-001-orphan\.json'
+
+  # The negative control, and the reason the error is per-stub: one unresolved
+  # reference must not quarantine the snapshot or degrade its neighbours.
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-missing-001/healthy}
+    expect:
+      status: 200
+      body: '{"payload":"uploaded"}'
+
+  # Uploading the missing file clears the error: the state is a dangling
+  # reference, not a permanent mark on the stub.
+  - admin:
+      method: PUT
+      path: /__admin/files/responses-body-file-missing-001-orphan.json
+      body: '{"payload":"arrived late"}'
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-missing-001/orphan}
+    expect:
+      status: 200
+      body: '{"payload":"arrived late"}'
+
+  # And the reference stays live: removing the file puts the stub back into the
+  # 1022 state instead of leaving it serving bytes that no longer exist.
+  - admin: {method: DELETE, path: /__admin/files/responses-body-file-missing-001-orphan.json}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-body-file-missing-001/orphan}
+    expect:
+      status: 500
+      body_json_subset:
+        errors:
+          - code: 1022

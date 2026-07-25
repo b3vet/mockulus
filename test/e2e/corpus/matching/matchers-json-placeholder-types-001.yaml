@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-json-placeholder-types-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # One stub carrying all three typed placeholders, so every negative below
+  # isolates exactly one of them while the other two stay satisfied.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "bbbb0006-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-json-placeholder-types-001/typed",
+                     "bodyPatterns": [{"equalToJson": "{\"s\":\"${json-unit.any-string}\",\"n\":\"${json-unit.any-number}\",\"b\":\"${json-unit.any-boolean}\"}"}]},
+         "response": {"status": 200, "body": "typed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-types-001/typed
+      body: '{"s":"anything","n":-1.5,"b":false}'
+    expect: {status: 200, body: "typed"}
+
+  # The empty string is a string and zero is a number: the placeholders test the
+  # type, not truthiness.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-types-001/typed
+      body: '{"s":"","n":0,"b":true}'
+    expect: {status: 200, body: "typed"}
+
+  # any-string rejects a number...
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-types-001/typed
+      body: '{"s":42,"n":1,"b":true}'
+    expect: {status: 404}
+
+  # ...any-number rejects the string spelling of a number, which is the
+  # confusion this placeholder exists to catch...
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-types-001/typed
+      body: '{"s":"x","n":"42","b":true}'
+    expect: {status: 404}
+
+  # ...and any-boolean rejects 1.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-types-001/typed
+      body: '{"s":"x","n":1,"b":1}'
+    expect: {status: 404}
+
+  # null satisfies none of the typed placeholders — only ${json-unit.ignore}
+  # and ${json-unit.ignore-element} accept it.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-types-001/typed
+      body: '{"s":null,"n":1,"b":true}'
+    expect: {status: 404}
+
+  # A missing member is a mismatch too: a typed placeholder stands in for the
+  # value, not for the member.
+  - request:
+      method: POST
+      path: /e2e/matchers-json-placeholder-types-001/typed
+      body: '{"n":1,"b":true}'
+    expect: {status: 404}

@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-fallback-lookaround-001
+behaviors:
+  - B-REQ-URLPATHPATTERN
+  - B-MATCH-MATCHES-DOESNOTMATCH
+wm: verified
+# Every unmatched step lands on a body that differs by design: WireMock renders a
+# near-miss diff table on a 404 and mockulus deliberately does not (deviation #2,
+# #18). Status and headers are still diffed, and status is exactly what a matcher
+# case is about.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Lookaround is the headline reason the two-engine strategy of §6.6 exists: RE2
+  # refuses `(?!…)` outright, so a stub carrying one can only register if the
+  # regexp2 fallback took it. Registration succeeding is therefore already
+  # evidence — a single-engine mockulus would have 422'd here with code 1003.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110001-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/regex-fallback-lookaround-001/tenant/(?!admin)[a-z]+"},
+         "response": {"status": 200, "body": "negative lookahead"}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPathPattern: "/e2e/regex-fallback-lookaround-001/tenant/(?!admin)[a-z]+"}
+
+  # Accepting the pattern is worth nothing if it does not evaluate correctly at
+  # serve time, so both sides of the lookahead are pinned. A tenant that is not
+  # `admin` matches…
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-lookaround-001/tenant/acme}
+    expect: {status: 200, body: "negative lookahead"}
+
+  # …and the one word the lookahead excludes does not. Without the fallback
+  # engine actually honouring `(?!admin)` this would match too, which is the
+  # silent-wrong-answer failure the strategy is there to prevent.
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-lookaround-001/tenant/admin}
+    expect: {status: 404}
+
+  # `[a-z]+` still has to hold: the lookahead does not turn the rest of the
+  # pattern into a wildcard.
+  - request: {port: mock, method: GET, path: /e2e/regex-fallback-lookaround-001/tenant/ACME}
+    expect: {status: 404}
+
+  # Lookbehind, the other direction RE2 has no answer for. The `[A-Z]{3}` prefix
+  # consumes the currency code first, because the whole pattern is anchored with
+  # \A: a lookbehind written at the start of the pattern could never be satisfied
+  # and would prove nothing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110001-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-fallback-lookaround-001/amount",
+                     "bodyPatterns": [{"matches": "[A-Z]{3}(?<=USD)[0-9]+"}]},
+         "response": {"status": 200, "body": "lookbehind"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-lookaround-001/amount, body: "USD42"}
+    expect: {status: 200, body: "lookbehind"}
+
+  # The negative that makes the lookbehind load-bearing: `[A-Z]{3}[0-9]+` alone
+  # would happily take EUR42, so a 404 here is the assertion under test.
+  - request: {port: mock, method: POST, path: /e2e/regex-fallback-lookaround-001/amount, body: "EUR42"}
+    expect: {status: 404}

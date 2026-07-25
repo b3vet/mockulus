@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-jsonpath-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The BARE form asks whether the expression selects anything non-empty. The
+  # truthiness rules below were each probed against pinned WireMock, and they
+  # are not the obvious ones: the emptiness test applies to collections only.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999a01a-0000-4000-8000-000000000001",
+         "request":{"method":"POST","urlPath":"/e2e/matchers-jsonpath-001/bare",
+                    "bodyPatterns":[{"matchesJsonPath":"$.customer.id"}]},
+         "response":{"status":200,"body":"matched"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/bare
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "matched"}
+
+  # An EMPTY STRING is a present scalar and matches. This is the case a naive
+  # implementation gets wrong by applying a generic emptiness test.
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/bare
+      body: '{"customer":{"id":""}}'
+    expect: {status: 200, body: "matched"}
+
+  # A selected null does not match, and neither does a missing path.
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/bare
+      body: '{"customer":{"id":null}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/bare
+      body: '{"customer":{}}'
+    expect: {status: 404}
+
+  # A body that is not JSON at all is a plain non-match, never an error.
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/bare
+      body: 'not json'
+    expect: {status: 404}
+
+  # The NESTED form applies an inner matcher to what was selected.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999a01a-0000-4000-8000-000000000002",
+         "request":{"method":"POST","urlPath":"/e2e/matchers-jsonpath-001/nested",
+                    "bodyPatterns":[{"matchesJsonPath":
+                      {"expression":"$.customer.id","matches":"[A-Z]{2}[0-9]{6}"}}]},
+         "response":{"status":200,"body":"nested"}}
+    expect: {status: 201}
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/nested
+      body: '{"customer":{"id":"AB123456"}}'
+    expect: {status: 200, body: "nested"}
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/nested
+      body: '{"customer":{"id":"nope"}}'
+    expect: {status: 404}
+
+  # The nested form is ANY-OF over the selected values: one satisfying element
+  # is enough.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999a01a-0000-4000-8000-000000000003",
+         "request":{"method":"POST","urlPath":"/e2e/matchers-jsonpath-001/anyof",
+                    "bodyPatterns":[{"matchesJsonPath":
+                      {"expression":"$.items[*].sku","equalTo":"B"}}]},
+         "response":{"status":200,"body":"anyof"}}
+    expect: {status: 201}
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/anyof
+      body: '{"items":[{"sku":"A"},{"sku":"B"}]}'
+    expect: {status: 200, body: "anyof"}
+  - request:
+      method: POST
+      path: /e2e/matchers-jsonpath-001/anyof
+      body: '{"items":[{"sku":"A"}]}'
+    expect: {status: 404}

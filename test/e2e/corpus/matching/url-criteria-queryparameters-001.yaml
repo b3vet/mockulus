@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: url-criteria-queryparameters-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0007-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-queryparameters-001/search",
+                     "queryParameters": {"q": {"equalTo": "hello"}}},
+         "response": {"status": 200, "body": "query-matched", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            q: {equalTo: "hello"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "cccc0007-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/url-criteria-queryparameters-001/absent",
+                     "queryParameters": {"debug": {"absent": true}}},
+         "response": {"status": 200, "body": "query-absent", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-001/search?q=hello"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "query-matched"
+
+  # The matcher gates the match rather than mere presence of the parameter.
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-001/search?q=other"}
+    expect: {status: 404}
+
+  # A criterion on a parameter that is not there fails: this is a value
+  # criterion, not an optional one.
+  - request: {method: GET, path: /e2e/url-criteria-queryparameters-001/search}
+    expect: {status: 404}
+
+  # A repeated parameter is any-of: one value satisfying the matcher is enough,
+  # even when another value does not (SPEC §5.2, verified against WireMock).
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-001/search?q=other&q=hello"}
+    expect: {status: 200, body: "query-matched"}
+
+  # Parameters the stub never mentions are ignored, so a criterion set is not an
+  # exhaustive description of the query.
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-001/search?q=hello&extra=1"}
+    expect: {status: 200, body: "query-matched"}
+
+  # `absent` is the key-level matcher: it holds only while the parameter is
+  # missing altogether.
+  - request: {method: GET, path: /e2e/url-criteria-queryparameters-001/absent}
+    expect: {status: 200, body: "query-absent"}
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-001/absent?debug=1"}
+    expect: {status: 404}
+
+  # A valueless parameter is present-with-empty-string, so it defeats `absent`
+  # too — the pairing that proves ?debug= is not treated as "not there".
+  - request: {method: GET, path: "/e2e/url-criteria-queryparameters-001/absent?debug="}
+    expect: {status: 404}

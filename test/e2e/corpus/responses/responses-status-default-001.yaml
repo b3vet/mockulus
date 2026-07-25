@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+id: responses-status-default-001
+behaviors:
+  - B-RESP-STATUS
+  - B-STUB-RESPONSE
+# n/a even though the *served* statuses here match WireMock 3.13.2 exactly
+# (probed: omitted, 0 and -7 all serve 200). What is not comparable is the admin
+# echo: WireMock rewrites the stored response to `"status": 200`, while mockulus
+# stores and returns the submitted document verbatim, so every create step of
+# this case would report a body diff that says nothing about what is served.
+# The out-of-range rejection at the end is a mockulus-only deviation outright.
+wm: n/a
+steps:
+  # An absent status is the common shape of a hand-written stub, and it must
+  # serve 200 rather than 0.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990201-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-status-default-001/absent"},
+         "response": {"body": "defaulted"}}
+    expect:
+      status: 201
+
+  # A non-positive status is WireMock's spelling of "unset", so it normalises to
+  # the same 200 rather than producing a status line no client can parse.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990201-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-status-default-001/zero"},
+         "response": {"status": 0, "body": "zeroed"}}
+    expect:
+      status: 201
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990201-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-status-default-001/negative"},
+         "response": {"status": -7, "body": "negated"}}
+    expect:
+      status: 201
+
+  - request: {port: mock, method: GET, path: /e2e/responses-status-default-001/absent}
+    expect: {status: 200, body: "defaulted"}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-status-default-001/zero}
+    expect: {status: 200, body: "zeroed"}
+
+  - request: {port: mock, method: GET, path: /e2e/responses-status-default-001/negative}
+    expect: {status: 200, body: "negated"}
+
+  # The negative half of the contract: normalisation covers "unset", not
+  # "nonsense". A positive status outside the HTTP range is refused at
+  # registration rather than written onto the wire, where it would produce a
+  # malformed status line. WireMock accepts it — a deliberate deviation from a
+  # defect, which is the other reason this case cannot be differentially run.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "99990201-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/responses-status-default-001/impossible"},
+         "response": {"status": 1000, "body": "unreachable"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/status"}
+      body_regex: 'outside the valid HTTP range'
+
+  # And nothing was stored, so the rejected stub serves nothing.
+  - request: {port: mock, method: GET, path: /e2e/responses-status-default-001/impossible}
+    expect: {status: 404}

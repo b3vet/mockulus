@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+id: regex-dotall-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18). Status is still diffed,
+# and status is the entire observable of a dot-matches-newline question.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # WireMock compiles stub patterns with DOTALL on, so a bare `.` spans a line
+  # break. Go's regexp defaults to the opposite, which means mockulus has to set
+  # the flag explicitly (§6.6.3) — get that wrong and every multi-line body
+  # matcher silently stops matching.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110004-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-dotall-001/dot",
+                     "bodyPatterns": [{"matches": "a.b"}]},
+         "response": {"status": 200, "body": "dot spans the newline"}}
+    expect: {status: 201}
+
+  # The assertion: a real newline between a and b, matched by a bare dot.
+  - request: {port: mock, method: POST, path: /e2e/regex-dotall-001/dot, body: "a\nb"}
+    expect: {status: 200, body: "dot spans the newline"}
+
+  # The control, so the step above is not passing merely because `a.b` matches
+  # everything: an ordinary character in the same position matches too…
+  - request: {port: mock, method: POST, path: /e2e/regex-dotall-001/dot, body: "axb"}
+    expect: {status: 200, body: "dot spans the newline"}
+
+  # …while two characters do not, because `.` is still exactly one character
+  # and the pattern is still anchored.
+  - request: {port: mock, method: POST, path: /e2e/regex-dotall-001/dot, body: "axyb"}
+    expect: {status: 404}
+
+  # DOTALL is applied as a wrapper flag rather than baked into the pattern, so a
+  # stub author who wants the other behavior can still turn it off inline. This
+  # is the documented escape hatch of §6.6.3 and it has to keep working, or the
+  # wrapper would be silently un-overridable.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "11110004-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/regex-dotall-001/nodot",
+                     "bodyPatterns": [{"matches": "(?-s)a.b"}]},
+         "response": {"status": 200, "body": "dot stops at the newline"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/regex-dotall-001/nodot, body: "axb"}
+    expect: {status: 200, body: "dot stops at the newline"}
+
+  # The same subject that matched the DOTALL stub is refused once the pattern
+  # opts out, which is what proves the opt-out reached the engine.
+  - request: {port: mock, method: POST, path: /e2e/regex-dotall-001/nodot, body: "a\nb"}
+    expect: {status: 404}

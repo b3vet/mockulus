@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: errors-body-too-large-001
+behaviors: [B-ERR-1030, B-DEV-DEVIATION-6, B-CFG-MAX-BODY-BYTES]
+# The tiny-body variant sets max_body_bytes to 1KiB. The default cap is 10 MiB,
+# which no corpus case can reach without a 10 MiB fixture.
+config: tiny-body
+# Deviation #6: WireMock's request body is unbounded and it would serve these
+# requests normally, so there is nothing to diff.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "e770e770-0000-4000-8000-000000000070",
+         "request": {"method": "POST", "urlPath": "/e2e/errors-body-too-large-001/echo"},
+         "response": {"status": 200, "body": "under the cap"}}
+    expect: {status: 201}
+
+  # A body inside the cap is served normally: the knob rejects oversize bodies,
+  # it does not reject bodies.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/errors-body-too-large-001/echo
+      body: '{"small": true}'
+    expect: {status: 200, body: "under the cap"}
+
+  # Past the cap the request is refused with 413 and code 1030 rather than being
+  # matched against a truncated body — a truncated body would silently select
+  # the wrong stub, which is worse than a loud refusal.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/errors-body-too-large-001/echo
+      body_file: stubs/errors-oversized-body.json
+    expect:
+      status: 413
+      body_json_subset:
+        errors:
+          - code: 1030
+            title: "Request body too large"
+      body_regex: 'request body exceeds max_body_bytes'
+
+  # The cap is applied before matching, so an oversized body on a path no stub
+  # claims is still 413 and not the 404 an unmatched request would get. That is
+  # what makes the cap a guard on the reader rather than on the response.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/errors-body-too-large-001/nothing-here
+      body_file: stubs/errors-oversized-body.json
+    expect:
+      status: 413
+      body_json_subset:
+        errors: [{code: 1030}]
+
+  # The under-cap request on that same unclaimed path is a plain 404, which pins
+  # the 413 above on the body size and not on the path.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/errors-body-too-large-001/nothing-here
+      body: '{"small": true}'
+    expect: {status: 404}

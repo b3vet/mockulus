@@ -1,0 +1,147 @@
+# SPDX-License-Identifier: Apache-2.0
+id: precedence-stub-identity-001
+behaviors: [B-STUB-ID-UUID, B-STUB-NAME, B-STUB-METADATA]
+# The rejection step asserts the mockulus error envelope. WireMock agrees on
+# the 422 and on code 10 with pointer `/id`, but reports it as a Jackson parse
+# failure ("Error parsing JSON"), and the differential diff compares the whole
+# error body — so this case is recorded from the spec instead of replayed.
+wm: n/a
+steps:
+  # Registered under `uuid` alone and in upper case: the response must come
+  # back carrying both spellings of the identity, canonicalised to lower case.
+  # A client that reads `id` and a client that reads `uuid` get the same value.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"uuid": "DDDD0006-0000-4000-8000-000000000001",
+         "name": "precedence identity fixture",
+         "metadata": {"e2eCase": "precedence-stub-identity-001", "tier": "gold"},
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-stub-identity-001/identity"},
+         "response": {"status": 200, "body": "identified",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "dddd0006-0000-4000-8000-000000000001"
+        uuid: "dddd0006-0000-4000-8000-000000000001"
+        # name and metadata are stored verbatim: neither is normalised, and
+        # neither participates in matching.
+        name: "precedence identity fixture"
+        metadata: {e2eCase: "precedence-stub-identity-001", tier: "gold"}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-stub-identity-001/identity}
+    expect: {status: 200, body: "identified"}
+
+  # The stub is addressable by the canonical lower-case id even though it was
+  # registered in upper case, which is what "canonicalised" has to mean to be
+  # useful — and name and metadata survive the round trip through the store.
+  # Both spellings of the identity come back, on the document the server stored
+  # rather than the one the client sent (§5.2).
+  - admin: {method: GET, path: /__admin/mappings/dddd0006-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "dddd0006-0000-4000-8000-000000000001"
+        uuid: "dddd0006-0000-4000-8000-000000000001"
+        name: "precedence identity fixture"
+        metadata: {e2eCase: "precedence-stub-identity-001", tier: "gold"}
+
+  # Metadata is searchable, not just stored. The matcher keys on this case's own
+  # id so the assertion stays exact while other cases run against the same
+  # instance, and stubs carrying no metadata are never considered (deviation
+  # #20), which is what makes a shared deployment safe to search.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"e2eCase\":\"precedence-stub-identity-001\"}",
+         "ignoreExtraElements": true}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "dddd0006-0000-4000-8000-000000000001"
+            name: "precedence identity fixture"
+            metadata: {tier: "gold"}
+        meta: {total: 1}
+
+  # A non-UUID id is rejected at registration rather than stored as an opaque
+  # string: WireMock deserializes the field as a java.util.UUID, so a stub that
+  # registered here could never be moved back.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "not-a-uuid",
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-stub-identity-001/rejected"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/id"}
+
+  # The stricter half of §5.2 — "canonical 36-character" — is a real constraint
+  # and not a description of the happy path. The three spellings below all name
+  # a valid UUID and are all rejected, because WireMock's deserializer takes the
+  # 36-character form and nothing else. Accepting them would be worse than a
+  # divergence: mockulus would answer 201 with an id the client never sent, and
+  # every later call the client makes with its own spelling would miss.
+  #
+  # 32-character dashless.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "dddd00060000400080000000000000f1",
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-stub-identity-001/rejected"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/id"}
+      body_regex: 'canonical 36-character UUID'
+
+  # URN form.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "urn:uuid:dddd0006-0000-4000-8000-0000000000f2",
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-stub-identity-001/rejected"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/id"}
+
+  # Brace-wrapped. The alias is held to the same rule, so a client cannot slip a
+  # non-canonical id in through `uuid` instead.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"uuid": "{dddd0006-0000-4000-8000-0000000000f3}",
+         "request": {"method": "GET", "urlPath": "/e2e/precedence-stub-identity-001/rejected"},
+         "response": {"status": 200, "body": "never"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/uuid"}
+
+  # None of the rejected ids exists under the canonical spelling they would have
+  # been rewritten to, which is the point: a rejection that still registered the
+  # stub somewhere would be worse than accepting it.
+  - admin: {method: GET, path: /__admin/mappings/dddd0006-0000-4000-8000-0000000000f1}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/precedence-stub-identity-001/rejected}
+    expect: {status: 404}

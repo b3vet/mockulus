@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+id: unmatched-diagnostics-variant-004
+behaviors:
+  - B-CFG-DIAGNOSTICS-ON-UNMATCHED
+# The one variant where diagnostics_on_unmatched is true. Nothing else in the
+# corpus boots it, so without this case the knob is never exercised at all.
+config: diagnostics
+# n/a: the unmatched body is out of the strict-compat surface either way
+# (deviation #2/#18), so there is no oracle to diff against here.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "04040004-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/unmatched-diagnostics-variant-004/orders",
+                     "headers": {"X-Api-Key": {"equalTo": "secret"}}},
+         "response": {"status": 200, "body": "orders"}}
+    expect: {status: 201}
+
+  # Turning the knob on must not disturb the matching path itself: a stub that
+  # matches still serves its own response, unmodified.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/unmatched-diagnostics-variant-004/orders
+      headers: {X-Api-Key: secret}
+    expect: {status: 200, body: "orders"}
+
+  # §5.4 scopes the knob to *detail in the body*: the status and the
+  # Content-Type are the same in both variants, so a client that only reads
+  # those cannot tell a debugging deployment from a production one.
+  #
+  # The body is where the variant earns its name. It still opens with the
+  # default sentence — turning diagnostics on appends, it does not replace, so a
+  # client matching on the first line keeps working — and then names the stub
+  # that came closest and the one criterion that did not line up. That last part
+  # is the whole point of the knob: "no stub matched" is not actionable, "this
+  # stub wanted X-Api-Key and your request had none" is.
+  #
+  # Asserted by regex rather than byte-for-byte because §6.8 sets the bar at
+  # helpful and stable, not fixed: the wording of a diagnostic is outside the
+  # compatibility surface and pinning it exactly would make every improvement to
+  # it a corpus edit.
+  - request: {port: mock, method: GET, path: /e2e/unmatched-diagnostics-variant-004/orders}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body_regex: "^Request was not matched\n[\\s\\S]*04040004-0000-4000-8000-000000000001[\\s\\S]*X-Api-Key"
+
+  # A request that no stub is close to still gets a 404, not an error: the
+  # scorer must cope with having nothing worth reporting.
+  - request: {port: mock, method: DELETE, path: /e2e/unmatched-diagnostics-variant-004/unrelated}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body_regex: "^Request was not matched"
+
+  - admin: {method: DELETE, path: /__admin/mappings/04040004-0000-4000-8000-000000000001}
+    expect: {status: 200}
