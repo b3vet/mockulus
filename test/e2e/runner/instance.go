@@ -41,6 +41,10 @@ const (
 	VariantTLS           = "tls"
 	VariantFastClock     = "fast-clock"
 	VariantFileStore     = "file-store"
+	// VariantTinyBody shrinks the request-body cap so the 413 of deviation #6 is
+	// reachable from a corpus case. The default cap is 10 MiB, which no case can
+	// exercise without committing a 10 MiB fixture.
+	VariantTinyBody = "tiny-body"
 )
 
 // AdminToken is the token the `authed` variant requires. It is a fixture, not a
@@ -58,6 +62,7 @@ var variantEnv = map[string]map[string]string{
 	VariantTemplatingOff: {"MOCKULUS_TEMPLATING_ENABLED": "off"},
 	VariantDiagnostics:   {"MOCKULUS_DIAGNOSTICS_ON_UNMATCHED": "true"},
 	VariantH2C:           {"MOCKULUS_H2C_ENABLED": "true"},
+	VariantTinyBody:      {"MOCKULUS_MAX_BODY_BYTES": "1KiB"},
 	VariantFastClock: {
 		"MOCKULUS_EPHEMERAL_STUB_TTL": "3s",
 		"MOCKULUS_RESYNC_INTERVAL":    "2s",
