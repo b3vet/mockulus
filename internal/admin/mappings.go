@@ -47,8 +47,9 @@ func (h *Handler) createMapping(w http.ResponseWriter, r *http.Request) {
 		// Creating over an existing id is rejected rather than treated as an
 		// update: an accidental collision would otherwise silently replace
 		// another suite's stub, and PUT exists for the deliberate case.
-		wmcompat.WriteError(w, wmcompat.NewFieldError(wmcompat.CodeDuplicateStubID, "/id",
-			"a stub mapping with id "+id+" already exists; use PUT to replace it"))
+		// No source pointer: WireMock's 109 carries a bare title and detail.
+		wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeDuplicateStubID,
+			"ID of the provided stub mapping '"+id+"' is already taken by another stub mapping"))
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		h.storeError(w, "get_stub", err)

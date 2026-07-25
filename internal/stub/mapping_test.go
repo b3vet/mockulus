@@ -524,3 +524,46 @@ func BenchmarkCompileTypicalStub(b *testing.B) {
 		}
 	}
 }
+
+// An explicit null is absence, not a competing body form: WireMock reads
+// {"body":null,"jsonBody":{…}} as declaring only jsonBody.
+func TestNullBodyFieldIsNotAConflict(t *testing.T) {
+	cs := compileOK(t, `{"response":{"body":null,"jsonBody":{"a":1}}}`)
+	if string(cs.Response.Body) != `{"a":1}` {
+		t.Errorf("jsonBody should win over an explicit null body, got %q", cs.Response.Body)
+	}
+
+	// Two real forms are still a conflict.
+	if problems := compileErrs(t, `{"response":{"body":"x","jsonBody":{"a":1}}}`); len(problems) == 0 {
+		t.Error("two non-null body forms should still be rejected")
+	}
+}
+
+// jsonBody is served compact: the submitted document's indentation is
+// formatting, not payload.
+func TestJSONBodyIsServedCompact(t *testing.T) {
+	cs := compileOK(t, `{"response":{"jsonBody":{"a":   1,
+		"b":  [1,  2]}}}`)
+	if got := string(cs.Response.Body); got != `{"a":1,"b":[1,2]}` {
+		t.Errorf("jsonBody should be compacted, got %q", got)
+	}
+}
+
+// WireMock treats a non-positive status as unset and serves 200, so rejecting
+// it would refuse a stub it accepts.
+func TestNonPositiveStatusNormalisesTo200(t *testing.T) {
+	for _, doc := range []string{
+		`{"response":{"status":0}}`,
+		`{"response":{"status":-1}}`,
+		`{"response":{"status":null}}`,
+	} {
+		if got := compileOK(t, doc).Response.Status; got != 200 {
+			t.Errorf("%s: status = %d, want 200", doc, got)
+		}
+	}
+	// A positive out-of-range status is still refused: WireMock writes it
+	// unvalidated and produces a malformed status line.
+	if problems := compileErrs(t, `{"response":{"status":1000}}`); len(problems) == 0 {
+		t.Error("a positive out-of-range status should be rejected")
+	}
+}

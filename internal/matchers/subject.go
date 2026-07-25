@@ -24,6 +24,9 @@ const (
 type KeyValues struct {
 	present bool
 	values  []string
+	// strictAbsence marks a subject whose absence fails a negative matcher as
+	// well as a positive one.
+	strictAbsence bool
 
 	state jsonState
 	value any
@@ -42,9 +45,25 @@ func AbsentKey() *KeyValues { return &KeyValues{} }
 func (k *KeyValues) Set(present bool, values []string) {
 	k.present = present
 	k.values = values
+	k.strictAbsence = false
 	k.state = jsonUnparsed
 	k.value = nil
 }
+
+// SetStrictAbsence repoints the subject and marks absence as failing negative
+// matchers too.
+//
+// WireMock's absence rule is not uniform across field kinds, verified directly:
+// an absent header satisfies doesNotMatch, an absent cookie satisfies neither
+// doesNotMatch nor matches. The distinction lives on the subject rather than in
+// the matcher, because it is a property of where the value came from.
+func (k *KeyValues) SetStrictAbsence(present bool, values []string) {
+	k.Set(present, values)
+	k.strictAbsence = true
+}
+
+// AbsenceFailsNegative reports whether absence fails a negative matcher.
+func (k *KeyValues) AbsenceFailsNegative() bool { return k.strictAbsence }
 
 // Present implements Subject.
 func (k *KeyValues) Present() bool { return k.present }
@@ -91,13 +110,13 @@ type Body struct {
 
 // NewBody builds a subject over raw request bytes.
 func NewBody(raw []byte) *Body {
-	return &Body{raw: raw, present: true}
+	return &Body{raw: raw, present: len(raw) > 0}
 }
 
 // Set repoints a pooled instance at a new request's body.
 func (b *Body) Set(raw []byte) {
 	b.raw = raw
-	b.present = true
+	b.present = len(raw) > 0
 	b.text, b.textSet = "", false
 	b.state, b.value = jsonUnparsed, nil
 }
@@ -111,8 +130,13 @@ func (b *Body) Reset() {
 	b.state, b.value = jsonUnparsed, nil
 }
 
-// Present implements Subject. A body is present even when empty: the request
-// carried one, it just had no content.
+// Present implements Subject.
+//
+// A zero-length body counts as ABSENT, which is WireMock's rule and not the
+// obvious one: a stub declaring any bodyPatterns fails every one of them
+// against an empty body, including matches:".*" and equalTo:"". Only
+// {"absent": true} matches an empty body. Verified directly against the pinned
+// version, for Content-Length: 0, chunked-empty and no body alike.
 func (b *Body) Present() bool { return b.present }
 
 // Values implements Subject.

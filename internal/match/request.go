@@ -155,7 +155,8 @@ func (r *ParsedRequest) CookieSubject(name string) matchers.Subject {
 		r.cookiesParsed = true
 	}
 	values, present := r.cookies[name]
-	r.keyScratch.Set(present, values)
+	// An absent cookie fails a negative matcher too, unlike an absent header.
+	r.keyScratch.SetStrictAbsence(present, values)
 	return &r.keyScratch
 }
 
