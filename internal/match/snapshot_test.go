@@ -238,6 +238,54 @@ func TestHeaderQueryCookieCriteria(t *testing.T) {
 	}
 }
 
+// Both halves of a cookie criterion are case-sensitive: the name it looks up
+// and the value it compares. WireMock agrees on both, and its near-miss table
+// attributes a differently-cased name to the cookie being absent.
+//
+// Worth a test of its own because a differential run can be talked out of it:
+// Jetty answers from the cookies it parsed for the previous request on the same
+// connection when the two Cookie headers differ only by case, which makes the
+// oracle look case-insensitive until the connection is fresh.
+func TestCookieCriteriaAreCaseSensitiveInNameAndValue(t *testing.T) {
+	snap := BuildSnapshot([]*stub.CompiledStub{
+		mustCompile(t, 1, "session", `{"request":{"urlPath":"/s",
+			"cookies":{"session":{"equalTo":"abc123"}}},"response":{}}`),
+		mustCompile(t, 2, "legacy", `{"request":{"urlPath":"/l",
+			"cookies":{"legacy":{"absent":true}}},"response":{}}`),
+	}, 1)
+
+	cookie := func(v string) map[string]string { return map[string]string{"Cookie": v} }
+
+	if got := match(t, snap, "GET", "/s", "", cookie("session=abc123")); got != "session" {
+		t.Errorf("the exact cookie selected %q", got)
+	}
+	// A name differing only by case, alone and among other pairs.
+	for _, header := range []string{"SESSION=abc123", "Session=abc123", "sEsSiOn=abc123",
+		"other=1; SESSION=abc123; last=z"} {
+		if got := match(t, snap, "GET", "/s", "", cookie(header)); got != "" {
+			t.Errorf("%q matched a `session` criterion, got %q", header, got)
+		}
+	}
+	// The value keeps its case too, so neither half can drift alone.
+	for _, header := range []string{"session=ABC123", "session=Abc123"} {
+		if got := match(t, snap, "GET", "/s", "", cookie(header)); got != "" {
+			t.Errorf("%q matched an equalTo \"abc123\" criterion, got %q", header, got)
+		}
+	}
+
+	// Absence reads the name the same way, so a differently-cased cookie is a
+	// different cookie and the criterion's own name is still absent.
+	if got := match(t, snap, "GET", "/l", "", nil); got != "legacy" {
+		t.Errorf("no Cookie header should satisfy absent, got %q", got)
+	}
+	if got := match(t, snap, "GET", "/l", "", cookie("LEGACY=1")); got != "legacy" {
+		t.Errorf("LEGACY leaves `legacy` absent, got %q", got)
+	}
+	if got := match(t, snap, "GET", "/l", "", cookie("legacy=1")); got != "" {
+		t.Errorf("the exact cookie should fail absent, got %q", got)
+	}
+}
+
 func TestBasicAuthCriterion(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
 		mustCompile(t, 1, "auth", `{"request":{"urlPath":"/secure",
@@ -254,6 +302,109 @@ func TestBasicAuthCriterion(t *testing.T) {
 	}
 	if got := match(t, snap, "GET", "/secure", "", nil); got != "" {
 		t.Errorf("no credentials matched, got %q", got)
+	}
+}
+
+// secureSnapshot builds the one stub the basic-auth tests below share: the
+// credentials "user:pass", whose base64 is dXNlcjpwYXNz.
+func secureSnapshot(t *testing.T) *Snapshot {
+	t.Helper()
+	return BuildSnapshot([]*stub.CompiledStub{
+		mustCompile(t, 1, "auth", `{"request":{"urlPath":"/secure",
+			"basicAuthCredentials":{"username":"user","password":"pass"}},"response":{}}`),
+	}, 1)
+}
+
+// RFC 7235 makes the scheme token case-insensitive, and WireMock 3.13.2 honours
+// it: the pinned oracle serves "basic dXNlcjpwYXNz" and "BASIC dXNlcjpwYXNz"
+// alike. What it does not tolerate is a different delimiter — a tab or a second
+// space between the token and the credentials is a miss there and here, because
+// the fold covers exactly the six characters of "Basic ".
+func TestBasicAuthSchemeTokenIsCaseInsensitive(t *testing.T) {
+	snap := secureSnapshot(t)
+
+	for _, value := range []string{
+		"Basic dXNlcjpwYXNz",
+		"basic dXNlcjpwYXNz",
+		"BASIC dXNlcjpwYXNz",
+		"BaSiC dXNlcjpwYXNz",
+	} {
+		if got := match(t, snap, "GET", "/secure", "", map[string]string{"Authorization": value}); got != "auth" {
+			t.Errorf("%q should satisfy the criterion, selected %q", value, got)
+		}
+	}
+
+	for _, value := range []string{
+		"Basic  dXNlcjpwYXNz",  // two spaces
+		"Basic\tdXNlcjpwYXNz",  // a tab for the space
+		"Basic \tdXNlcjpwYXNz", // space then tab
+		"BasicdXNlcjpwYXNz",    // no delimiter at all
+		"Bearer dXNlcjpwYXNz",  // right credentials, wrong scheme
+		"dXNlcjpwYXNz",         // no scheme at all
+		// Truncated values must be rejected, not indexed into.
+		"Basic ",
+		"Basic",
+		"",
+	} {
+		if got := match(t, snap, "GET", "/secure", "", map[string]string{"Authorization": value}); got != "" {
+			t.Errorf("%q should not satisfy the criterion, selected %q", value, got)
+		}
+	}
+}
+
+// The other half of the comparison, and the half that decides whether a
+// credential is accepted: base64 is case-significant, so folding the payload
+// would let a password the stub never declared through. WireMock compares it
+// byte for byte and so does this — including the padding, which is part of the
+// string and not re-derived by decoding it.
+func TestBasicAuthCredentialsAreCaseSensitive(t *testing.T) {
+	snap := secureSnapshot(t)
+
+	for _, value := range []string{
+		"Basic dxnlcjpwyxnz",  // the payload lower-cased
+		"Basic DXNLCJPWYXNZ",  // the payload upper-cased
+		"basic dxnlcjpwyxnz",  // folded scheme does not extend to the payload
+		"Basic dXNlcjpwYXNz=", // padding a correct payload does not need
+		"Basic cGFzczp1c2Vy",  // "pass:user", the credentials the other way round
+	} {
+		if got := match(t, snap, "GET", "/secure", "", map[string]string{"Authorization": value}); got != "" {
+			t.Errorf("%q should not satisfy the criterion, selected %q", value, got)
+		}
+	}
+}
+
+// A request may carry the header more than once, and WireMock is satisfied by
+// any one of the values — verified against the oracle with the credentials both
+// before and after an unrelated scheme. Every other header criterion here reads
+// all the values too, so basic auth reading only the first would be the odd one
+// out twice over.
+func TestBasicAuthAcceptsAnyOfSeveralAuthorizationHeaders(t *testing.T) {
+	snap := secureSnapshot(t)
+
+	matchValues := func(values ...string) string {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/secure", nil)
+		for _, v := range values {
+			req.Header.Add("Authorization", v)
+		}
+		pr := AcquireRequest(req, nil)
+		defer ReleaseRequest(pr)
+
+		cs := snap.Match(pr, nil, nil)
+		if cs == nil {
+			return ""
+		}
+		return cs.ID
+	}
+
+	if got := matchValues("Bearer t0ken", "basic dXNlcjpwYXNz"); got != "auth" {
+		t.Errorf("credentials in the second header selected %q", got)
+	}
+	if got := matchValues("basic dXNlcjpwYXNz", "Bearer t0ken"); got != "auth" {
+		t.Errorf("credentials in the first header selected %q", got)
+	}
+	if got := matchValues("Bearer t0ken", "Basic d3Jvbmc="); got != "" {
+		t.Errorf("no value carried the credentials, got %q", got)
 	}
 }
 

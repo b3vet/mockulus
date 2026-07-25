@@ -41,6 +41,12 @@ type Subject interface {
 // negative matcher as well as a positive one.
 type absenceStrict interface{ AbsenceFailsNegative() bool }
 
+// repeatable is the optional capability of a subject that can be bound to more
+// than one value, which a header, query parameter or form field can be and a
+// body cannot. Declaring it separately from Values() lets the per-value rule be
+// asked about without materializing a subject's text — see perValueScope.
+type repeatable interface{ RepeatedValues() ([]string, bool) }
+
 // Matcher is one criterion.
 type Matcher interface {
 	// Match reports whether the subject satisfies the criterion.
@@ -97,10 +103,7 @@ func matchAnyValue(s Subject, pred func(string) bool) bool {
 // satisfies neither form. Subjects that need the stricter rule say so.
 func matchNegatedValue(s Subject, pred func(string) bool) bool {
 	if !s.Present() {
-		if strict, ok := s.(absenceStrict); ok && strict.AbsenceFailsNegative() {
-			return false
-		}
-		return true
+		return !absenceFailsEverything(s)
 	}
 	values := s.Values()
 	if len(values) == 0 {
@@ -112,6 +115,49 @@ func matchNegatedValue(s Subject, pred func(string) bool) bool {
 		}
 	}
 	return false
+}
+
+// absenceFailsEverything reports a subject whose absence fails every criterion
+// except a bare `absent`.
+//
+// WireMock settles this before it looks at the pattern at all: an absent cookie
+// matches only when the criterion IS the absent pattern, so a combinator that
+// merely wraps one fails even though its operand would have matched. Verified
+// against the pinned version — an absent cookie against
+// {"or":[{"absent":true},{"equalTo":"a"}]} is a non-match, while the same
+// criterion on an absent header matches.
+func absenceFailsEverything(s Subject) bool {
+	strict, ok := s.(absenceStrict)
+	return ok && strict.AbsenceFailsNegative()
+}
+
+// perValueScope reports the values a whole criterion must be applied to one at
+// a time, and whether such a split is needed at all.
+//
+// WireMock evaluates a complete StringValuePattern — combinators included —
+// once per value of a repeated key and takes the best result, so the any-of
+// rule belongs at the top of the criterion rather than at each leaf. The
+// difference is visible as soon as a combinator is involved: over a query
+// parameter carrying "a" and "b", `not(matches "a")` holds because of "b",
+// while `and(matches "a", matches "b")` holds for neither value and so does not
+// hold at all. Applying any-of leaf by leaf gets both backwards, because it
+// lets one value satisfy one branch and another value satisfy the next.
+//
+// A subject holding one value needs no split — the leaves' own any-of over a
+// single value already is the whole rule — so bodies and ordinary single-valued
+// keys stay on exactly the path they were on.
+//
+// The question is put through the optional capability rather than through
+// Values() because Values() is not free for every subject: a body materializes
+// its text there, which is a copy of the whole request. Only a key-bound
+// subject can carry a second value, so only a key-bound subject is asked, and a
+// body-level combinator pays nothing for a rule that cannot apply to it (P2).
+func perValueScope(s Subject) ([]string, bool) {
+	repeated, ok := s.(repeatable)
+	if !ok {
+		return nil, false
+	}
+	return repeated.RepeatedValues()
 }
 
 // EqualTo compares the subject to an exact string.
@@ -250,6 +296,20 @@ type EqualToJSON struct {
 
 // Match implements Matcher.
 func (m *EqualToJSON) Match(s Subject) bool {
+	if values, split := perValueScope(s); split {
+		var view singleValue
+		for _, v := range values {
+			view.set(v)
+			if m.matchOne(&view) {
+				return true
+			}
+		}
+		return false
+	}
+	return m.matchOne(s)
+}
+
+func (m *EqualToJSON) matchOne(s Subject) bool {
 	if !s.Present() {
 		return false
 	}
@@ -328,9 +388,14 @@ func jsonEqual(expected, actual any, ignoreArrayOrder, ignoreExtra bool) bool {
 			return arrayEqualUnordered(exp, act, ignoreArrayOrder, ignoreExtra)
 		}
 		// Without ignoreArrayOrder, arrays compare element by element.
-		// ignoreExtraElements relaxes objects, not array length: an array with
-		// extra elements is a different array.
-		if len(exp) != len(act) {
+		// ignoreExtraElements relaxes an array the way it relaxes an object —
+		// elements the expected document never accounted for are ignored — and
+		// positional comparison puts those elements at the tail: the actual
+		// array has to *begin* with the expected one, so [1,2] accepts [1,2,3]
+		// and still refuses [3,1,2]. It relaxes in that direction only; an
+		// actual array shorter than the expected one is missing an expected
+		// element, which is a mismatch either way.
+		if len(act) < len(exp) || (!ignoreExtra && len(act) != len(exp)) {
 			return false
 		}
 		for i := range exp {
@@ -361,13 +426,36 @@ func jsonEqual(expected, actual any, ignoreArrayOrder, ignoreExtra bool) bool {
 }
 
 // arrayEqualUnordered pairs each expected element with a distinct actual one.
-// A greedy scan is used rather than a full bipartite matching: the arrays in a
-// stub are small, and greedy is exact whenever elements are distinguishable,
-// which they are in every realistic stub.
+//
+// ignoreExtraElements relaxes the cardinality rather than the pairing: the
+// actual array may carry elements no expected element claims, and they are
+// simply left unpaired, which turns the equality into a subset test. The
+// pairing itself is unchanged — one actual element still answers at most one
+// expected element, so [1,1] needs two 1s however many extras arrive.
+//
+// The pairing has to be a real bipartite matching. A greedy first-fit scan is
+// exact only while elements are distinguishable, and two features make them
+// genuinely ambiguous: a json-unit placeholder matches whole classes of actual
+// elements, and ignoreExtraElements lets an expected object match any actual
+// object that merely contains it. Once an expected element can pair with more
+// than one actual, greedy can consume the pairing a later element needed and
+// then report a non-match for an array that does match. What that produced was
+// an order-independence that depended on order — expected
+// ["${json-unit.any-number}", 2] accepted [7,2] and rejected [2,7] — which is
+// worse than not offering the option at all, because the stub passes in
+// development and fails on whichever request happens to arrive reordered.
 func arrayEqualUnordered(expected, actual []any, ignoreArrayOrder, ignoreExtra bool) bool {
-	if len(expected) != len(actual) {
+	// Cardinality settles some arrays without any pairing work: an actual array
+	// with fewer elements cannot answer every expected one, and without
+	// ignoreExtraElements a longer one leaves an element nothing accounts for.
+	if len(actual) < len(expected) || (!ignoreExtra && len(actual) != len(expected)) {
 		return false
 	}
+
+	// Greedy stays as the fast path. When it succeeds it has exhibited a valid
+	// pairing, which is the whole question; only its failures prove nothing, so
+	// only they pay for the full matching. That keeps the unambiguous arrays —
+	// which is most of them — at one pass and no adjacency to build.
 	used := make([]bool, len(actual))
 	for _, ev := range expected {
 		matched := false
@@ -382,10 +470,65 @@ func arrayEqualUnordered(expected, actual []any, ignoreArrayOrder, ignoreExtra b
 			}
 		}
 		if !matched {
+			return arrayMatchable(expected, actual, ignoreArrayOrder, ignoreExtra)
+		}
+	}
+	return true
+}
+
+// arrayMatchable reports whether every expected element can be paired with a
+// distinct actual one, by augmenting paths (Kuhn's).
+//
+// The adjacency is materialised first because comparing two nested documents is
+// far more expensive than the search over it, and the search revisits pairs.
+// Under ignoreExtraElements the actual side is the request's array rather than
+// the stub's, so the bound is worth stating: the work is linear in what the
+// client sent and quadratic only in the elements the stub declared, which are
+// few. A long array in a request costs one pass per expected element.
+func arrayMatchable(expected, actual []any, ignoreArrayOrder, ignoreExtra bool) bool {
+	candidates := make([][]int, len(expected))
+	for i, ev := range expected {
+		for j, av := range actual {
+			if jsonEqual(ev, av, ignoreArrayOrder, ignoreExtra) {
+				candidates[i] = append(candidates[i], j)
+			}
+		}
+		if len(candidates[i]) == 0 {
+			// An expected element with nothing to pair with settles it, and
+			// settles it before the rest of the adjacency is built.
+			return false
+		}
+	}
+
+	pairedWith := make([]int, len(actual))
+	for i := range pairedWith {
+		pairedWith[i] = -1
+	}
+	visited := make([]bool, len(actual))
+	for i := range expected {
+		clear(visited)
+		if !augmentPairing(i, candidates, pairedWith, visited) {
 			return false
 		}
 	}
 	return true
+}
+
+// augmentPairing looks for an augmenting path from one expected element,
+// re-pairing the actual elements along it. visited stops the search from
+// reconsidering an actual element within one path.
+func augmentPairing(i int, candidates [][]int, pairedWith []int, visited []bool) bool {
+	for _, j := range candidates[i] {
+		if visited[j] {
+			continue
+		}
+		visited[j] = true
+		if pairedWith[j] == -1 || augmentPairing(pairedWith[j], candidates, pairedWith, visited) {
+			pairedWith[j] = i
+			return true
+		}
+	}
+	return false
 }
 
 // JSONPathEvaluator is the compiled-path capability this package needs,
@@ -417,6 +560,20 @@ type MatchesJSONPath struct {
 
 // Match implements Matcher.
 func (m *MatchesJSONPath) Match(s Subject) bool {
+	if values, split := perValueScope(s); split {
+		var view singleValue
+		for _, v := range values {
+			view.set(v)
+			if m.matchOne(&view) {
+				return true
+			}
+		}
+		return false
+	}
+	return m.matchOne(s)
+}
+
+func (m *MatchesJSONPath) matchOne(s Subject) bool {
 	matched := m.evaluate(s)
 	if m.Negate {
 		return !matched
@@ -480,11 +637,45 @@ func (m *MatchesJSONPath) Describe() string {
 	return name + " " + quote(m.Path.Source()) + " -> " + m.Inner.Describe()
 }
 
+// The three combinators share a shape: each is a whole criterion in its own
+// right, so each carries the multi-value any-of rule (perValueScope) and the
+// strict-absence rule instead of leaving them to its operands. Pushing either
+// down to the leaves changes the answer — see the comments on those two
+// helpers for what it changes it to.
+//
+// The same split belongs to any criterion that reads the subject as one
+// document rather than value by value, which is why EqualToJSON and
+// MatchesJSONPath carry it too: a subject's JSON() is the first value's
+// document, so without the split those two would answer for one value of a
+// repeated key and ignore the rest — and `or` around a single matcher would
+// change the answer, which is a difference no reader would predict.
+//
+// Splitting a repeated key costs one allocation for the view, and only for the
+// stubs that meet a repeated key with one of these criteria; everything else
+// takes the direct path and allocates nothing (P2).
+
 // And requires every child matcher to be satisfied.
 type And struct{ Matchers []Matcher }
 
 // Match implements Matcher.
 func (m *And) Match(s Subject) bool {
+	if !s.Present() {
+		return !absenceFailsEverything(s) && m.matchOne(s)
+	}
+	if values, split := perValueScope(s); split {
+		var view singleValue
+		for _, v := range values {
+			view.set(v)
+			if m.matchOne(&view) {
+				return true
+			}
+		}
+		return false
+	}
+	return m.matchOne(s)
+}
+
+func (m *And) matchOne(s Subject) bool {
 	for _, child := range m.Matchers {
 		if !child.Match(s) {
 			return false
@@ -501,6 +692,23 @@ type Or struct{ Matchers []Matcher }
 
 // Match implements Matcher.
 func (m *Or) Match(s Subject) bool {
+	if !s.Present() {
+		return !absenceFailsEverything(s) && m.matchOne(s)
+	}
+	if values, split := perValueScope(s); split {
+		var view singleValue
+		for _, v := range values {
+			view.set(v)
+			if m.matchOne(&view) {
+				return true
+			}
+		}
+		return false
+	}
+	return m.matchOne(s)
+}
+
+func (m *Or) matchOne(s Subject) bool {
 	for _, child := range m.Matchers {
 		if child.Match(s) {
 			return true
@@ -516,7 +724,22 @@ func (m *Or) Describe() string { return "or(" + describeAll(m.Matchers) + ")" }
 type Not struct{ Matcher Matcher }
 
 // Match implements Matcher.
-func (m *Not) Match(s Subject) bool { return !m.Matcher.Match(s) }
+func (m *Not) Match(s Subject) bool {
+	if !s.Present() {
+		return !absenceFailsEverything(s) && !m.Matcher.Match(s)
+	}
+	if values, split := perValueScope(s); split {
+		var view singleValue
+		for _, v := range values {
+			view.set(v)
+			if !m.Matcher.Match(&view) {
+				return true
+			}
+		}
+		return false
+	}
+	return !m.Matcher.Match(s)
+}
 
 // Describe implements Matcher.
 func (m *Not) Describe() string { return "not(" + m.Matcher.Describe() + ")" }

@@ -265,10 +265,8 @@ func fullMatch(cs *stub.CompiledStub, req *ParsedRequest) bool {
 			return false
 		}
 	}
-	if cs.BasicAuth != "" {
-		if req.Header("Authorization") != cs.BasicAuth {
-			return false
-		}
+	if cs.BasicAuth != "" && !matchesBasicAuth(req.HeaderValues("Authorization"), cs.BasicAuth) {
+		return false
 	}
 	for _, c := range cs.PathParams {
 		if !c.Matcher.Match(req.PathVarSubject(c.Name)) {
@@ -324,6 +322,34 @@ func matchURL(cs *stub.CompiledStub, req *ParsedRequest) bool {
 	default:
 		return false
 	}
+}
+
+// matchesBasicAuth reports whether any Authorization header satisfies a
+// basicAuthCredentials criterion, whose want is the canonical header value the
+// stub compiled to.
+//
+// Only the scheme token folds. RFC 7235 defines it as case-insensitive and
+// WireMock honours that — it serves "basic YWxpY2U6czNjcmV0" — but what follows
+// the space is the base64 of "user:password" and is compared byte for byte,
+// because base64 is case-significant and folding it would admit credentials the
+// stub never declared. The space is part of the fixed prefix: WireMock rejects
+// a tab or a second one there, so this does too.
+//
+// Every value is tried, not just the first, which is how a header criterion
+// behaves everywhere else and how WireMock behaves here.
+func matchesBasicAuth(values []string, want string) bool {
+	n := len(stub.BasicAuthPrefix)
+	for _, got := range values {
+		// Equal lengths reject most non-candidates before any comparison, and
+		// leave both slices below in range.
+		if len(got) != len(want) {
+			continue
+		}
+		if strings.EqualFold(got[:n], want[:n]) && got[n:] == want[n:] {
+			return true
+		}
+	}
+	return false
 }
 
 // SplitURL separates a request target into its path and its full path+query

@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/metrics"
@@ -68,7 +70,7 @@ func New(opts Options) *Server {
 	}
 
 	s.mock = &http.Server{
-		Handler:           s.mockRouter(opts.Mock, opts.Admin),
+		Handler:           s.mockHandler(s.mockRouter(opts.Mock, opts.Admin)),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       75 * time.Second,
 		MaxHeaderBytes:    1 << 20,
@@ -86,6 +88,31 @@ func New(opts Options) *Server {
 		ErrorLog:          slog.NewLogLogger(opts.Logger.With("listener", "admin").Handler(), slog.LevelDebug),
 	}
 	return s
+}
+
+// mockHandler wraps the mock router in cleartext HTTP/2 when h2c is enabled.
+//
+// h2c is off by default, and the reason is fault fidelity rather than caution
+// (SPEC §12.5, deviation #15). Faults are injected by hijacking the connection
+// and writing bytes — a truncated body, a malformed chunk, an RST. Over HTTP/2
+// there is no connection to hijack: the best available answer is a stream
+// reset, which is a different thing from the byte-level breakage a stub asked
+// for. A team that turns h2c on is choosing protocol coverage over that
+// fidelity, so the choice is theirs to make explicitly.
+//
+// When it is off, the returned handler is the router itself — an h2c wrapper
+// that nobody asked for would put a type assertion on every request of the hot
+// path for a feature that is not in use (P2).
+func (s *Server) mockHandler(router http.Handler) http.Handler {
+	if !s.cfg.H2CEnabled {
+		return router
+	}
+	// TLS is negotiated by ALPN and needs no upgrade path, so h2c applies only
+	// to the cleartext listener.
+	if s.cfg.TLSEnabled() {
+		return router
+	}
+	return h2c.NewHandler(router, &http2.Server{IdleTimeout: 75 * time.Second})
 }
 
 // mockRouter is the mock port's single catch-all handler. It does one prefix

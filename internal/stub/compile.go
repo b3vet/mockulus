@@ -65,7 +65,9 @@ type CompiledStub struct {
 	Cookies    []KeyCriterion
 	Form       []KeyCriterion
 	PathParams []KeyCriterion
-	// BasicAuth is the pre-encoded Authorization header value to require.
+	// BasicAuth is the pre-encoded Authorization header value to require,
+	// always canonical: the "Basic " scheme token, one space, then the base64.
+	// Matching folds the case of that prefix but of nothing after it.
 	BasicAuth string
 	// BodyMatchers must all match, and are ordered cheapest first.
 	BodyMatchers []matchers.Matcher
@@ -131,7 +133,10 @@ type ChunkedDribble struct {
 // stub is a status write, the header writes, and one body write.
 type CompiledResponse struct {
 	Status int
-	// StatusMessage is the HTTP/1.1 reason phrase; HTTP/2 has no such field.
+	// StatusMessage is the HTTP/1.1 reason phrase, already encoded for the
+	// status line by reasonPhrase. Empty means the stub asked for none, and the
+	// canonical phrase for the status code is sent instead. HTTP/2 has no such
+	// field, so it is dropped there (SPEC §5.5 deviation #7).
 	StatusMessage string
 	Headers       []Header
 	// Body is the response body in wire form, resolved at compile or snapshot
@@ -191,10 +196,15 @@ func (cs *CompiledStub) HasCriteriaBeyondURL() bool {
 		cs.BasicAuth != ""
 }
 
+// BasicAuthPrefix is the scheme token and the single space RFC 7235 puts
+// between it and the credentials. The engine folds the case of exactly this
+// span of an incoming Authorization header, so both sides share the constant.
+const BasicAuthPrefix = "Basic "
+
 // encodeBasicAuth pre-computes the Authorization header value a stub requires,
 // so matching is a string comparison rather than a base64 decode per request.
 func encodeBasicAuth(username, password string) string {
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
+	return BasicAuthPrefix + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
 }
 
 // IsTemplated reports whether a value carries template syntax at all. Bodies

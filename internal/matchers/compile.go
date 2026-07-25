@@ -60,6 +60,28 @@ type Options struct {
 	CompileRegex RegexCompiler
 	// CompileJSONPath builds path evaluators for `matchesJsonPath`.
 	CompileJSONPath JSONPathCompiler
+	// AllowContentPatterns admits the byte-oriented matchers, which are valid
+	// in some positions and not others — see contentPatterns.
+	AllowContentPatterns bool
+}
+
+// nested returns the options a criterion's operands compile under.
+//
+// The byte-oriented matchers do not survive nesting: WireMock's combinators and
+// the nested form of matchesJsonPath are declared over StringValuePattern, so a
+// binaryEqualTo inside one is refused even in a position where a bare
+// binaryEqualTo would have been accepted. Verified against the pinned version —
+// {"bodyPatterns":[{"not":{"binaryEqualTo":"…"}}]} is a 422 there.
+func (o Options) nested() Options {
+	o.AllowContentPatterns = false
+	return o
+}
+
+// contentPatterns are the matchers WireMock declares over byte[] rather than
+// over a string. They compare the subject's raw bytes, so they are only
+// meaningful — and only accepted — where the subject is a body.
+var contentPatterns = map[string]bool{
+	"binaryEqualTo": true,
 }
 
 // JSONPathCompiler builds a compiled path evaluator.
@@ -123,6 +145,18 @@ func Compile(raw json.RawMessage, pointer string, opts Options) (Matcher, []Prob
 				Detail:   feature + " is not supported in mockulus v1",
 				Deferred: true,
 				Feature:  feature,
+			})
+			continue
+		}
+		if contentPatterns[key] && !opts.AllowContentPatterns {
+			// The pointer names the whole criterion rather than the offending
+			// key, which is where WireMock puts it: the criterion as written is
+			// not a match operation it has, so there is nothing narrower to
+			// blame. A stub that registers here but is a 422 there is a hole a
+			// team only discovers on the way back.
+			problems = append(problems, Problem{
+				Pointer: pointer,
+				Detail:  key + " compares raw bytes, so it is only valid in bodyPatterns",
 			})
 			continue
 		}
@@ -283,7 +317,7 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		if err != nil {
 			return fail("could not read the nested matcher")
 		}
-		innerMatcher, problems := Compile(encoded, at, opts)
+		innerMatcher, problems := Compile(encoded, at, opts.nested())
 		if len(problems) > 0 {
 			return nil, problems
 		}
@@ -300,7 +334,7 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		children := make([]Matcher, 0, len(items))
 		var problems []Problem
 		for i, item := range items {
-			child, probs := Compile(item, fmt.Sprintf("%s/%d", at, i), opts)
+			child, probs := Compile(item, fmt.Sprintf("%s/%d", at, i), opts.nested())
 			problems = append(problems, probs...)
 			if child != nil {
 				children = append(children, child)
@@ -315,7 +349,7 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		return &Or{Matchers: children}, nil
 
 	case "not":
-		child, probs := Compile(value, at, opts)
+		child, probs := Compile(value, at, opts.nested())
 		if len(probs) > 0 {
 			return nil, probs
 		}

@@ -89,9 +89,14 @@ func (h *Handler) createMapping(w http.ResponseWriter, r *http.Request) {
 	// Splice rather than reload: the stub is already compiled and its position
 	// follows from priority and sequence, so this pod serves it before the
 	// write returns without a store round trip (SPEC §4.3 step 5).
+	//
+	// Raw is repointed at the stored document, not the one submitted: the
+	// server assigned the identity, and a GET must return what was stored
+	// rather than what arrived.
 	compiled.ID = id
 	compiled.Seq = seq
-	h.builder.SpliceStub(compiled)
+	compiled.Raw = doc
+	h.builder.SpliceStub(ctx, compiled)
 
 	h.log.Info("stub registered", "id", id, "name", compiled.Name, "seq", seq)
 	wmcompat.WriteJSON(w, http.StatusCreated, json.RawMessage(doc))
@@ -140,7 +145,7 @@ func (h *Handler) getMapping(w http.ResponseWriter, r *http.Request) {
 	// in this pod's snapshot yet (SPEC §8).
 	stored, err := h.store.GetStub(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
-		h.mappingNotFound(w, id)
+		h.mappingNotFound(w)
 		return
 	}
 	if err != nil {
@@ -157,7 +162,7 @@ func (h *Handler) deleteMapping(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := h.store.GetStub(ctx, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			h.mappingNotFound(w, id)
+			h.mappingNotFound(w)
 			return
 		}
 		h.storeError(w, "get_stub", err)
@@ -229,9 +234,14 @@ func (h *Handler) storeError(w http.ResponseWriter, op string, err error) {
 		"the stub store is unavailable; the admin write was not applied"))
 }
 
-func (h *Handler) mappingNotFound(w http.ResponseWriter, id string) {
-	wmcompat.WriteErrors(w, http.StatusNotFound,
-		wmcompat.NewError(wmcompat.CodeMalformed, "stub mapping "+id+" was not found"))
+// mappingNotFound answers an unknown stub id the way WireMock does: a bare 404,
+// no body and no Content-Type (SPEC §5.1, Appendix C). The error envelope is
+// deliberately not used here — this is the one not-found a WireMock client
+// library already handles, and giving it a JSON body where it expects none
+// makes mockulus the odd server out for no diagnostic gain: the id it asked for
+// is the whole story.
+func (h *Handler) mappingNotFound(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
 }
 
 func queryInt(r *http.Request, name string, fallback int) int {

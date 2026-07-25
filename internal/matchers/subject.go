@@ -65,6 +65,17 @@ func (k *KeyValues) SetStrictAbsence(present bool, values []string) {
 // AbsenceFailsNegative reports whether absence fails a negative matcher.
 func (k *KeyValues) AbsenceFailsNegative() bool { return k.strictAbsence }
 
+// RepeatedValues reports the values a criterion must be applied to one at a
+// time, and only when there are enough of them for that to change the answer.
+// A key bound to a single value is answered the same way whether the criterion
+// is split over it or not, so it is not reported as repeated.
+func (k *KeyValues) RepeatedValues() ([]string, bool) {
+	if !k.present || len(k.values) < 2 {
+		return nil, false
+	}
+	return k.values, true
+}
+
 // Present implements Subject.
 func (k *KeyValues) Present() bool { return k.present }
 
@@ -92,6 +103,49 @@ func (k *KeyValues) JSON() (any, bool) {
 		}
 	}
 	return k.value, k.state == jsonOK
+}
+
+// singleValue presents one value of a repeated key as a subject in its own
+// right, so a whole criterion can be evaluated against each value in turn.
+//
+// One instance is filled and refilled by the combinator that owns it, which is
+// what keeps splitting a repeated key at one allocation however many values the
+// key carries. Nothing outside this package holds a reference to it.
+type singleValue struct {
+	// value is an array rather than a string so Values can return a slice over
+	// it without allocating.
+	value [1]string
+
+	state jsonState
+	json  any
+}
+
+// set repoints the view at the next value, dropping the previous one's parse.
+func (v *singleValue) set(s string) {
+	v.value[0] = s
+	v.state, v.json = jsonUnparsed, nil
+}
+
+// Present implements Subject. A view only ever exists over a value that is
+// there, so absence never reaches one.
+func (v *singleValue) Present() bool { return true }
+
+// Values implements Subject.
+func (v *singleValue) Values() []string { return v.value[:] }
+
+// Bytes implements Subject.
+func (v *singleValue) Bytes() []byte { return []byte(v.value[0]) }
+
+// JSON implements Subject, parsing this value at most once.
+func (v *singleValue) JSON() (any, bool) {
+	if v.state == jsonUnparsed {
+		v.state = jsonInvalid
+		var parsed any
+		if err := json.Unmarshal([]byte(v.value[0]), &parsed); err == nil {
+			v.json, v.state = parsed, jsonOK
+		}
+	}
+	return v.json, v.state == jsonOK
 }
 
 // Body is the subject for a request body. Both the string form and the parsed
@@ -201,9 +255,15 @@ func (d *Document) Bytes() []byte { return d.raw }
 // JSON implements Subject.
 func (d *Document) JSON() (any, bool) { return d.value, d.value != nil }
 
-// Interface checks.
+// Interface checks. The optional capabilities are pinned too: they are reached
+// by type assertion, so losing one would not fail to compile — it would quietly
+// drop the rule that depends on it.
 var (
 	_ Subject = (*KeyValues)(nil)
 	_ Subject = (*Body)(nil)
 	_ Subject = (*Document)(nil)
+	_ Subject = (*singleValue)(nil)
+
+	_ absenceStrict = (*KeyValues)(nil)
+	_ repeatable    = (*KeyValues)(nil)
 )
