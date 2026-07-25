@@ -171,6 +171,18 @@ func TestBacktrackingLiteralPrefixNeverOverclaims(t *testing.T) {
 		{`/a(b|c)d`, []string{"/abd", "/acd"}},
 		{`/a?bc`, []string{"/bc", "/abc"}},
 		{`/x*y`, []string{"/y", "/xxy"}},
+		// A top-level alternation makes the first branch one option of
+		// several, so nothing in it is required of the subject.
+		{`/aq|/bq++`, []string{"/aq", "/bq"}},
+		{`/a|/b|/c`, []string{"/a", "/b", "/c"}},
+		// A counted closure that can take none of its atom leaves that atom
+		// as optional as `?` does.
+		{`/x{0,2}+y`, []string{"/y", "/xy"}},
+		{`/x{0}+y`, []string{"/y"}},
+		{`/x{2,3}+y`, []string{"/xxy"}},
+		// Dropping an optional atom must drop the whole character, not the
+		// last byte of its encoding.
+		{`/é?/x`, []string{"//x", "/é/x"}},
 	}
 	for _, c := range cases {
 		prefix := backtrackingLiteralPrefix(c.pattern)
