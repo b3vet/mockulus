@@ -1,0 +1,30 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mockulus.fullname" . }}
+  labels:
+    {{- include "mockulus.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mockulus.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Mock traffic is open: anything that needs a mock can reach one.
+    - ports:
+        - port: mock
+          protocol: TCP
+    # The ops port carries the admin API, metrics and pprof, so it stays
+    # inside the namespace and the monitoring namespace.
+    - from:
+        - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
+        - port: admin
+          protocol: TCP
+{{- end }}

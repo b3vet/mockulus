@@ -1,0 +1,14 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mockulus.fullname" . }}
+  labels:
+    {{- include "mockulus.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "mockulus.selectorLabels" . | nindent 6 }}
+{{- end }}

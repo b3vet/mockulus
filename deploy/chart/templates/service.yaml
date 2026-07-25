@@ -1,0 +1,24 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mockulus.fullname" . }}
+  labels:
+    {{- include "mockulus.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: mock
+      port: {{ .Values.service.mockPort }}
+      targetPort: mock
+      protocol: TCP
+    - name: admin
+      port: {{ .Values.service.adminPort }}
+      targetPort: admin
+      protocol: TCP
+  selector:
+    {{- include "mockulus.selectorLabels" . | nindent 4 }}

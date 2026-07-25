@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: mockulus
+description: A cloud-native, high-throughput mock server compatible with a subset of the WireMock 3.x admin API
+type: application
+version: 0.0.1
+appVersion: "0.0.1"
+home: https://github.com/b3vet/mockulus
+sources:
+  - https://github.com/b3vet/mockulus
+keywords:
+  - mock
+  - wiremock
+  - testing
+maintainers:
+  - name: mockulus contributors

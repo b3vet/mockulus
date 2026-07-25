@@ -1,0 +1,34 @@
+{{- include "mockulus.validate" . -}}
+mockulus {{ .Chart.AppVersion }} is installed as {{ include "mockulus.fullname" . }}.
+
+  Store:    {{ include "mockulus.effectiveStore" . }}
+  Replicas: {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}–{{ .Values.autoscaling.maxReplicas }} (autoscaling){{ else }}{{ .Values.replicaCount }}{{ end }}
+  Journal:  {{ if .Values.config.journalEnabled }}enabled{{ else }}disabled — verification endpoints will report the journal-disabled error{{ end }}
+  Admin:    {{ if .Values.config.adminOnMockPort }}on the mock port and the ops port{{ else }}on the ops port only{{ end }}{{ if or .Values.adminAuth.token .Values.adminAuth.existingSecret }}, token required{{ else }}, unauthenticated{{ end }}
+
+{{- if eq (include "mockulus.effectiveStore" .) "memory" }}
+
+  This is the in-memory mode: stubs live in the pod and are gone when it
+  restarts. That is the right shape for a single-pod WireMock drop-in and for
+  CI runners that want their own instance. Add couchbase.connstr when you want
+  stubs to survive restarts and to be shared across replicas.
+{{- end }}
+
+Point a WireMock client at the service:
+
+  kubectl port-forward svc/{{ include "mockulus.fullname" . }} 8080:{{ .Values.service.mockPort }}
+  curl -X POST localhost:8080/__admin/mappings \
+    -H 'Content-Type: application/json' \
+    -d '{"request":{"method":"GET","urlPath":"/hello"},"response":{"status":200,"body":"world"}}'
+  curl localhost:8080/hello
+
+Operations are on the ops port ({{ .Values.service.adminPort }}): /healthz, /readyz, /metrics, /debug/pprof.
+{{- if not .Values.config.adminOnMockPort }}
+The admin API is on that port only, so reach it there rather than on the mock port.
+{{- end }}
+{{- if and (not .Values.adminAuth.token) (not .Values.adminAuth.existingSecret) .Values.config.adminOnMockPort }}
+
+  Note: the admin API is open on the mock port. That assumes this deployment is
+  reachable only from inside the cluster. If the mock port is exposed more
+  broadly, install with -f deploy/chart/values-hardened.yaml.
+{{- end }}
