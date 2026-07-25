@@ -73,13 +73,31 @@ func New(opts Options) *Handler {
 	}
 
 	mux := http.NewServeMux()
+
+	// Stub mappings. The sub-resource routes are registered before the {id}
+	// routes they would otherwise be captured by.
 	mux.HandleFunc("POST /__admin/mappings", h.createMapping)
 	mux.HandleFunc("GET /__admin/mappings", h.listMappings)
 	mux.HandleFunc("DELETE /__admin/mappings", h.deleteAllMappings)
+	mux.HandleFunc("POST /__admin/mappings/reset", h.resetMappings)
+	mux.HandleFunc("POST /__admin/mappings/save", h.saveMappings)
+	mux.HandleFunc("POST /__admin/mappings/import", h.importMappings)
+	mux.HandleFunc("POST /__admin/mappings/find-by-metadata", h.findByMetadata)
+	mux.HandleFunc("POST /__admin/mappings/remove-by-metadata", h.removeByMetadata)
 	mux.HandleFunc("GET /__admin/mappings/{id}", h.getMapping)
+	mux.HandleFunc("PUT /__admin/mappings/{id}", h.updateMapping)
 	mux.HandleFunc("DELETE /__admin/mappings/{id}", h.deleteMapping)
+
+	// Response body files, which back bodyFileName.
+	mux.HandleFunc("GET /__admin/files", h.listFiles)
+	mux.HandleFunc("GET /__admin/files/{name...}", h.getFile)
+	mux.HandleFunc("PUT /__admin/files/{name...}", h.putFile)
+	mux.HandleFunc("DELETE /__admin/files/{name...}", h.deleteFile)
+
 	mux.HandleFunc("GET /__admin/health", h.health)
 	mux.HandleFunc("GET /__admin/version", h.versionInfo)
+
+	// Anything else under /__admin is outside the supported matrix.
 	mux.HandleFunc("/__admin/", h.notFound)
 	mux.HandleFunc("/__admin", h.notFound)
 
