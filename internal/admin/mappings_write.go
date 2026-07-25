@@ -102,7 +102,7 @@ func (h *Handler) resetMappings(w http.ResponseWriter, r *http.Request) {
 	h.rebuild(r, "reset mappings")
 
 	h.log.Info("non-persistent stubs reset")
-	w.WriteHeader(http.StatusOK)
+	wmcompat.WriteJSON(w, http.StatusOK, struct{}{})
 }
 
 // saveMappings marks every current stub persistent.
@@ -123,7 +123,7 @@ func (h *Handler) saveMappings(w http.ResponseWriter, r *http.Request) {
 	h.rebuild(r, "saved mappings")
 
 	h.log.Info("all stubs marked persistent")
-	w.WriteHeader(http.StatusOK)
+	wmcompat.WriteJSON(w, http.StatusOK, struct{}{})
 }
 
 // importRequest is the body of POST /__admin/mappings/import.

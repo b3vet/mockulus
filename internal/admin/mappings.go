@@ -168,7 +168,7 @@ func (h *Handler) deleteMapping(w http.ResponseWriter, r *http.Request) {
 	h.rebuild(r, "deleted stub")
 
 	h.log.Info("stub deleted", "id", id)
-	w.WriteHeader(http.StatusOK)
+	wmcompat.WriteJSON(w, http.StatusOK, struct{}{})
 }
 
 // deleteAllMappings removes every stub, persistent or not (SPEC §5.1).
@@ -185,7 +185,7 @@ func (h *Handler) deleteAllMappings(w http.ResponseWriter, r *http.Request) {
 	h.rebuild(r, "deleted all stubs")
 
 	h.log.Info("all stubs deleted")
-	w.WriteHeader(http.StatusOK)
+	wmcompat.WriteJSON(w, http.StatusOK, struct{}{})
 }
 
 // readBody reads and size-caps an admin request body.

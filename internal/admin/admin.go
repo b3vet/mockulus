@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/match"
@@ -55,6 +56,8 @@ type Handler struct {
 	engine   *match.Engine
 	builder  *match.Builder
 	stubOpts stub.Options
+	// started backs the uptime the health endpoint reports.
+	started time.Time
 
 	mux http.Handler
 }
@@ -70,6 +73,7 @@ func New(opts Options) *Handler {
 		engine:   opts.Engine,
 		builder:  opts.Builder,
 		stubOpts: opts.StubOptions,
+		started:  time.Now(),
 	}
 
 	mux := http.NewServeMux()
@@ -181,14 +185,19 @@ func (h *Handler) notFound(w http.ResponseWriter, r *http.Request) {
 	wmcompat.WriteError(w, wmcompat.UnsupportedEndpoint(r.URL.Path))
 }
 
-// health reports the WireMock 3.2+ health shape plus mockulus detail. The extra
-// fields are a catalogued extension, not a compatibility diff (SPEC §5.6).
+// health reports the WireMock health shape plus mockulus detail. The extra
+// fields are a catalogued extension, not a compatibility diff (SPEC §5.6); the
+// WireMock-defined ones are all present, because a client reading any of them
+// must keep working.
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	snap := h.engine.Snapshot()
+	now := time.Now().UTC()
 	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
-		"status":  "healthy",
-		"message": "mockulus is ok",
-		"version": h.version,
+		"status":          "healthy",
+		"message":         "mockulus is ok",
+		"version":         h.version,
+		"uptimeInSeconds": int64(now.Sub(h.started).Seconds()),
+		"timestamp":       now.Format(time.RFC3339Nano),
 		"store": map[string]any{
 			"driver": h.cfg.EffectiveStore(),
 		},
