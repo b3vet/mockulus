@@ -92,6 +92,13 @@ func Compile(raw []byte, seq uint64, opts Options) (*CompiledStub, *wmcompat.Err
 		errs.Addf(wmcompat.CodeMalformed, "", "stub mapping is not a JSON object: "+err.Error())
 		return nil, errs
 	}
+	if doc == nil {
+		// JSON null decodes into a nil map without error, and would otherwise
+		// register as a stub made entirely of defaults — an empty catch-all
+		// that matches every request.
+		errs.Addf(wmcompat.CodeMalformed, "", "stub mapping is null, not an object")
+		return nil, errs
+	}
 
 	cs := &CompiledStub{
 		Raw:      append(json.RawMessage(nil), raw...),
