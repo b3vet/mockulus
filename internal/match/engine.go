@@ -50,6 +50,15 @@ type Engine struct {
 	gate atomic.Pointer[ScenarioGate]
 	// transitioner advances a scenario after a stub with newScenarioState served.
 	transitioner atomic.Pointer[Transitioner]
+	// recorder is nil unless journaling is on.
+	recorder atomic.Pointer[Recorder]
+}
+
+// Recorder records a served request. It must never block: the request has
+// already been answered by the time it is called, and the journal's whole
+// design is that recording cannot slow serving down (SPEC §11.1).
+type Recorder interface {
+	Record(r *http.Request, body []byte, matched *stub.CompiledStub, status int)
 }
 
 // NewEngine returns an engine serving an empty snapshot.
@@ -81,6 +90,9 @@ type Transitioner interface {
 
 // SetTransitioner installs the scenario transition path.
 func (e *Engine) SetTransitioner(t Transitioner) { e.transitioner.Store(&t) }
+
+// SetRecorder installs the journal.
+func (e *Engine) SetRecorder(rec Recorder) { e.recorder.Store(&rec) }
 
 func (e *Engine) transition(ctx context.Context, ref *stub.ScenarioRef) {
 	t := e.transitioner.Load()
@@ -137,6 +149,12 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		status = response.Write(w, r, &cs.Response, opts)
 	} else {
 		writeUnmatched(w, snap.Len() == 0)
+	}
+
+	if rec := e.recorder.Load(); rec != nil {
+		// After the response, never before: recording is bookkeeping and must
+		// not sit between the match and the write.
+		(*rec).Record(r, body, cs, status)
 	}
 
 	e.observe(cs != nil, status, candidates, time.Since(start))
