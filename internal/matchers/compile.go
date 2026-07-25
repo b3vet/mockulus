@@ -196,9 +196,16 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		if err != nil {
 			return fail("equalToJson operand is not valid JSON: " + err.Error())
 		}
+		// Placeholders are lowered into matcher nodes now, so the comparison
+		// itself stays a plain structural walk.
+		resolved, hasPlaceholders, problems := resolvePlaceholders(expected, opts.CompileRegex, at)
+		if len(problems) > 0 {
+			return nil, problems
+		}
 		return &EqualToJSON{
-			Expected:            expected,
+			Expected:            resolved,
 			Source:              source,
+			HasPlaceholders:     hasPlaceholders,
 			IgnoreArrayOrder:    boolField(doc, "ignoreArrayOrder"),
 			IgnoreExtraElements: boolField(doc, "ignoreExtraElements"),
 		}, nil

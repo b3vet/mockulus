@@ -226,14 +226,16 @@ func (m *Absent) Describe() string { return "absent" }
 // EqualToJSON compares the subject structurally against an expected document,
 // so key order and whitespace do not matter.
 //
-// json-unit placeholders such as ${json-unit.any-string} are compared
-// literally rather than interpreted; that is documented deviation #5, and the
-// roadmap item that removes it lowers the expected document into a matcher
-// tree instead.
+// json-unit placeholders such as ${json-unit.any-string} are resolved at
+// compile time into nodes that match by rule rather than by value, which is
+// what WireMock does by default.
 type EqualToJSON struct {
 	Expected            any
 	IgnoreArrayOrder    bool
 	IgnoreExtraElements bool
+	// HasPlaceholders records that the expected document carries json-unit
+	// placeholders, which the near-miss description mentions.
+	HasPlaceholders bool
 	// Source is the operand as written, for diagnostics.
 	Source string
 }
@@ -259,6 +261,9 @@ func (m *EqualToJSON) Describe() string {
 	if m.IgnoreExtraElements {
 		opts = append(opts, "ignoreExtraElements")
 	}
+	if m.HasPlaceholders {
+		opts = append(opts, "json-unit placeholders")
+	}
 	d := "equalToJson " + quote(m.Source)
 	if len(opts) > 0 {
 		d += " (" + strings.Join(opts, ", ") + ")"
@@ -270,6 +275,11 @@ func (m *EqualToJSON) Describe() string {
 // offers.
 func jsonEqual(expected, actual any, ignoreArrayOrder, ignoreExtra bool) bool {
 	switch exp := expected.(type) {
+	case *jsonPlaceholder:
+		// A placeholder replaced this node at compile time, so the comparison
+		// here is a rule rather than a value.
+		return exp.matches(actual)
+
 	case map[string]any:
 		act, ok := actual.(map[string]any)
 		if !ok {

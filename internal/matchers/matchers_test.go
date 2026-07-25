@@ -254,14 +254,134 @@ func TestEqualToJSON(t *testing.T) {
 		}
 	})
 
-	// Deviation #5: placeholders are compared as literal text, not interpreted.
-	t.Run("json-unit placeholders are literal", func(t *testing.T) {
-		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.any-string}\"}"}`)
-		if m.Match(body(`{"a":"anything"}`)) {
-			t.Error("the placeholder must not be interpreted (deviation #5)")
+}
+
+// json-unit placeholders let an expected document say "any string here". Every
+// rule below was verified against the pinned WireMock, which interprets them by
+// default with no opt-in.
+func TestJSONUnitPlaceholders(t *testing.T) {
+	body := func(s string) Subject { return NewBody([]byte(s)) }
+
+	t.Run("ignore accepts any value of any type", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.ignore}\"}"}`)
+		for _, actual := range []string{
+			`{"a":"text"}`, `{"a":42}`, `{"a":true}`, `{"a":null}`,
+			`{"a":{"deep":1}}`, `{"a":[1,2]}`,
+		} {
+			if !m.Match(body(actual)) {
+				t.Errorf("ignore should accept %s", actual)
+			}
 		}
-		if !m.Match(body(`{"a":"${json-unit.any-string}"}`)) {
-			t.Error("the placeholder should compare as literal text")
+		// It stands in for the value, not for the key: the field must be there.
+		if m.Match(body(`{"b":1}`)) {
+			t.Error("ignore should still require the field to be present")
+		}
+	})
+
+	t.Run("ignore-element behaves as ignore", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.ignore-element}\"}"}`)
+		if !m.Match(body(`{"a":{"deep":1}}`)) {
+			t.Error("ignore-element should accept a nested object")
+		}
+	})
+
+	t.Run("any-string accepts only strings", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.any-string}\"}"}`)
+		if !m.Match(body(`{"a":"anything"}`)) {
+			t.Error("any-string should accept a string")
+		}
+		if !m.Match(body(`{"a":""}`)) {
+			t.Error("any-string should accept an empty string")
+		}
+		for _, actual := range []string{`{"a":42}`, `{"a":true}`, `{"a":null}`, `{"a":[]}`} {
+			if m.Match(body(actual)) {
+				t.Errorf("any-string should reject %s", actual)
+			}
+		}
+	})
+
+	t.Run("any-number accepts only numbers", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.any-number}\"}"}`)
+		if !m.Match(body(`{"a":42}`)) || !m.Match(body(`{"a":-1.5}`)) || !m.Match(body(`{"a":0}`)) {
+			t.Error("any-number should accept numbers")
+		}
+		if m.Match(body(`{"a":"42"}`)) {
+			t.Error("any-number should reject the string \"42\"")
+		}
+	})
+
+	t.Run("any-boolean accepts only booleans", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.any-boolean}\"}"}`)
+		if !m.Match(body(`{"a":true}`)) || !m.Match(body(`{"a":false}`)) {
+			t.Error("any-boolean should accept booleans")
+		}
+		if m.Match(body(`{"a":"true"}`)) || m.Match(body(`{"a":1}`)) {
+			t.Error("any-boolean should reject non-booleans")
+		}
+	})
+
+	t.Run("regex is a full match against a string", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.regex}[a-z]+\"}"}`)
+		if !m.Match(body(`{"a":"abc"}`)) {
+			t.Error("regex should accept a fully matching string")
+		}
+		// Full-match semantics, verified against the pinned WireMock.
+		for _, actual := range []string{`{"a":"abc1"}`, `{"a":"1abc"}`, `{"a":""}`, `{"a":42}`} {
+			if m.Match(body(actual)) {
+				t.Errorf("regex should reject %s", actual)
+			}
+		}
+	})
+
+	t.Run("placeholders work at depth and inside arrays", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"o\":{\"a\":\"${json-unit.any-number}\"},\"xs\":[\"${json-unit.any-string}\",2]}"}`)
+		if !m.Match(body(`{"o":{"a":7},"xs":["s",2]}`)) {
+			t.Error("placeholders should resolve at any depth")
+		}
+		if m.Match(body(`{"o":{"a":"7"},"xs":["s",2]}`)) {
+			t.Error("a nested placeholder should still constrain the type")
+		}
+		if m.Match(body(`{"o":{"a":7},"xs":["s",3]}`)) {
+			t.Error("literal siblings of a placeholder must still match")
+		}
+	})
+
+	t.Run("placeholders compose with the relaxation flags", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"${json-unit.any-string}\"}","ignoreExtraElements":true}`)
+		if !m.Match(body(`{"a":"x","extra":1}`)) {
+			t.Error("a placeholder should work alongside ignoreExtraElements")
+		}
+	})
+
+	// An unrecognised placeholder is refused at registration. Comparing it as
+	// literal text would mean the stub silently never matches.
+	t.Run("an unknown placeholder is rejected", func(t *testing.T) {
+		_, probs := Compile(json.RawMessage(
+			`{"equalToJson":"{\"a\":\"${json-unit.no-such-thing}\"}"}`), "/x", testOpts())
+		if len(probs) == 0 {
+			t.Fatal("an unknown json-unit placeholder must be rejected")
+		}
+		if !strings.Contains(probs[0].Detail, "json-unit") {
+			t.Errorf("the problem should name the placeholder, got %q", probs[0].Detail)
+		}
+	})
+
+	t.Run("an uncompilable regex placeholder is rejected", func(t *testing.T) {
+		_, probs := Compile(json.RawMessage(
+			`{"equalToJson":"{\"a\":\"${json-unit.regex}(unclosed\"}"}`), "/x", testOpts())
+		if len(probs) == 0 {
+			t.Fatal("an invalid pattern inside a placeholder must be rejected at registration")
+		}
+	})
+
+	// Text that merely looks similar is still compared literally.
+	t.Run("a non-placeholder string is untouched", func(t *testing.T) {
+		m := compile(t, `{"equalToJson":"{\"a\":\"$notaplaceholder\"}"}`)
+		if !m.Match(body(`{"a":"$notaplaceholder"}`)) {
+			t.Error("ordinary text should compare literally")
+		}
+		if m.Match(body(`{"a":"anything"}`)) {
+			t.Error("ordinary text must not behave as a placeholder")
 		}
 	})
 }
