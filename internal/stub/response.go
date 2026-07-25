@@ -3,6 +3,7 @@
 package stub
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -67,7 +68,16 @@ func parseStatus(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp 
 		errs.Addf(wmcompat.CodeMalformed, "/response/status", "status must be an integer")
 		return
 	}
+	if resp.Status <= 0 {
+		// Normalised rather than rejected: WireMock treats a non-positive status
+		// as unset and serves 200.
+		resp.Status = 200
+		return
+	}
 	if resp.Status < 100 || resp.Status > 599 {
+		// WireMock writes a positive out-of-range status unvalidated, which
+		// produces a malformed status line on the wire (1000 becomes ":00 :00").
+		// Refusing it is a deliberate deviation from a defect.
 		errs.Addf(wmcompat.CodeMalformed, "/response/status",
 			fmt.Sprintf("status %d is outside the valid HTTP range", resp.Status))
 	}
@@ -108,9 +118,17 @@ func parseResponseHeaders(errs *wmcompat.ErrorList, doc map[string]json.RawMessa
 func parseBody(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp *CompiledResponse) {
 	var present []string
 	for _, field := range bodyFields {
-		if _, ok := doc[field]; ok {
-			present = append(present, field)
+		raw, ok := doc[field]
+		if !ok {
+			continue
 		}
+		// An explicit null is absence, not a competing body form; WireMock
+		// treats {"body":null,"jsonBody":{…}} as declaring only jsonBody, and
+		// reporting a conflict there would refuse a stub it accepts.
+		if string(raw) == "null" {
+			continue
+		}
+		present = append(present, field)
 	}
 	if len(present) > 1 {
 		sort.Strings(present)
@@ -132,9 +150,15 @@ func parseBody(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp *C
 		resp.Body = []byte(s)
 
 	case "jsonBody":
-		// Kept as the raw document so the served bytes are what the author
-		// wrote, rather than a re-marshalled equivalent.
-		resp.Body = append([]byte(nil), doc[field]...)
+		// Served compact, as WireMock does: the submitted document's
+		// indentation is formatting, not payload.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, doc[field]); err != nil {
+			errs.Addf(wmcompat.CodeMalformed, "/response/jsonBody",
+				"jsonBody is not valid JSON: "+err.Error())
+			return
+		}
+		resp.Body = compact.Bytes()
 
 	case "base64Body":
 		var s string

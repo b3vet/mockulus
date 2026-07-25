@@ -37,6 +37,10 @@ type Subject interface {
 	JSON() (any, bool)
 }
 
+// absenceStrict is the optional capability of a subject whose absence fails a
+// negative matcher as well as a positive one.
+type absenceStrict interface{ AbsenceFailsNegative() bool }
+
 // Matcher is one criterion.
 type Matcher interface {
 	// Match reports whether the subject satisfies the criterion.
@@ -88,10 +92,14 @@ func matchAnyValue(s Subject, pred func(string) bool) bool {
 // surprising enough that inverting the positive result — the obvious
 // implementation — is wrong.
 //
-// An absent subject satisfies a negative matcher: there is no value there to
-// match the pattern.
+// An absent subject usually satisfies a negative matcher — there is no value
+// there to match the pattern — but not for every field kind: an absent cookie
+// satisfies neither form. Subjects that need the stricter rule say so.
 func matchNegatedValue(s Subject, pred func(string) bool) bool {
 	if !s.Present() {
+		if strict, ok := s.(absenceStrict); ok && strict.AbsenceFailsNegative() {
+			return false
+		}
 		return true
 	}
 	values := s.Values()

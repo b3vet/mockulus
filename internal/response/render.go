@@ -146,18 +146,21 @@ func dribble(w http.ResponseWriter, resp *stub.CompiledResponse) int {
 		chunks = 1
 	}
 
-	// The gap goes *between* chunks, so the last one is not followed by a wait
-	// the client would experience as an idle connection.
-	var gap time.Duration
-	if chunks > 1 {
-		gap = resp.Dribble.TotalDuration / time.Duration(chunks-1)
-	}
+	// One interval per chunk, and the header block waits out the first one
+	// alongside chunk zero — so the total is the configured duration rather
+	// than the duration plus a free first chunk.
+	gap := resp.Dribble.TotalDuration / time.Duration(chunks)
 
 	rc := http.NewResponseController(w)
-	w.WriteHeader(resp.Status)
 
 	size := len(resp.Body) / chunks
 	for i := range chunks {
+		if gap > 0 {
+			time.Sleep(gap)
+		}
+		if i == 0 {
+			w.WriteHeader(resp.Status)
+		}
 		start := i * size
 		end := start + size
 		if i == chunks-1 {
@@ -167,9 +170,6 @@ func dribble(w http.ResponseWriter, resp *stub.CompiledResponse) int {
 			return resp.Status
 		}
 		_ = rc.Flush()
-		if i < chunks-1 && gap > 0 {
-			time.Sleep(gap)
-		}
 	}
 	return resp.Status
 }

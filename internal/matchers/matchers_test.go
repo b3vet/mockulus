@@ -629,3 +629,72 @@ func TestNegativeMatchersUseAnyOfNotComplement(t *testing.T) {
 		t.Error("no value matching should not satisfy matches")
 	}
 }
+
+// A zero-length body is ABSENT, which is WireMock's rule and not the obvious
+// one. Every value matcher fails on it — including matches:".*" and equalTo:""
+// which are true of every string — and only absent:true succeeds.
+func TestEmptyBodyIsAbsent(t *testing.T) {
+	empty := NewBody(nil)
+	zeroLen := NewBody([]byte{})
+
+	for _, subject := range []Subject{empty, zeroLen} {
+		if subject.Present() {
+			t.Error("a zero-length body should not be present")
+		}
+		for _, doc := range []string{
+			`{"matches":".*"}`, `{"matches":"a*"}`, `{"equalTo":""}`,
+			`{"contains":""}`, `{"equalToJson":"{}"}`, `{"binaryEqualTo":""}`,
+		} {
+			if compile(t, doc).Match(subject) {
+				t.Errorf("%s should fail against an empty body", doc)
+			}
+		}
+		if !compile(t, `{"absent":true}`).Match(subject) {
+			t.Error("absent:true should match an empty body")
+		}
+	}
+
+	// A body with content behaves normally.
+	full := NewBody([]byte("x"))
+	if !full.Present() {
+		t.Error("a non-empty body is present")
+	}
+	if !compile(t, `{"matches":".*"}`).Match(full) {
+		t.Error(".* should match a non-empty body")
+	}
+	if compile(t, `{"absent":true}`).Match(full) {
+		t.Error("absent:true should not match a non-empty body")
+	}
+}
+
+// Absence semantics are per field kind: an absent header satisfies a negative
+// matcher, an absent cookie satisfies neither form. Verified directly against
+// the pinned WireMock.
+func TestAbsenceStrictnessIsPerFieldKind(t *testing.T) {
+	header := AbsentKey()
+	if !compile(t, `{"doesNotMatch":"zzz"}`).Match(header) {
+		t.Error("an absent header should satisfy doesNotMatch")
+	}
+	if compile(t, `{"matches":"zzz"}`).Match(header) {
+		t.Error("an absent header should not satisfy matches")
+	}
+
+	cookie := &KeyValues{}
+	cookie.SetStrictAbsence(false, nil)
+	if compile(t, `{"doesNotMatch":"zzz"}`).Match(cookie) {
+		t.Error("an absent cookie should satisfy neither form, not even doesNotMatch")
+	}
+	if compile(t, `{"matches":"zzz"}`).Match(cookie) {
+		t.Error("an absent cookie should not satisfy matches")
+	}
+	if !compile(t, `{"absent":true}`).Match(cookie) {
+		t.Error("absent:true is how a stub asserts a missing cookie")
+	}
+
+	// A present cookie behaves like any other subject.
+	present := &KeyValues{}
+	present.SetStrictAbsence(true, []string{"abc"})
+	if !compile(t, `{"doesNotMatch":"zzz"}`).Match(present) {
+		t.Error("a present cookie failing the pattern should satisfy doesNotMatch")
+	}
+}
