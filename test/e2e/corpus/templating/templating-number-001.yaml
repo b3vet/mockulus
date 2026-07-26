@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-number-001
+behaviors: [B-TPL-MATH-NUMBER]
+# `number` is the mockulus spelling of the number-formatting half of the §10.3
+# row; pinned WireMock has no helper under that name (it registers
+# `numberFormat`), so replaying this case against the oracle would compare our
+# rendering against its "could not find helper" 500. The arithmetic half of
+# the same row is differentially verified by templating-math-001.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030006-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-number-001/formatted"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "plain={{number '42'}} rounded={{number 3.14159 decimals=3}} padded={{number 5 decimals=3}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The three renderings are the three things `decimals` has to do. `plain`
+  # proves a numeric string is read as a number and not passed through — a
+  # stub writing a JSON integer can afford neither quotes nor a trailing ".0".
+  # `rounded` is 3.142 rather than 3.141, so a formatter that truncates the
+  # digits it drops is a failure here rather than an off-by-one nobody
+  # notices. `padded` is the opposite direction, and catches a formatter that
+  # only ever shortens: an integer asked for three decimals has to grow them.
+  - request: {method: GET, path: /e2e/templating-number-001/formatted}
+    expect:
+      status: 200
+      body: "plain=42 rounded=3.142 padded=5.000"

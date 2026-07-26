@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-render-error-001
+behaviors:
+  - B-DEV-DEVIATION-13
+  - B-ERR-1002
+  - B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL
+# Deviation #13 is the split itself, so both halves are measured against pinned
+# WireMock 3.13.2 and neither is diffable. WireMock registers each of the two
+# broken documents below with a 201 and then answers every request to them with
+# Jetty's HTML error page — a 500 whose body is a stack-trace title, not the
+# text/plain the working render-error path produces. Its render errors do land
+# in the body, which is the half mockulus keeps.
+wm: n/a
+steps:
+  # Registration-time, half one: a template that cannot be parsed. WireMock
+  # takes this document; mockulus refuses it, because a stub that registers
+  # cleanly and then 500s on every request is the failure P3 exists to prevent
+  # — and the author is right here, holding the response to the POST.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030013-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-render-error-001/unclosed"},
+         "response": {"status": 200,
+                      "body": "{{#if request.query.tier}}gold",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1002
+            title: "Template error"
+            source: {pointer: "/response/body"}
+      body_regex: 'unclosed \{\{#if\}\}'
+
+  # Registration-time, half two: a helper outside the §10.3 allowlist. The
+  # detail lists what is available, because "unknown helper" without the list
+  # leaves the author guessing at the spelling. `xPath` in particular is a
+  # helper WireMock does have, so this is the message that has to explain the
+  # gap rather than imply a typo.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030013-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-render-error-001/helper"},
+         "response": {"status": 200,
+                      "headers": {"X-Selected": "{{xPath request.body '/order/id/text()'}}"},
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1002
+            source: {pointer: "/response/headers/X-Selected"}
+      body_regex: 'unknown helper.*xPath.*mockulus supports'
+
+  - admin: {method: GET, path: /__admin/mappings/10030013-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # Serve-time is the other half, and it is a different kind of failure: this
+  # template parses, every helper it names exists, and whether it can render
+  # depends on what the request carries. Nothing at registration could have
+  # known, so this one is accepted.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030013-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-render-error-001/total"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "total={{math request.query.a '+' request.query.b}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The control. Without it the failure below would also be satisfied by a stub
+  # that never rendered at all.
+  - request:
+      method: GET
+      path: /e2e/templating-render-error-001/total?a=2&b=3
+    expect:
+      status: 200
+      body: "total=5"
+
+  # The same stub, one operand the arithmetic cannot use. The error text goes
+  # into the response body — WireMock's behavior, and the useful one: whoever
+  # is looking at the 500 is holding the reason, rather than being told to go
+  # and find a server log. The stub itself is untouched and keeps serving.
+  - request:
+      method: GET
+      path: /e2e/templating-render-error-001/total?a=2&b=twelve
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: '"twelve" is not a number'
+
+  - request:
+      method: GET
+      path: /e2e/templating-render-error-001/total?a=2&b=3
+    expect:
+      status: 200
+      body: "total=5"
+
+  # A serve-time render failure is counted, which is how a deployment notices
+  # that a stub has been answering 500s to somebody's test suite all afternoon.
+  # A floor rather than an equality: this instance is shared with every other
+  # case in the run.
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}

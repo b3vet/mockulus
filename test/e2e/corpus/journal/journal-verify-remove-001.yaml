@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-verify-remove-001
+behaviors: [B-ADMIN-REQUESTS-REMOVE-POST]
+config: journal
+# n/a: as journal-verify-criteria-001 — the steps that read the journal poll,
+# and a polled step is never replayed against the oracle.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000002-0000-4000-8000-000000000001",
+         "request":{"method":"GET",
+                    "urlPathPattern":"/e2e/journal-verify-remove-001/(keep|drop)"},
+         "response":{"status":200,"body":"served"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/journal-verify-remove-001/keep}
+    expect: {status: 200, body: "served"}
+
+  - request: {port: mock, method: GET, path: /e2e/journal-verify-remove-001/drop}
+    expect: {status: 200, body: "served"}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPathPattern":"/e2e/journal-verify-remove-001/.*"}'
+    expect_eventually:
+      status: 200
+      body_json: {count: 2, requestJournalDisabled: false}
+
+  # Removal is criteria-driven like count and find, and answers with what it
+  # took: whole serve events, the one place a criteria query returns the event
+  # rather than the request inside it. A caller that has just deleted evidence
+  # gets to see what it deleted.
+  - admin:
+      method: POST
+      path: /__admin/requests/remove
+      body: '{"urlPath":"/e2e/journal-verify-remove-001/drop"}'
+    expect:
+      status: 200
+      body_json_subset:
+        serveEvents:
+          - wasMatched: true
+            request:
+              method: GET
+              url: /e2e/journal-verify-remove-001/drop
+
+  # Exactly the matching entry went, and it went for good rather than being
+  # hidden from one query: the criteria-free count over the namespace is down by
+  # one and the surviving call is still there under its own criteria.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-verify-remove-001/drop"}'
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-verify-remove-001/keep"}'
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPathPattern":"/e2e/journal-verify-remove-001/.*"}'
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}

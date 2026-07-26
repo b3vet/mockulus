@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: scenario-cross-pod-001
+behaviors: [B-PROSE-SCENARIO-SEMANTICS]
+# The claim is about replicas, so one pod cannot make it: per-pod state would
+# pass every assertion a single instance can express and then give a different
+# answer to every second request behind a Service (SPEC §9, D6).
+requires: [couchbase, multi-pod]
+# n/a: single-node WireMock has no second replica to disagree with itself.
+wm: n/a
+steps:
+  # Registered on one pod, which serves it immediately and leaves the others to
+  # converge within sync_interval (§8, deviation #11).
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000006-0000-4000-8000-000000000001",
+         "scenarioName":"scenario-cross-pod-001",
+         "requiredScenarioState":"Started",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-cross-pod-001/state"},
+         "response":{"status":200,"body":"Started"}}
+    expect: {status: 201}
+
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000006-0000-4000-8000-000000000002",
+         "scenarioName":"scenario-cross-pod-001",
+         "requiredScenarioState":"shipped",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-cross-pod-001/state"},
+         "response":{"status":200,"body":"shipped"}}
+    expect: {status: 201}
+
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000006-0000-4000-8000-000000000003",
+         "scenarioName":"scenario-cross-pod-001",
+         "requiredScenarioState":"Started",
+         "newScenarioState":"shipped",
+         "request":{"method":"POST","urlPath":"/e2e/scenario-cross-pod-001/ship"},
+         "response":{"status":200,"body":"shipped it"}}
+    expect: {status: 201}
+
+  # Pod 0 answers from the initial state, having written nothing: a scenario no
+  # request has driven is at Started everywhere, not only on the pod that
+  # happens to hold the stubs.
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/scenario-cross-pod-001/state}
+    expect: {status: 200, body: "Started"}
+
+  # A different replica advances it. Eventually, because this pod did not take
+  # the admin write and has to reload before it holds the stub at all — the stub
+  # is what propagates on a timer, and the state it moves is not.
+  - request: {pod: 1, port: mock, method: POST, path: /e2e/scenario-cross-pod-001/ship}
+    expect_eventually: {status: 200, body: "shipped it", within: 30s}
+
+  # The claim, and the reason state lives in the store: the pod that served the
+  # first step never saw the transition and is not told about it, yet it answers
+  # from where the flow actually is. Asserted with no window at all — the state
+  # is read on the request path rather than replicated to the pod, so there is
+  # nothing to wait for, and a pod that needed a moment to agree would be one
+  # holding a local copy.
+  - request: {pod: 0, port: mock, method: GET, path: /e2e/scenario-cross-pod-001/state}
+    expect: {status: 200, body: "shipped"}
+
+  # The third replica, which took part in neither, agrees as soon as it holds
+  # the stubs.
+  - request: {pod: 2, port: mock, method: GET, path: /e2e/scenario-cross-pod-001/state}
+    expect_eventually: {status: 200, body: "shipped", within: 30s}
+
+  # And the listing agrees with the serving path, read through the proxy so the
+  # answer comes from whichever pod it lands on.
+  - admin: {pod: any, method: GET, path: /__admin/scenarios}
+    expect_eventually:
+      status: 200
+      within: 30s
+      body_json_contains:
+        - path: scenarios
+          match:
+            name: "scenario-cross-pod-001"
+            state: "shipped"
+            possibleStates: ["Started", "shipped"]

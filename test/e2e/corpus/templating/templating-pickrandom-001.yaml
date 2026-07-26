@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-pickrandom-001
+behaviors: [B-TPL-PICKRANDOM]
+# A random choice has no differential oracle; what is pinned is that the
+# choice comes from the given options and actually varies.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030003-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-pickrandom-001/choice"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "one={{pickRandom 'alpha' 'beta' 'gamma'}} listed={{pickRandom (range 7 9)}} spread=[{{#each (range 1 40)}}{{pickRandom 'a' 'b'}}{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `one` is the contract everyone assumes: the answer is one of the options
+  # and nothing else. Anchoring the whole body is what makes it an assertion —
+  # a helper that rendered its own template text, or all three options joined,
+  # would satisfy any assertion phrased as "contains alpha".
+  #
+  # `listed` passes a single list instead of separate arguments. A helper that
+  # took the list as one option renders "[7 8 9]" or "[7, 8, 9]", so a single
+  # digit is what tells the two readings apart.
+  #
+  # `spread` is the property a "random" helper that returns a constant fails.
+  # Forty draws from two options are required to change at least once: the
+  # regex needs an "ab" or a "ba" somewhere in the run, which a constant can
+  # never produce and a working generator misses with probability 2^-38.
+  - request: {method: GET, path: /e2e/templating-pickrandom-001/choice}
+    expect:
+      status: 200
+      body_regex: '^one=(alpha|beta|gamma) listed=[789] spread=\[[ab]*(ab|ba)[ab]*\]$'

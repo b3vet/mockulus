@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-jsonpath-001
+behaviors: [B-TPL-JSONPATH]
+wm: verified
+# The non-matching step lands on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The stub selects on the same path expression its body renders. That is the
+  # point of sharing one JSONPath engine between the matcher and the helper
+  # (SPEC §6.7, §10.3): a stub cannot be selected by $.customer.id and then
+  # render a different customer, because there is one definition of what the
+  # expression selects.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000c-0000-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/templating-jsonpath-001/orders",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.customer.id",
+                                                           "equalTo": "C-42"}}]},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "id={{jsonPath request.body '$.customer.id'}} name={{jsonPath request.body '$.customer.name'}} age={{jsonPath request.body '$.customer.age'}} vip={{jsonPath request.body '$.customer.vip'}} first={{jsonPath request.body '$.items[0].sku'}} missing=[{{jsonPath request.body '$.customer.nickname'}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `id` agreeing with the criterion that selected the stub is the assertion
+  # this case exists for. The rest pins how a selected value reaches the body:
+  # a number renders as digits and a boolean as a word, neither quoted nor
+  # spelled the way JSON would spell them inside a document, because the
+  # helper substitutes a value into text and does not re-serialise it. `first`
+  # indexes an array, and `missing` is bracketed because an absent path
+  # renders as nothing at all — a helper that rendered "null" there, or the
+  # path expression itself, would produce a body that parses and is wrong.
+  - request:
+      method: POST
+      path: /e2e/templating-jsonpath-001/orders
+      headers: {Content-Type: application/json}
+      body: '{"customer": {"id": "C-42", "name": "Ada", "age": 36, "vip": true}, "items": [{"sku": "A1"}, {"sku": "B2"}]}'
+    expect:
+      status: 200
+      body: "id=C-42 name=Ada age=36 vip=true first=A1 missing=[]"
+
+  # The other half of the agreement: a body the criterion rejects never
+  # reaches the template. Without this step a matcher and a helper that read
+  # the same expression differently would still pass the step above.
+  - request:
+      method: POST
+      path: /e2e/templating-jsonpath-001/orders
+      headers: {Content-Type: application/json}
+      body: '{"customer": {"id": "C-99", "name": "Grace"}}'
+    expect: {status: 404}

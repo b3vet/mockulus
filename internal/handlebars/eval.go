@@ -18,7 +18,12 @@ import (
 // ErrOutputTooLarge reports that a render exceeded its output cap. A template
 // that expands without bound is a memory-exhaustion vector, so the cap is
 // enforced during rendering rather than checked afterwards.
-var ErrOutputTooLarge = errors.New("template output exceeds the configured cap")
+//
+// The message names the knob because this error reaches an operator as a
+// response body: a stub whose expansion depends on the request body can be
+// driven over the cap by a caller, and "which setting refused this" is the
+// first thing whoever is looking at that 500 needs.
+var ErrOutputTooLarge = errors.New("template output exceeds template_max_output_bytes")
 
 // Helper is a template helper. Returning an error aborts the render, which the
 // caller turns into WireMock's render-error-in-body behavior.

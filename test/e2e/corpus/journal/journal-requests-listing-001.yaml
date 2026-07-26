@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-requests-listing-001
+behaviors: [B-ADMIN-REQUESTS-LIMIT-SINCE-GET]
+config: journal
+# The journal is one collection per deployment, so ordering, paging and the
+# window count are only statements about this endpoint on an instance nothing
+# else is writing to.
+requires: [exclusive]
+# n/a: the oracle is reset per case and holds only what this case sent, so its
+# `meta.total` counts a different journal from ours; and the entries themselves
+# carry a server-minted id, a client IP and an absolute URL bearing the
+# instance's own port.
+wm: n/a
+steps:
+  # A known-empty journal, so `meta.total` below is a claim about these three
+  # calls rather than about everything the run had served by now.
+  #
+  # Emptying it takes three steps rather than one because entries are written
+  # off the request path: a purge removes what has landed, and a call recorded a
+  # moment earlier arrives after it. One call of this case's own, waited for,
+  # puts everything queued before it on the far side of the delete.
+  - request: {port: mock, method: GET, path: /e2e/journal-requests-listing-001/settle}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {request: {url: /e2e/journal-requests-listing-001/settle}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # The delay is what makes the ordering claim an ordering claim. Entries are
+  # recorded after the response goes out and stamped to the millisecond, so
+  # three undelayed calls over loopback can share a timestamp and fall back to
+  # a tie-break that says nothing about which arrived first.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000003-0000-4000-8000-000000000001",
+         "request":{"method":"GET",
+                    "urlPathPattern":"/e2e/journal-requests-listing-001/(one|two|three)"},
+         "response":{"status":200,"body":"served","fixedDelayMilliseconds":25}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/journal-requests-listing-001/one}
+    expect: {status: 200, body: "served"}
+  - request: {port: mock, method: GET, path: /e2e/journal-requests-listing-001/two}
+    expect: {status: 200, body: "served"}
+  - request: {port: mock, method: GET, path: /e2e/journal-requests-listing-001/three}
+    expect: {status: 200, body: "served"}
+
+  # Newest first: the call made last is the entry read first. A journal that
+  # returned insertion order would put /one here, which is the wrong end of the
+  # list for anyone debugging what just happened.
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        meta: {total: 3}
+        requestJournalDisabled: false
+        requests:
+          - request: {url: /e2e/journal-requests-listing-001/three}
+          - request: {url: /e2e/journal-requests-listing-001/two}
+          - request: {url: /e2e/journal-requests-listing-001/one}
+
+  # `limit` bounds the page while `meta.total` keeps reporting the window the
+  # query considered — measured on pinned WireMock 3.13.2, and the distinction a
+  # client needs to know whether it has seen everything. Asked for none, the
+  # whole envelope is assertable, which is what pins the page down to a size a
+  # subset check cannot bound from above.
+  - admin: {method: GET, path: "/__admin/requests?limit=0"}
+    expect:
+      status: 200
+      body_json:
+        requests: []
+        meta: {total: 3}
+        requestJournalDisabled: false
+
+  - admin: {method: GET, path: "/__admin/requests?limit=1"}
+    expect:
+      status: 200
+      body_json_subset:
+        meta: {total: 3}
+        requests:
+          - request: {url: /e2e/journal-requests-listing-001/three}
+
+  # `since` is a lower bound on the entry's own timestamp, so a window that
+  # opened before the run still holds all three and one that opens in the
+  # future holds none — and the count moves with the window, since what is
+  # reported is the window rather than the collection.
+  - admin: {method: GET, path: "/__admin/requests?since=2000-01-01T00:00:00Z"}
+    expect:
+      status: 200
+      body_json_subset:
+        meta: {total: 3}
+        requests:
+          - request: {url: /e2e/journal-requests-listing-001/three}
+
+  - admin: {method: GET, path: "/__admin/requests?since=2099-01-01T00:00:00Z"}
+    expect:
+      status: 200
+      body_json:
+        requests: []
+        meta: {total: 0}
+        requestJournalDisabled: false
+
+  # A `since` that is not a timestamp is refused rather than dropped. Dropping
+  # it would answer a windowed verification with the entire journal, and a
+  # suite asserting "exactly one call in the last minute" would silently be
+  # asserting it over every call the deployment ever served.
+  - admin: {method: GET, path: "/__admin/requests?since=yesterday"}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: since}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}

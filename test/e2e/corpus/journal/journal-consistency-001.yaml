@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-consistency-001
+behaviors:
+  - B-PROSE-JOURNAL-CONSISTENCY
+  - B-DEV-DEVIATION-10
+config: journal
+# couchbase because the window §11.4 documents is the flusher's interval *plus*
+# the store's indexing latency, and only a real store has the second half. On
+# the memory driver the entry is queryable the instant the flusher writes it,
+# which would make an eventual assertion pass for a reason the contract does not
+# claim.
+requires: [couchbase]
+# n/a: WireMock's journal is written on the request path and readable
+# immediately, so there is no version of this claim it could agree or disagree
+# with — that gap is deviation #10 itself.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"5100000a-0000-4000-8000-000000000001",
+         "request":{"method":"GET",
+                    "urlPathPattern":"/e2e/journal-consistency-001/(warm|call/[0-9]+)"},
+         "response":{"status":200,"body":"served"}}
+    expect: {status: 201}
+
+  # One call first, waited for as long as the harness allows. A journal query is
+  # served by a secondary index over a keyspace this deployment created at boot,
+  # and the first read of one pays for its build — a cost paid once per
+  # deployment, which is not the steady-state window §11.4 documents. Absorbing
+  # it here is what leaves the assertion below measuring the journal rather than
+  # the first query this deployment ever ran.
+  - request: {port: mock, method: GET, path: /e2e/journal-consistency-001/warm}
+    expect: {status: 200, body: "served"}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-consistency-001/warm"}'
+    expect_eventually:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # Each call is answered on the spot. Recording happens after the response has
+  # gone out and off the request's goroutine, so a journal that had fallen
+  # behind — or filled up, or lost its store — could not show up as a slow or
+  # failed response here, and that is the half of the contract these three
+  # plain expectations hold.
+  - request: {port: mock, method: GET, path: /e2e/journal-consistency-001/call/1}
+    expect: {status: 200, body: "served"}
+  - request: {port: mock, method: GET, path: /e2e/journal-consistency-001/call/2}
+    expect: {status: 200, body: "served"}
+  - request: {port: mock, method: GET, path: /e2e/journal-consistency-001/call/3}
+    expect: {status: 200, body: "served"}
+
+  # The other half: verification finds all three, but within a window rather
+  # than on the first ask. Reading once and expecting three would be asserting
+  # that the flusher had already run — the timing of an implementation detail,
+  # not a promise the spec makes. The window is the generous one §11.4 tells
+  # suites to use, many times the ≤500 ms the contract quotes: what is asserted
+  # here is that the entries arrive, and how fast is the perf suite's question
+  # to ask on a rig that is not shared with eight other cases.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPathPattern":"/e2e/journal-consistency-001/call/[0-9]+"}'
+    expect_eventually:
+      status: 200
+      within: 10s
+      body_json: {count: 3, requestJournalDisabled: false}
+
+  # And they are there as entries a client can read, not merely as a number.
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      body: '{"urlPath":"/e2e/journal-consistency-001/call/3"}'
+    expect:
+      status: 200
+      body_json_subset:
+        requests:
+          - method: GET
+            url: /e2e/journal-consistency-001/call/3

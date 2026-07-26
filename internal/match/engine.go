@@ -133,6 +133,21 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	candidates := 0
 	cs := snap.Match(pr, gate, &candidates)
 
+	if err := pr.ScenarioError(); err != nil {
+		// A gated stub whose state could not be read is not a stub that failed
+		// to match: which side of the state machine it is on is unknown, and so
+		// is what any later candidate would have been shadowing. Answering
+		// anything here is a guess, and a test that silently took the wrong
+		// branch of its own flow is worse than one that was told the store is
+		// sick (SPEC §4.6, §9.2).
+		cs = nil
+		wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeScenarioUnavailable,
+			"the scenario state this request depends on could not be read: "+err.Error()))
+		e.finish(r, body, cs, wmcompat.StatusFor(wmcompat.CodeScenarioUnavailable),
+			candidates, start)
+		return
+	}
+
 	if cs != nil && cs.Scenario != nil && cs.Scenario.NewState != "" {
 		// The transition follows the match and precedes the response, so a test
 		// that serves then immediately re-requests sees the new state. It never
@@ -165,9 +180,16 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeUnmatched(w, body)
 	}
 
+	e.finish(r, body, cs, status, candidates, start)
+}
+
+// finish is the bookkeeping every answered request ends with: journal, access
+// log, metrics. It runs after the response has been written, never before —
+// recording must not sit between the match and the write.
+func (e *Engine) finish(r *http.Request, body []byte, cs *stub.CompiledStub,
+	status, candidates int, start time.Time) {
+
 	if rec := e.recorder.Load(); rec != nil {
-		// After the response, never before: recording is bookkeeping and must
-		// not sit between the match and the write.
 		(*rec).Record(r, body, cs, status)
 	}
 

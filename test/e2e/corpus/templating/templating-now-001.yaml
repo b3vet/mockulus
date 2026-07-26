@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-now-001
+behaviors: [B-TPL-NOW]
+# Two servers cannot render the same instant, so a clock has no differential
+# oracle: the expectations below are the properties recorded from pinned
+# WireMock 3.13.2 by probe, asserted as shape rather than as text.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-now-001/clock"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "day={{now format='yyyy-MM-dd'}} year={{now format='yyyy'}} past={{now offset='-100 years' format='yyyy'}} future={{now offset='100 years' format='yyyy'}} epoch={{now format='epoch'}} unix={{now format='unix'}} sydney={{now timezone='Australia/Sydney' format='XXX'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # One instant rendered seven ways, so every option has to be doing something
+  # for the line to match at all.
+  #
+  # The two offsets are what make this more than a shape check. A century back
+  # lands in the 1900s and a century on in the 2100s, so an offset that was
+  # parsed and dropped — or applied with the sign lost, which is the common
+  # way to get this wrong — renders the current year in all three positions
+  # and fails on two of them. `sydney` is the same instant in a zone whose
+  # offset is +10:00 or +11:00 depending on the season; a timezone that was
+  # ignored renders "Z" and fails whatever the date.
+  #
+  # `epoch` and `unix` differ only in unit, which is exactly why both are
+  # here: milliseconds are thirteen digits and seconds ten until the year
+  # 2286, so the two spellings cannot be transposed and still match.
+  - request: {method: GET, path: /e2e/templating-now-001/clock}
+    expect:
+      status: 200
+      body_regex: '^day=20\d\d-\d\d-\d\d year=20\d\d past=19\d\d future=21\d\d epoch=\d{13} unix=\d{10} sydney=\+1[01]:00$'

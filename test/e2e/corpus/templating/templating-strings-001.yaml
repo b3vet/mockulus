@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-strings-001
+behaviors: [B-TPL-TRIM-LOWER-LOWERCASE-UPPER-UPPERCASE-SPLIT-JOIN-CONCAT-SUBST]
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030008-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-strings-001/text"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "trimmed=[{{trim '  padded  '}}] lower={{lower 'MiXeD'}} upper={{upper 'MiXeD'}} slice={{substring 'abcdef' 1 4}} tail={{substring 'abcdef' 4}} replaced={{replace 'a-b-c' '-' '+'}} size={{size 'abcd'}} joined={{join (range 1 3) '/'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Every value is chosen so the *convention* is what is being asserted, not
+  # just that something came back.
+  #
+  # `trimmed` is bracketed because the interesting outcome is the absence of
+  # characters, which an unbracketed assertion could not see. `lower` and
+  # `upper` are given the same mixed-case input, so a helper pair wired to the
+  # same function fails on one of them. `slice` pins the end index as
+  # exclusive — an inclusive reading renders "bcde" — and `tail` pins the
+  # two-argument form as "to the end" rather than "four characters".
+  # `replaced` replaces every occurrence, not the first. `size` counts
+  # characters. `joined` puts the separator between elements and not after the
+  # last, which is the off-by-one that turns a rendered list into invalid JSON.
+  - request: {method: GET, path: /e2e/templating-strings-001/text}
+    expect:
+      status: 200
+      body: "trimmed=[padded] lower=mixed upper=MIXED slice=bcd tail=ef replaced=a+b+c size=4 joined=1/2/3"

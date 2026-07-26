@@ -129,6 +129,9 @@ func New(opts Options) *Handler {
 	mux.HandleFunc("GET /__admin/requests/{id}", h.getRequest)
 	mux.HandleFunc("DELETE /__admin/requests/{id}", h.deleteRequest)
 
+	// The deployment-wide reset, which is all three of the above at once.
+	mux.HandleFunc("POST /__admin/reset", h.resetAll)
+
 	// Scenarios.
 	mux.HandleFunc("GET /__admin/scenarios", h.listScenarios)
 	mux.HandleFunc("POST /__admin/scenarios/reset", h.resetScenarios)
@@ -248,6 +251,48 @@ func (h *Handler) shutdownServer(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) notFound(w http.ResponseWriter, r *http.Request) {
 	wmcompat.WriteError(w, wmcompat.UnsupportedEndpoint(r.URL.Path))
+}
+
+// resetAll is the deployment-wide reset: non-persistent mappings swept, journal
+// emptied, scenarios back to Started, in one call (SPEC §5.1). It is what a
+// suite presses between runs — and, being deployment-wide, the call SPEC §1
+// tells runners sharing an instance never to press.
+//
+// The journal and the scenario states are swept only where they exist, rather
+// than failing when they do not. Journaling is off by default and a degraded
+// start has no scenario store, so the alternative would make the
+// deployment-wide reset the one call that does not work on the deployment
+// mockulus ships with.
+func (h *Handler) resetAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if err := h.store.DeleteEphemeralStubs(ctx); err != nil {
+		h.storeError(w, "delete_ephemeral_stubs", err)
+		return
+	}
+	if _, err := h.store.BumpEpoch(ctx); err != nil {
+		h.storeError(w, "bump_epoch", err)
+		return
+	}
+	// Rebuilt before the other two so the mock port stops serving the swept
+	// stubs on this pod immediately, rather than at the next poll.
+	h.rebuild(r, "reset all")
+
+	if h.journal != nil {
+		if err := h.journal.ClearJournal(ctx); err != nil {
+			h.storeError(w, "clear_journal", err)
+			return
+		}
+	}
+	if h.scenarios != nil {
+		if err := h.scenarios.ResetAll(ctx); err != nil {
+			h.storeError(w, "reset_scenarios", err)
+			return
+		}
+	}
+
+	h.log.Info("deployment reset")
+	wmcompat.WriteJSON(w, http.StatusOK, struct{}{})
 }
 
 // health reports the WireMock health shape plus mockulus detail. The extra

@@ -261,9 +261,9 @@ argued.
 
 ---
 
-## D-OPEN-11 — `deleteWhere` still backs scenarios and the journal
+## D-OPEN-11 — `deleteWhere` still backs the journal
 
-**Status:** mappings fixed, two callers left · **Owner:** M4 / M5 ·
+**Status:** mappings and scenarios fixed, one caller left · **Owner:** M5 ·
 **Reversible:** no reason not to
 
 The `DELETE FROM` statement behind bulk removal is planned as a KV sequential
@@ -278,9 +278,99 @@ For mappings this is fixed: `DELETE /__admin/mappings` and
 and remove by key, which also gives each removal a mutation token for the reload
 that follows. 7 in 20 became 0 in 20.
 
-`ClearJournal` and `DeleteAllScenarios` still call the old path, so
-`POST /__admin/scenarios/reset` can leave state behind. Neither collection is
-read by a bulk scan, so neither can resurrect a stub — the blast radius is a
-reset that silently does not reset.
+`DeleteAllScenarios` took the same treatment at M4, which is where it mattered
+most: a scenario state document is written by the request that transitions the
+flow, so the reset a suite makes between tests is the call most likely to land
+inside the window, and what it leaves behind is a flow that resumes from the
+middle. `scenario-reset-001` drives a transition and resets with nothing in
+between, and asserts the read-back with no polling window at all.
 
-**To change:** the same `removeKeys` treatment, applied when M4 and M5 land.
+`ClearJournal` still calls the old path. The journal collection is not read by a
+bulk scan, so a surviving entry cannot resurrect a stub — the blast radius is a
+`DELETE /__admin/requests` that silently does not clear.
+
+**To change:** the same `removeKeys` treatment, applied when M5 lands.
+
+---
+
+## D-OPEN-12 — `disableBodyTemplating` is ours, not WireMock's
+
+**Status:** implemented as SPEC §10.1 describes · **Owner:** M6 ·
+**Reversible:** yes
+
+SPEC §10.1 carries `transformerParameters: {"disableBodyTemplating": true}` as a
+per-stub opt-out "honored **[DH]**". Probed against pinned 3.13.2, the answer to
+that [DH] is that there is nothing to honor: the parameter does not exist there.
+`ResponseTemplateTransformer` reads exactly one parameter,
+`disableBodyFileTemplating`, and that one guards only the `bodyFileName` path —
+an inline body is templated either way. Four spellings were sent
+(`disableBodyTemplating`, `disableBodyParsing`, `disableTemplating`,
+`bodyTemplating`) and all four rendered.
+
+So a stub document carrying the parameter answers differently on the two
+servers: WireMock renders the body, mockulus serves it literally and templates
+the headers around it. `templating-disable-body-001` pins what mockulus does and
+says why it cannot be `wm: verified`.
+
+Two questions, and they are separable:
+
+- Keep the extension, rename it to WireMock's `disableBodyFileTemplating` and
+  scope it to body files, or accept both spellings. The extension earns its
+  place — a payload that is itself a Handlebars template, or an Angular fixture,
+  is exactly the body a stub wants to exempt — but it is currently an extension
+  wearing a name that reads like parity.
+- A value that is not a boolean is ignored in silence. `{"disableBodyTemplating":
+  "true"}` templates the body, which is the accept-and-behave-differently P3
+  exists to prevent, and the same shape deviation #23 rejects for
+  `{"absent": false}`. A 422 naming the parameter would be consistent with it.
+
+**To change:** `compileTemplates` in `internal/stub/response.go` for both halves.
+
+**To settle:** the first is a product call, not a probe. If the extension stands
+it wants a number in §5.5, since a WireMock user's stub silently changes meaning
+when it moves here.
+
+---
+
+## D-OPEN-13 — The scenarios admin surface diverges three ways
+
+**Status:** implemented as SPEC §5.1 describes · **Owner:** M6 ·
+**Reversible:** yes
+
+§5.1 marks both scenario admin rows **[DH]** — the listing's shape and the
+PUT-state validation. Probed against pinned 3.13.2, all three answers differ
+from ours, and each one is a separate call:
+
+- **The listing carries a fourth field.** WireMock puts the scenario's member
+  stubs under `mappings`, in full. §5.1 names `id`, `name`, `state` and
+  `possibleStates`, and ours stops there. The field is not free: a scenario with
+  a hundred stubs in it repeats all hundred inside a listing whose caller
+  usually wants a state name, and the same documents are one `GET
+  /__admin/mappings` away. It is also the reason the scenario cases are `wm:
+  n/a` — the two documents differ by more than identity, so a differential diff
+  would report it every run.
+- **An unsupported target state is 422 code 11 there and 400 code 1031 here.**
+  Both refuse the write and both name the scenario and the state, so the failure
+  is loud either way; only the status and the code differ. Ours is what §5.1 and
+  Appendix B say, and 400 is the better reading of a path parameter naming a
+  state that does not exist — but a client that branches on the status sees a
+  difference.
+- **`Started` is always settable here and not always there.** WireMock derives
+  `possibleStates` from the stubs alone, so a scenario whose stubs name only
+  `alpha` and `beta` reports exactly those two and refuses `PUT {"state":
+  "Started"}` with the same 422 — even though `Started` is the state the
+  scenario is *in* until something moves it, and `POST /__admin/scenarios/reset`
+  puts it back there. Ours adds `Started` to every scenario's possible states,
+  so the listing agrees with what the request path will do and the two ways of
+  going back to the beginning agree with each other.
+
+**To change:** `recordScenario` in `internal/match/snapshot.go` for the third,
+`setScenarioState` in `internal/admin/scenarios.go` for the second, and
+`scenarioView` for the first.
+
+**To settle:** the first two are product calls rather than probes — the
+measurements are in, and what is open is whether parity is worth the cost. The
+third is the one that should not change: a scenario that cannot be put into the
+state its own reset produces is a WireMock bug wearing a validation message. If
+any of them stands it wants a number in §5.5, since a suite written against
+WireMock can tell the difference.

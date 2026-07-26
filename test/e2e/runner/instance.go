@@ -59,6 +59,11 @@ const (
 	// reachable from a corpus case. The default cap is 10 MiB, which no case can
 	// exercise without committing a 10 MiB fixture.
 	VariantTinyBody = "tiny-body"
+	// VariantTinyTemplate shrinks the render output cap for the same reason:
+	// the default is 10 MB, and a case reaching it honestly — by letting the
+	// request drive the expansion — would have to send megabytes to prove that
+	// a stub cannot be made to allocate without bound.
+	VariantTinyTemplate = "tiny-template"
 	// VariantAccessLog turns on per-request logging with no sampling, so a
 	// logprobe can assert one line per request.
 	VariantAccessLog = "access-log"
@@ -73,6 +78,11 @@ const (
 	// VariantCBMajority asks for majority durability, which is the mode teams
 	// treating mocks as long-lived environment config run in (SPEC §7.2).
 	VariantCBMajority = "cb-majority"
+	// VariantScenarioBudget tightens the request-path scenario budget well below
+	// the general KV timeout, which is what makes the budget observable: with
+	// the store away the two differ by seconds, and only the tight one leaves a
+	// failing request inside a window a test would wait through.
+	VariantScenarioBudget = "scenario-budget"
 	// VariantStartWithoutStore points an instance at a store that does not
 	// resolve and takes the escape hatch of SPEC §4.4. The host is under
 	// `.invalid`, which RFC 2606 reserves as never resolvable: a port nobody
@@ -108,8 +118,9 @@ var variantEnv = map[string]map[string]string{
 	VariantH2C:           {"MOCKULUS_H2C_ENABLED": "true"},
 	// The TLS variant's cert and key are filled in per run by TLSFixture, since
 	// they do not exist until the run generates them.
-	VariantTLS:      {},
-	VariantTinyBody: {"MOCKULUS_MAX_BODY_BYTES": "1KiB"},
+	VariantTLS:          {},
+	VariantTinyBody:     {"MOCKULUS_MAX_BODY_BYTES": "1KiB"},
+	VariantTinyTemplate: {"MOCKULUS_TEMPLATE_MAX_OUTPUT_BYTES": "1KiB"},
 	VariantAccessLog: {
 		"MOCKULUS_LOG_REQUESTS":         "true",
 		"MOCKULUS_LOG_REQUEST_SAMPLE_N": "1",
@@ -140,6 +151,13 @@ var variantEnv = map[string]map[string]string{
 	},
 	VariantCBVerbose:  {"MOCKULUS_LOG_LEVEL": "debug"},
 	VariantCBMajority: {"MOCKULUS_COUCHBASE_DURABILITY": "majority", "MOCKULUS_LOG_LEVEL": "debug"},
+	VariantScenarioBudget: {
+		"MOCKULUS_SCENARIO_KV_TIMEOUT": "150ms",
+		// Debug for the same reason the durability lane runs there: the startup
+		// dump is the only surface on which the resolved value of a key that
+		// never appears in a response can be seen at all (SPEC §14.2).
+		"MOCKULUS_LOG_LEVEL": "debug",
+	},
 	VariantStartWithoutStore: {
 		"MOCKULUS_START_WITHOUT_STORE": "true",
 		"MOCKULUS_COUCHBASE_CONNSTR":   "couchbase://store.invalid",

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-parameters-001
+behaviors: [B-RESP-TRANSFORMERPARAMETERS]
+wm: verified
+steps:
+  # transformerParameters is how one stub document carries the values that make
+  # it different from the next one, so the template itself can be shared text.
+  # They reach the template under `parameters` and nowhere else — a stub cannot
+  # inject a name into the request model and shadow `request` (SPEC §10.2).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000f-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-parameters-001/account"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Tier": "{{parameters.tier}}"},
+                      "body": "tier={{parameters.tier}} limit={{parameters.limit}} doubled={{math parameters.limit 'x' 2}} missing=[{{parameters.absent}}]",
+                      "transformers": ["response-template"],
+                      "transformerParameters": {"tier": "gold", "limit": 7}}}
+    expect: {status: 201}
+
+  # `limit` is given as a JSON number and read twice: once interpolated, once as
+  # an operand. A parameter that arrived as text would still print 7 and would
+  # fail the arithmetic, which is why `doubled` is here rather than a second
+  # interpolation. `missing` is bracketed because an undeclared parameter has to
+  # render as nothing at all, not as its own path expression.
+  #
+  # The header carries one too: templating covers header values, so a stub can
+  # vary a Location or a correlation id per deployment without a second stub.
+  - request: {method: GET, path: /e2e/templating-parameters-001/account}
+    expect:
+      status: 200
+      headers: {X-Tier: "gold"}
+      body: "tier=gold limit=7 doubled=14 missing=[]"

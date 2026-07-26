@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-mode-on-001
+behaviors: [B-CFG-TEMPLATING-ENABLED, B-ERR-1002]
+# `on` forces templating for every stub on the instance, which is a mockulus
+# extension: WireMock reaches the same place through a start-up flag its
+# harness oracle is not started with, so there is nothing to diff.
+wm: n/a
+config: templating-on
+steps:
+  # No `transformers` anywhere in this document. Under the default mode the
+  # body below comes back with its braces intact (templating-optin-001); here
+  # the deployment has taken that decision away from the stub author, which is
+  # what a team standardising on templated fixtures wants from the knob.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030011-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-mode-on-001/global"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Method": "{{request.method}}"},
+                      "body": "path={{request.path}} tier={{request.query.tier}}"}}
+    expect: {status: 201}
+
+  # Header and body both, because forcing that covered only one of them would
+  # be a mode nobody could reason about.
+  - request:
+      method: GET
+      path: /e2e/templating-mode-on-001/global?tier=gold
+    expect:
+      status: 200
+      headers: {X-Method: "GET"}
+      body: "path=/e2e/templating-mode-on-001/global tier=gold"
+
+  # The cheap skip, and the only way to observe where its boundary sits. A
+  # value with no `{{` never reaches the parser, so this one registers and is
+  # emitted byte for byte despite the braces it does carry — while the value
+  # below, which differs only by having `{{` in it, is parsed and refused. The
+  # pair fixes the test as "contains {{", which is what keeps a deployment
+  # running with templating forced from having to escape its mock data.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030011-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-mode-on-001/braces"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "closing }} and lone { and { { spaced } } are not template syntax"}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/templating-mode-on-001/braces}
+    expect:
+      status: 200
+      body: "closing }} and lone { and { { spaced } } are not template syntax"
+
+  # What forcing costs, stated out loud: a body that opens a template and never
+  # closes it is now a registration error on a stub that never asked to be
+  # templated. Failing here is the point — the alternative is a stub that
+  # registers and answers every request with a 500 (P3, deviation #13).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030011-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-mode-on-001/unclosed"},
+         "response": {"status": 200,
+                      "body": "an opening {{ with nothing to close it"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1002
+            title: "Template error"
+            source: {pointer: "/response/body"}
+
+  - request: {method: GET, path: /e2e/templating-mode-on-001/unclosed}
+    expect: {status: 404}

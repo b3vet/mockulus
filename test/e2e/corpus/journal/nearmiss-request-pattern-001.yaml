@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: nearmiss-request-pattern-001
+behaviors: [B-ADMIN-NEAR-MISSES-REQUEST-PATTERN-POST]
+config: journal
+# This endpoint ranks the whole journal against one pattern and reports the
+# closest three, so a case sharing the journal with others could have both of
+# its own calls pushed off the end by traffic it never sent.
+requires: [exclusive]
+# n/a: near-miss scoring is outside the strict-compat surface by §6.8, and the
+# recorded requests it ranks carry a server-minted id, a client IP and an
+# absolute URL bearing the instance's own port.
+wm: n/a
+steps:
+  # Entries are written off the request path, so a purge removes what has landed
+  # and a call recorded a moment earlier arrives after it. One call of this
+  # case's own, waited for, puts everything the run had queued on the far side
+  # of the delete, so the ranking below is over these two calls and nothing else.
+  - request: {port: mock, method: GET, path: /e2e/nearmiss-request-pattern-001/settle}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {request: {url: /e2e/nearmiss-request-pattern-001/settle}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # Neither call matches a stub, which is beside the point: this endpoint ranks
+  # what was recorded, and the journal records unmatched calls too. The question
+  # it answers is the one a team has after a verification came back empty —
+  # something arrived, how close was it to what I expected?
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/nearmiss-request-pattern-001/orders
+      headers: {X-Tenant: acme-eu}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/nearmiss-request-pattern-001/invoices}
+    expect: {status: 404}
+
+  # The pattern the team believed they were verifying: right path, tenant spelt
+  # the way the fixture spells it. The call to /orders is one header value away;
+  # the call to /invoices is a different path with no tenant at all.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/nearmiss-request-pattern-001/orders",
+         "headers":{"X-Tenant":{"equalTo":"acme"}}}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request:
+              url: /e2e/nearmiss-request-pattern-001/orders
+              headers: {X-Tenant: acme-eu}
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Tenant
+                  expected: 'equalTo "acme"'
+                  actual: acme-eu
+            # The pattern is echoed on every entry, so a diagnostic pasted into
+            # a bug report says what was asked as well as what was found.
+            requestPattern:
+              urlPath: /e2e/nearmiss-request-pattern-001/orders
+          - request:
+              url: /e2e/nearmiss-request-pattern-001/invoices
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}

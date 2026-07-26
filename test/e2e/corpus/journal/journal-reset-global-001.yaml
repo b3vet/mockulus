@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-reset-global-001
+behaviors: [B-ADMIN-RESET-POST]
+config: journal
+# One call that empties three deployment-wide things at once. SPEC §1 names it
+# as the call shared runners must never make, which is exactly the declaration
+# a case making it has to carry.
+requires: [exclusive]
+# n/a: what is asserted is three collections of this deployment being emptied
+# together, and the oracle is reset per case so it holds none of them; the
+# journal half also has no counterpart there, WireMock's being always on.
+wm: n/a
+steps:
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  # Entries are written off the request path, so a purge removes what has landed
+  # and a call recorded a moment earlier arrives after it. One call of this
+  # case's own, waited for, puts everything the run had queued on the far side
+  # of the delete — which is what lets the reset below be measured against an
+  # empty journal rather than a nearly empty one.
+  - request: {port: mock, method: GET, path: /e2e/journal-reset-global-001/settle}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {request: {url: /e2e/journal-reset-global-001/settle}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # Persistent, so it survives the mappings sweep and its scenario is still
+  # defined afterwards. A scenario exists because a stub mentions it (§9.1): had
+  # this stub been swept with the rest, the scenario would have vanished with
+  # it and "back to Started" would be unobservable rather than true.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000009-0000-4000-8000-000000000001",
+         "persistent":true,
+         "scenarioName":"journal-reset-global-001-flow",
+         "requiredScenarioState":"Started",
+         "newScenarioState":"second",
+         "request":{"method":"GET","urlPath":"/e2e/journal-reset-global-001/step"},
+         "response":{"status":200,"body":"first"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000009-0000-4000-8000-000000000002",
+         "scenarioName":"journal-reset-global-001-flow",
+         "requiredScenarioState":"second",
+         "request":{"method":"GET","urlPath":"/e2e/journal-reset-global-001/step"},
+         "response":{"status":200,"body":"second"}}
+    expect: {status: 201}
+
+  # One call drives the scenario off Started and puts an entry in the journal,
+  # so all three collections have something in them to reset.
+  - request: {port: mock, method: GET, path: /e2e/journal-reset-global-001/step}
+    expect: {status: 200, body: "first"}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: journal-reset-global-001-flow, state: second}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        meta: {total: 1}
+        requests:
+          - request: {url: /e2e/journal-reset-global-001/step}
+
+  - admin: {method: POST, path: /__admin/reset}
+    expect: {status: 200}
+
+  # Mappings: the non-persistent stub is gone and the persistent one is not,
+  # which is the mappings/reset half rather than a delete-all.
+  - admin: {method: GET, path: /__admin/mappings/51000009-0000-4000-8000-000000000002}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/51000009-0000-4000-8000-000000000001}
+    expect: {status: 200, body_json_subset: {persistent: true}}
+
+  # Journal: emptied.
+  - admin: {method: GET, path: /__admin/requests}
+    expect:
+      status: 200
+      body_json:
+        requests: []
+        meta: {total: 0}
+        requestJournalDisabled: false
+
+  # Scenarios: back to Started, and the surviving stub serves its first response
+  # again — which is what "reset" has to mean to a suite starting its next run.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: journal-reset-global-001-flow, state: Started}
+
+  - request: {port: mock, method: GET, path: /e2e/journal-reset-global-001/step}
+    expect: {status: 200, body: "first"}
+
+  # The persistent stub would otherwise be inherited by every later exclusive
+  # case on this deployment.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}

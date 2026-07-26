@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-unmatched-near-misses-001
+behaviors: [B-ADMIN-REQUESTS-UNMATCHED-NEAR-MISSES-GET]
+config: journal
+# Scoring runs over every stub in the deployment and every unmatched entry in
+# the journal, so "the closest stub is the one reported" is only a claim about
+# ranking when this case knows what the field is. It empties both and puts them
+# back the way it found them.
+requires: [exclusive]
+# n/a: SPEC §6.8 puts near-miss scoring outside the strict-compat surface —
+# helpful and stable, not bit-identical — so the distances and the per-criterion
+# differences are ours by design and there is nothing here to diff.
+wm: n/a
+steps:
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  # Entries are written off the request path, so a purge removes what has landed
+  # and a call recorded a moment earlier arrives after it. One call of this
+  # case's own, waited for, puts everything the run had queued on the far side
+  # of the delete, so the list below is scored for this case's request alone.
+  - request: {port: mock, method: GET, path: /e2e/journal-unmatched-near-misses-001/settle}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {request: {url: /e2e/journal-unmatched-near-misses-001/settle}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # Two candidates for one request, one plainly closer than the other: same path
+  # and method, wrong tenant, against a different path and a different method.
+  # A list that came back in registration order, or unranked, puts them the
+  # other way round.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000006-0000-4000-8000-000000000001",
+         "name":"orders-for-acme",
+         "request":{"method":"GET",
+                    "urlPath":"/e2e/journal-unmatched-near-misses-001/orders",
+                    "headers":{"X-Tenant":{"equalTo":"acme"}}},
+         "response":{"status":200,"body":"orders"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000006-0000-4000-8000-000000000002",
+         "name":"invoices-upload",
+         "request":{"method":"POST",
+                    "urlPath":"/e2e/journal-unmatched-near-misses-001/invoices"},
+         "response":{"status":201,"body":"invoices"}}
+    expect: {status: 201}
+
+  # One criterion away from the first stub. Unmatched requests score nothing on
+  # the way through — that is the point of computing this on the admin path
+  # (§5.4) — so the 404 body carries no diagnostic and the ranking below is
+  # produced by the call that asks for it.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/journal-unmatched-near-misses-001/orders
+      headers: {X-Tenant: wrong}
+    expect: {status: 404, body: "Request was not matched"}
+
+  - admin: {method: GET, path: /__admin/requests/unmatched/near-misses}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/journal-unmatched-near-misses-001/orders}
+            stubMapping:
+              id: "51000006-0000-4000-8000-000000000001"
+              name: orders-for-acme
+            # The one criterion that did not line up, named rather than
+            # rendered into prose: a caller who has to parse a sentence to
+            # learn which header was wrong is being told less than the scorer
+            # already knew.
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Tenant
+                  expected: 'equalTo "acme"'
+                  actual: wrong
+          - stubMapping:
+              id: "51000006-0000-4000-8000-000000000002"
+              name: invoices-upload
+
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}

@@ -741,17 +741,17 @@ func (s *Store) removeMappings(ctx context.Context, remove func(storedDoc) bool)
 			keys = append(keys, id)
 		}
 	}
-	return s.removeKeys(ctx, keys)
+	return s.removeKeys(ctx, s.mappings, "mappings", keys)
 }
 
-// removeKeys removes a set of mapping documents, noting every token.
+// removeKeys removes a set of documents from one collection, noting every token.
 //
 // A failure is reported rather than swallowed, so an incomplete reset reaches
 // the operator as the 503 of SPEC §4.6 instead of as a keyspace that quietly
 // still holds stubs. The removals that did land stay removed: a bulk delete has
 // no transaction either way, and reporting the failure is what lets the caller
 // retry an operation that is idempotent by construction.
-func (s *Store) removeKeys(ctx context.Context, keys []string) error {
+func (s *Store) removeKeys(ctx context.Context, coll *gocb.Collection, what string, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -770,7 +770,7 @@ func (s *Store) removeKeys(ctx context.Context, keys []string) error {
 		go func() {
 			defer wg.Done()
 			for key := range work {
-				res, err := s.mappings.Remove(key, &gocb.RemoveOptions{
+				res, err := coll.Remove(key, &gocb.RemoveOptions{
 					Context: ctx, Timeout: s.kvTimeout, DurabilityLevel: s.durability,
 				})
 				if errors.Is(err, gocb.ErrDocumentNotFound) {
@@ -798,20 +798,20 @@ func (s *Store) removeKeys(ctx context.Context, keys []string) error {
 	wg.Wait()
 
 	if first != nil {
-		return fmt.Errorf("%d of %d mappings could not be removed: %w",
-			failed, len(keys), wrap(first))
+		return fmt.Errorf("%d of %d %s could not be removed: %w",
+			failed, len(keys), what, wrap(first))
 	}
 	return nil
 }
 
 // deleteWhere issues a bulk delete of a whole collection.
 //
-// The journal purge and the scenario reset use it, and for both the
-// statement's staleness costs only what it deletes: neither collection is
-// read by a bulk scan, so nothing can be resurrected by a reload the way a
-// mapping could. What survives is the same exposure removeMappings documents —
-// a document written moments earlier is not visible to the statement's scan and
-// is not deleted — which those callers inherit until their own milestones land.
+// The journal purge is the last caller, and for it the statement's staleness
+// costs only what it deletes: the collection is not read by a bulk scan, so
+// nothing can be resurrected by a reload the way a mapping could. What survives
+// is the same exposure removeMappings documents — a document written moments
+// earlier is not visible to the statement's scan and is not deleted — which
+// that caller inherits until its own milestone lands.
 func (s *Store) deleteWhere(ctx context.Context, coll string) error {
 	stmt := fmt.Sprintf("DELETE FROM `%s`.`%s`.`%s`", s.bucketName, s.scopeName, coll)
 	_, err := s.cluster.Query(stmt, &gocb.QueryOptions{Context: ctx, Timeout: s.queryTimeout})

@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+id: scenario-state-unavailable-001
+behaviors:
+  - B-ERR-1021
+  - B-CFG-SCENARIO-KV-TIMEOUT
+# The run has one Couchbase and every store deployment shares it, so taking it
+# away is a claim on the run rather than on this deployment.
+requires: [couchbase, exclusive]
+config: scenario-budget
+# n/a: WireMock keeps scenario state in the process that serves it, so it has no
+# store to lose. The expectations come from SPEC §4.6 and §9.2.
+wm: n/a
+steps:
+  # The budget is a start-time value that never appears in a response, so the
+  # resolved dump is where a case can see which key set it (SPEC §14.2).
+  - logprobe: {contains: "scenario_kv_timeout=150ms"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000005-0000-4000-8000-000000000001",
+         "scenarioName":"scenario-state-unavailable-001",
+         "requiredScenarioState":"Started",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-state-unavailable-001/gated"},
+         "response":{"status":200,"body":"gated stub served"}}
+    expect: {status: 201}
+
+  # The control. A stub in no scenario reads no state, so the outage below has
+  # to leave it untouched — that is what pay-per-use means when the feature
+  # being paid for is failing (P2).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000005-0000-4000-8000-000000000002",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-state-unavailable-001/plain"},
+         "response":{"status":200,"body":"plain stub served"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/scenario-state-unavailable-001/gated}
+    expect: {status: 200, body: "gated stub served"}
+
+  - stop_store: true
+
+  # Unaffected, as the whole design promises: matching runs against the compiled
+  # snapshot and touches nothing (P1).
+  - request: {port: mock, method: GET, path: /e2e/scenario-state-unavailable-001/plain}
+    expect: {status: 200, body: "plain stub served"}
+
+  # The gated stub is the sanctioned exception, and this is what it costs when
+  # the exception cannot be paid. 500 rather than the 404 an unmatched request
+  # gets: "this stub did not match" and "nobody can say whether it matches" are
+  # different answers, and conflating them hands a suite a green run through a
+  # flow it never actually walked (SPEC §4.6, §9.2).
+  #
+  # Answered inside the budget, not after the general KV timeout — the request
+  # fails fast rather than stalling, which is the whole point of the key having
+  # its own value (SPEC §7.2). The window here is for the outage to take hold,
+  # not for the response.
+  - request: {port: mock, method: GET, path: /e2e/scenario-state-unavailable-001/gated}
+    expect_eventually:
+      status: 500
+      within: 60s
+      body_json_subset:
+        errors:
+          - code: 1021
+            title: "Scenario state unavailable"
+
+  # Counted where an operator would look, and under its own operation label, so
+  # "scenario reads are failing" is distinguishable from "every store call is".
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="scenario_read"}', at_least: 1}
+
+  - start_store: true
+
+  # Nothing was buffered and nothing has to be reconciled: the state read simply
+  # starts answering again, and the flow resumes from where it was (§4.4).
+  - request: {port: mock, method: GET, path: /e2e/scenario-state-unavailable-001/gated}
+    expect_eventually: {status: 200, body: "gated stub served", within: 60s}

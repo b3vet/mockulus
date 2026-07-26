@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-requests-clear-001
+behaviors:
+  - B-ADMIN-REQUESTS-DELETE
+  - B-ADMIN-REQUESTS-RESET-POST
+config: journal
+# "The journal is empty afterwards" is a claim about the whole collection, which
+# is only this case's to make on an instance nothing else is writing to.
+requires: [exclusive]
+# n/a: WireMock 3.13.2 no longer routes the deprecated alias at all — measured,
+# it answers 404 where the DELETE answers 200 — so the half of this case that
+# matters has no oracle to agree with. SPEC §5.1 marks the row 🔶 for that
+# reason: a client written against WireMock's own deprecation notice keeps
+# working here, which is the direction that costs nobody anything.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000004-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/journal-requests-clear-001/call"},
+         "response":{"status":200,"body":"served"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/journal-requests-clear-001/call}
+    expect: {status: 200, body: "served"}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        requests:
+          - request: {url: /e2e/journal-requests-clear-001/call}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # Empty means empty, envelope and all: an entry that survived the purge but
+  # dropped out of the default page would read the same under a subset check.
+  - admin: {method: GET, path: /__admin/requests}
+    expect:
+      status: 200
+      body_json:
+        requests: []
+        meta: {total: 0}
+        requestJournalDisabled: false
+
+  # The same traffic again, so the alias below is asked to clear something.
+  # Proving it is an alias means proving it does the same thing, and a purge
+  # that ran against an already-empty journal would prove nothing at all.
+  - request: {port: mock, method: GET, path: /e2e/journal-requests-clear-001/call}
+    expect: {status: 200, body: "served"}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        meta: {total: 1}
+        requests:
+          - request: {url: /e2e/journal-requests-clear-001/call}
+
+  - admin: {method: POST, path: /__admin/requests/reset}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect:
+      status: 200
+      body_json:
+        requests: []
+        meta: {total: 0}
+        requestJournalDisabled: false

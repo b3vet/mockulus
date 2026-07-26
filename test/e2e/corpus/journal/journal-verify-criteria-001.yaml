@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-verify-criteria-001
+behaviors:
+  - B-ADMIN-REQUESTS-COUNT-POST
+  - B-ADMIN-REQUESTS-FIND-POST
+# The journal is off by default (deviation #1), so everything that verifies runs
+# against the variant that turns it on.
+config: journal
+# n/a: the verification steps poll, because our journal is eventually consistent
+# where WireMock's is immediate (deviation #10), and a polled step is not
+# replayed against the oracle — `verified` would claim a comparison that never
+# ran. The bodies could not be compared anyway: a logged request carries the
+# entry id the server minted, the client IP it saw and an absolute URL bearing
+# its own port.
+wm: n/a
+steps:
+  # The whole point of this case is that the block below is used twice: once as
+  # a stub's `request`, once as verification criteria. If the two meant
+  # different things, a suite could verify a call against a stub that would
+  # never have served it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000001-0000-4000-8000-000000000001",
+         "request":{"method":"POST",
+                    "urlPath":"/e2e/journal-verify-criteria-001/orders",
+                    "headers":{"X-Tenant":{"equalTo":"acme"}},
+                    "queryParameters":{"channel":{"equalTo":"web"}},
+                    "bodyPatterns":[{"equalToJson":"{\"sku\":\"A-1\"}"}]},
+         "response":{"status":201,"body":"created"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/journal-verify-criteria-001/orders?channel=web
+      headers: {X-Tenant: acme}
+      body: '{"sku":"A-1"}'
+    expect: {status: 201, body: "created"}
+
+  # Same path, wrong tenant: served 404 and recorded all the same, since the
+  # journal takes matched and unmatched alike (§11.1). It is what stops the
+  # counts below from being satisfied by "everything in the namespace".
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/journal-verify-criteria-001/orders?channel=web
+      headers: {X-Tenant: other}
+      body: '{"sku":"A-1"}'
+    expect: {status: 404}
+
+  # The stub's request block, posted verbatim as criteria: one of the two calls
+  # satisfies it. The envelope is asserted whole because it has nothing volatile
+  # in it — `requestJournalDisabled` is the flag a client library reads before
+  # trusting the number next to it.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"method":"POST",
+         "urlPath":"/e2e/journal-verify-criteria-001/orders",
+         "headers":{"X-Tenant":{"equalTo":"acme"}},
+         "queryParameters":{"channel":{"equalTo":"web"}},
+         "bodyPatterns":[{"equalToJson":"{\"sku\":\"A-1\"}"}]}
+    expect_eventually:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # `find` answers with the logged requests themselves rather than the serve
+  # events holding them, which is what a client deserializes into typed
+  # LoggedRequests. `queryParams` is asserted in full for that reason: it is the
+  # one field of the document that is an object per parameter rather than a bare
+  # value, and a client reading it back into a QueryParameter cannot make one
+  # from a string.
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      body: |
+        {"method":"POST",
+         "urlPath":"/e2e/journal-verify-criteria-001/orders",
+         "headers":{"X-Tenant":{"equalTo":"acme"}},
+         "queryParameters":{"channel":{"equalTo":"web"}},
+         "bodyPatterns":[{"equalToJson":"{\"sku\":\"A-1\"}"}]}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        requestJournalDisabled: false
+        requests:
+          - method: POST
+            url: /e2e/journal-verify-criteria-001/orders?channel=web
+            body: '{"sku":"A-1"}'
+            headers: {X-Tenant: acme}
+            queryParams:
+              channel: {key: channel, values: ["web"]}
+
+  # Both calls are on record from here on, so the remaining counts are exact
+  # rather than eventual — and a count that is right for the wrong reason
+  # (nothing recorded yet) can no longer pass.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-verify-criteria-001/orders"}'
+    expect: {status: 200, body_json: {count: 2, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/journal-verify-criteria-001/orders",
+         "headers":{"X-Tenant":{"equalTo":"other"}}}
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # A criterion nothing satisfies is a count of nought, not an error: verifying
+  # that a call did *not* happen is half of what verification is for.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/journal-verify-criteria-001/orders",
+         "queryParameters":{"channel":{"equalTo":"mobile"}}}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # Criteria are compiled by the stub compiler, so a matcher a stub cannot use
+  # is refused here in exactly the same words. Accepting it and quietly matching
+  # nothing would report zero calls for a verification that was never evaluated.
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      body: |
+        {"urlPath":"/e2e/journal-verify-criteria-001/orders",
+         "bodyPatterns":[{"matchesXPath":"/order/sku"}]}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            source: {pointer: /request/bodyPatterns/0/matchesXPath}

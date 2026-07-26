@@ -230,6 +230,12 @@ type Entry struct {
 func NewEntry(cfg Config, r *http.Request, body []byte, matched *stub.CompiledStub, status int) *Entry {
 	now := time.Now().UTC()
 
+	// One identifier, used both as the serve event's `id` and as the store key.
+	// That is how a client uses it: it reads an id out of a listing and then
+	// asks for or deletes that entry by it. Two independently minted ids would
+	// make every such follow-up a 404 against an entry that is plainly there.
+	id := ksuid.New().String()
+
 	recorded, truncated := capBody(body, cfg.MaxBody)
 
 	request := map[string]any{
@@ -249,7 +255,7 @@ func NewEntry(cfg Config, r *http.Request, body []byte, matched *stub.CompiledSt
 	}
 
 	event := map[string]any{
-		"id":         ksuid.New().String(),
+		"id":         id,
 		"request":    request,
 		"wasMatched": matched != nil,
 		"responseDefinition": map[string]any{
@@ -273,7 +279,7 @@ func NewEntry(cfg Config, r *http.Request, body []byte, matched *stub.CompiledSt
 	return &Entry{
 		// A time-ordered key makes recency queries cheap without a secondary
 		// sort (SPEC §11.2).
-		ID:      ksuid.New().String(),
+		ID:      id,
 		TS:      now.UnixMilli(),
 		Pod:     cfg.Pod,
 		Payload: payload,
@@ -324,14 +330,21 @@ func cookieMap(r *http.Request) map[string]any {
 	return out
 }
 
+// queryMap renders the query the way WireMock's logged request does: every
+// parameter is an object naming itself and listing every value it was given,
+// single-valued ones included.
+//
+// Headers a line above collapse to a bare string when they have one value and
+// this deliberately does not, because the two fields are typed differently on
+// the other side. A client deserializes `queryParams` into a map of
+// QueryParameter, which is constructed from `key` and `values`; a bare string
+// there is not a shorter spelling of the same thing but a value the mapping
+// cannot be built from, and the failure takes down the whole verification call
+// rather than one field of it. Measured against pinned WireMock 3.13.2.
 func queryMap(r *http.Request) map[string]any {
 	out := map[string]any{}
 	for name, values := range r.URL.Query() {
-		if len(values) == 1 {
-			out[name] = values[0]
-			continue
-		}
-		out[name] = values
+		out[name] = map[string]any{"key": name, "values": values}
 	}
 	return out
 }

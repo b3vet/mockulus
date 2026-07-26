@@ -54,7 +54,7 @@ func (c *criteria) matches(e *serveEvent) bool {
 		}
 	}
 	for _, crit := range cs.Query {
-		if !crit.Matcher.Match(recordedValues(e.Request.Query, crit.Name)) {
+		if !crit.Matcher.Match(recordedQuery(e.Request.Query, crit.Name)) {
 			return false
 		}
 	}
@@ -91,9 +91,9 @@ func matchRecordedURL(cs *stub.CompiledStub, url string) bool {
 	}
 }
 
-// recordedValues adapts a recorded header, cookie or query entry into a matcher
-// subject. A recorded entry is a string when single-valued and an array when
-// repeated, which is how the serve event stores it.
+// recordedValues adapts a recorded header or cookie into a matcher subject. A
+// recorded entry is a string when single-valued and an array when repeated,
+// which is how the serve event stores it.
 func recordedValues(source map[string]any, name string) matchers.Subject {
 	raw, present := source[name]
 	if !present {
@@ -126,6 +126,34 @@ func recordedValues(source map[string]any, name string) matchers.Subject {
 	default:
 		return matchers.AbsentKey()
 	}
+}
+
+// recordedQuery adapts one recorded query parameter into a matcher subject.
+//
+// Query parameters are recorded in WireMock's own shape — an object carrying
+// `key` and every `values` entry (§11.2) — rather than the bare value a header
+// or cookie carries, so they are read on their own terms. The lookup is
+// case-sensitive because that is what the matching engine does with a query
+// criterion: a verification and the stub it was copied from have to agree about
+// which requests they describe, and here they would disagree in the direction
+// that reports a call nobody made.
+func recordedQuery(source map[string]any, name string) matchers.Subject {
+	param, present := source[name]
+	if !present {
+		return matchers.AbsentKey()
+	}
+	entry, isObject := param.(map[string]any)
+	if !isObject {
+		return matchers.AbsentKey()
+	}
+	raw, _ := entry["values"].([]any)
+	values := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if s, ok := item.(string); ok {
+			values = append(values, s)
+		}
+	}
+	return matchers.NewKeyValues(values...)
 }
 
 func indexByte(s string, c byte) int {

@@ -97,3 +97,34 @@ tests:
       both listeners serve, so the admin port has to be chosen in advance
       rather than read back. What is asserted is a process that keeps
       answering: /healthz 200 and /readyz 503, continuously, while it retries.
+  - name: TestScenarioContentionCountsRetriesAndConflicts
+    behaviors:
+      - B-METRIC-SCENARIO-CAS-RETRIES-TOTAL
+      - B-METRIC-SCENARIO-TRANSITION-CONFLICTS-TOTAL
+    why: >-
+      Both series count a transition that lost a compare-and-swap race, and a
+      corpus case has no way to produce one: its steps run one after another, so
+      every transition it drives owns the scenario and both counters stay at
+      nought however many times it walks the flow. Thousands of overlapping
+      requests need goroutines, and holding the counters to the other half of
+      their contract — nought on a fresh instance, still nought after forty
+      uncontended transitions — needs a process no other case is sharing.
+  - name: TestTemplateRenderErrorsCountFailuresOnly
+    behaviors: [B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL]
+    why: >-
+      Half of a counter's contract is that it does not move. Corpus cases share
+      one instance per variant, so the value of this series belongs to the whole
+      run and `at_least` is the only claim a case can make about it — an upper
+      bound would be an assertion about what every other case did. Owning the
+      process makes both halves readable: nought on a fresh instance, still
+      nought after a render that succeeded, one after a render that failed.
+  - name: TestJournalEntryIsAddressableByTheIdItWasListedUnder
+    behaviors:
+      - B-ADMIN-REQUESTS-ID-GET
+      - B-ADMIN-REQUESTS-ID-DELETE
+    why: >-
+      Both routes take an id the server invented, so the call under test can
+      only be built from the answer to the call before it — and a corpus case's
+      steps are fixed text with no way to carry a value between them. The other
+      half needs the process too: "the entry is gone" is a statement about the
+      whole journal, which no case sharing an instance is in a position to make.
