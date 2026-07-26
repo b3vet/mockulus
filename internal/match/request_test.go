@@ -299,6 +299,60 @@ func TestPoolReuseIsClean(t *testing.T) {
 	}
 }
 
+// The request target is taken from RequestURI rather than re-derived from the
+// parsed URL, so what a stub's `url` criterion compares against has to be shown
+// to be the same string for every target shape a client can send.
+func TestRequestTargetIsTheTargetAsReceived(t *testing.T) {
+	targets := []string{
+		"/api/orders",
+		"/api/orders?a=1&b=2",
+		"/api/orders?",
+		"/api/orders?a=%20b&c=d%2Fe",
+		// Percent-encoding the parsed URL would decode and re-encode: a space
+		// as %20, a slash as %2F, and a plus that must survive unchanged.
+		"/api/orders/a%20b/c%2Fd",
+		"/api/orders/a+b",
+		"/api/orders/caf%C3%A9",
+		// Not valid UTF-8, so nothing can normalise it into something else.
+		"/api/orders/%FF%FE",
+		"/api/orders//double//slashes",
+		"/api/orders/.%2E/parent",
+	}
+
+	for _, target := range targets {
+		req := httptest.NewRequest("GET", target, nil)
+		pr := AcquireRequest(req, nil)
+		if pr.FullURL != target {
+			t.Errorf("FullURL for %q = %q, want the target as received", target, pr.FullURL)
+		}
+		// The parsed URL is the other route to the same string, and the two
+		// agreeing is what makes the cheap one safe to prefer.
+		if got := req.URL.RequestURI(); got != pr.FullURL {
+			t.Errorf("target %q: RequestURI gives %q but the parsed URL gives %q",
+				target, pr.FullURL, got)
+		}
+		ReleaseRequest(pr)
+	}
+}
+
+// A target that is not a path — the absolute form a proxy client sends — is the
+// case RequestURI cannot be used verbatim for, because a stub's URL criterion
+// is written against the origin form.
+func TestAbsoluteRequestTargetFallsBackToTheOriginForm(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/orders?a=1", nil)
+	req.RequestURI = "http://mocks.example.internal/api/orders?a=1"
+
+	pr := AcquireRequest(req, nil)
+	defer ReleaseRequest(pr)
+
+	if pr.FullURL != "/api/orders?a=1" {
+		t.Errorf("FullURL = %q, want the origin form", pr.FullURL)
+	}
+	if pr.Path != "/api/orders" {
+		t.Errorf("path = %q, want /api/orders", pr.Path)
+	}
+}
+
 func BenchmarkAcquireRelease(b *testing.B) {
 	req := httptest.NewRequest("GET", "/api/orders/42", nil)
 	body := []byte(nil)

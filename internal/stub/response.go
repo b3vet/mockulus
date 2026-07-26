@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -231,9 +232,17 @@ func parseBody(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp *C
 				"bodyFileName must not be empty")
 			return
 		}
-		// Existence is deliberately NOT checked here: registering a stub before
-		// uploading its file is legal, and the reference resolves at snapshot
-		// build (SPEC §4.3, §6.9).
+		// The name has to be one the files store could hold. Existence is
+		// deliberately NOT checked — registering a stub before uploading its
+		// file is legal, and the reference resolves at snapshot build (SPEC
+		// §4.3, §6.9) — but a name that is malformed can never resolve at all,
+		// and letting it through means a stub that registers cleanly and then
+		// answers 1022 on the request someone is debugging at the time.
+		if reason := RejectFileName(s); reason != "" {
+			errs.Addf(wmcompat.CodeMalformed, "/response/bodyFileName",
+				"bodyFileName "+strconv.Quote(s)+" is not allowed: "+reason)
+			return
+		}
 		resp.BodyFileName = s
 	}
 }

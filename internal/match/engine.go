@@ -229,12 +229,19 @@ func (e *Engine) accessLog(r *http.Request, cs *stub.CompiledStub, status int, t
 
 // readBody reads the request body under the configured cap. Matching needs the
 // whole body anyway, so it is read once here rather than streamed.
+//
+// A request carrying no body reads nothing at all. net/http reports that as a
+// zero ContentLength on both HTTP/1.1 and h2c — the sentinel body it hands out
+// differs between them, the length does not — and putting those requests
+// through io.ReadAll costs a LimitReader plus a 512-byte scratch buffer each,
+// for a body that does not exist. Most mock traffic is bodyless GETs, so that
+// is the dominant case paying for a feature it never uses (P1, P2).
 func (e *Engine) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	if r.Body == nil {
+	if r.Body == nil || r.ContentLength == 0 {
 		return nil, true
 	}
-	cap := e.cfg.MaxBodyBytes.B()
-	if cap <= 0 {
+	limit := e.cfg.MaxBodyBytes.B()
+	if limit <= 0 {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			return nil, true
@@ -242,12 +249,24 @@ func (e *Engine) readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool)
 		return body, true
 	}
 
+	// A declared length within the cap sizes the buffer exactly. io.ReadAll
+	// starts at 512 bytes and doubles, so every body larger than that is a
+	// chain of copies nobody needed to make, and every body smaller than it
+	// still rounds up to it.
+	if r.ContentLength > 0 && r.ContentLength <= limit {
+		body := make([]byte, r.ContentLength)
+		if _, err := io.ReadFull(r.Body, body); err != nil {
+			return nil, true
+		}
+		return body, true
+	}
+
 	// Read one byte past the cap so exceeding it is detectable.
-	body, err := io.ReadAll(io.LimitReader(r.Body, cap+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		return nil, true
 	}
-	if int64(len(body)) > cap {
+	if int64(len(body)) > limit {
 		wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeBodyTooLarge,
 			"request body exceeds max_body_bytes"))
 		return nil, false

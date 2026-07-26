@@ -180,10 +180,10 @@ func (s *Snapshot) Match(req *ParsedRequest, gate ScenarioGate, evaluated *int) 
 	}
 
 	var lists [candidateLists][]int32
-	lists[0] = s.ByFullURL[req.Method+methodSep+req.FullURL]
-	lists[1] = s.ByFullURL[anyMethod+methodSep+req.FullURL]
-	lists[2] = s.ByPath[req.Method+methodSep+req.Path]
-	lists[3] = s.ByPath[anyMethod+methodSep+req.Path]
+	lists[0] = req.indexLookup(s.ByFullURL, req.Method, req.FullURL)
+	lists[1] = req.indexLookup(s.ByFullURL, anyMethod, req.FullURL)
+	lists[2] = req.indexLookup(s.ByPath, req.Method, req.Path)
+	lists[3] = req.indexLookup(s.ByPath, anyMethod, req.Path)
 	lists[4] = s.Patterns
 
 	var cursor [candidateLists]int

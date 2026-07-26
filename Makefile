@@ -37,9 +37,17 @@ test-cover: ## Run unit tests and report coverage of the correctness core
 	$(GO) test -race -count=1 -coverprofile=coverage.txt -covermode=atomic ./...
 	@$(GO) tool cover -func=coverage.txt | tail -1
 
+# Benchmark knobs. BENCHCOUNT is the one worth reaching for: §16.2 compares runs
+# with benchstat, which needs several samples per benchmark to say whether a
+# difference is a regression or the machine having a bad minute.
+BENCH      ?= .
+BENCHTIME  ?= 1s
+BENCHCOUNT ?= 1
+
 .PHONY: bench
-bench: ## Run microbenchmarks with allocation counts
-	$(GO) test -run '^$$' -bench . -benchmem ./...
+bench: ## Run microbenchmarks with allocation counts (BENCH=<re> BENCHCOUNT=<n>)
+	$(GO) test -run '^$$' -bench '$(BENCH)' -benchmem \
+		-benchtime $(BENCHTIME) -count $(BENCHCOUNT) ./...
 
 .PHONY: lint
 lint: ## Run golangci-lint

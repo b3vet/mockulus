@@ -6,12 +6,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"path"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/b3vet/mockulus/internal/store"
+	"github.com/b3vet/mockulus/internal/stub"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
@@ -110,13 +109,6 @@ func (h *Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// maxFileNameBytes bounds a name so that every driver can address it. The
-// Couchbase driver keys a file document on its name behind a short prefix, and
-// Couchbase stops at 250-byte keys — an unbounded name is then a write the
-// memory store takes and the Couchbase store rejects, which is one deployment
-// answering 201 where another answers 500.
-const maxFileNameBytes = 240
-
 // fileName extracts and validates the name from the path.
 //
 // Names are used as store keys, and nothing in the tree joins one onto a
@@ -137,7 +129,7 @@ func (h *Handler) fileName(w http.ResponseWriter, r *http.Request) (string, bool
 			wmcompat.NewError(wmcompat.CodeMalformed, "a file name is required"))
 		return "", false
 	}
-	if reason := rejectFileName(name); reason != "" {
+	if reason := stub.RejectFileName(name); reason != "" {
 		// Quoted, because half of what gets rejected here is invisible
 		// otherwise: an operator reading the error should be able to see the
 		// NUL or the newline that caused it. Truncated, because the name that
@@ -153,37 +145,3 @@ func (h *Handler) fileName(w http.ResponseWriter, r *http.Request) (string, bool
 	}
 	return name, true
 }
-
-// rejectFileName reports why a name cannot be stored, or "" when it can.
-//
-// Every rule here refuses a name outright rather than repairing it. An absolute
-// name used to have its leading slash trimmed, which turned `/etc/passwd` into
-// a stored `etc/passwd` and answered 201 — the caller's name and the stored
-// name then disagree forever, and the request that looked like traversal was
-// the one that got a success. Refusing is what P3 asks for, and it is the only
-// answer that keeps a name meaning one thing.
-func rejectFileName(name string) string {
-	switch {
-	case path.IsAbs(name):
-		return "a name is relative to the files store, so it cannot begin with /"
-	case name == ".." || strings.HasPrefix(name, "../"):
-		return "a name cannot climb out of the files store with .. segments"
-	case path.Clean(name) != name:
-		return "a name must already be in cleaned form: no . or .. segments, no empty ones, no trailing /"
-	case len(name) > maxFileNameBytes:
-		return "a name is limited to " + strconv.Itoa(maxFileNameBytes) + " bytes"
-	case !utf8.ValidString(name):
-		// A listing is JSON, and JSON encoding replaces invalid bytes with
-		// U+FFFD. Accepting one would mean GET /__admin/files reports a name
-		// that GET /__admin/files/<that name> cannot fetch.
-		return "a name must be valid UTF-8"
-	case strings.ContainsFunc(name, isControl):
-		// A name reaches the logs and the error catalog. Structured logging
-		// escapes a newline today, but a name that can carry one is a name that
-		// can forge a log line the first time anything renders it plainly.
-		return "a name cannot contain control characters"
-	}
-	return ""
-}
-
-func isControl(r rune) bool { return r < 0x20 || r == 0x7f }

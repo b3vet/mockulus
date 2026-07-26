@@ -374,3 +374,58 @@ third is the one that should not change: a scenario that cannot be put into the
 state its own reset produces is a WireMock bug wearing a validation message. If
 any of them stands it wants a number in §5.5, since a suite written against
 WireMock can tell the difference.
+
+---
+
+## D-OPEN-13 — JSONPath body matching allocates on the request path
+
+**Status:** measured, not fixed · **Owner:** post-v1 · **Reversible:** yes
+
+The M6 benchmark pass put numbers on SPEC §16.3 rule 1, and one line stands out:
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `Match/mixed/1000/exact` | 993 | 0 | 0 |
+| `Match/mixed/1000/regex` | 1,048 | 0 | 0 |
+| `Match/mixed/1000/jsonpath` | 1,483 | **1,152** | **29** |
+
+Every other matcher shape is allocation-free per request. A `matchesJsonPath`
+body criterion decodes the body into `map[string]any`, and that decode is the
+1,152 bytes: 29 allocations for one request, on the path §16.3 says must not
+allocate what it can avoid.
+
+It is bounded and it is pay-per-use — a deployment with no JSONPath body
+matchers pays none of it — so it is not urgent. But it is the one measured
+violation of a rule the rest of the code holds to strictly, and at S2's shape it
+is the difference between the JSONPath row and the other two.
+
+**To change:** the decode is already cached per request in
+`ParsedRequest.bodySubject`, so several JSONPath matchers on one request share
+it. What would remove the rest is evaluating the path against the raw bytes
+rather than a decoded tree — a streaming evaluator over `encoding/json`'s
+scanner, or a decode into a reusable arena held by the pooled request.
+
+**To settle:** decide whether the S2 budget needs it. The benchmark that
+measures it is `BenchmarkMatch/mixed/1000/jsonpath`, and `test/load/BASELINE.md`
+records the number to beat.
+
+---
+
+## D-OPEN-14 — `./x` is accepted as a file name where `RejectFileName` would refuse it
+
+**Status:** cosmetic, unfixed · **Owner:** post-v1 · **Reversible:** yes
+
+`PUT /__admin/files/./x` answers 201 and stores the file as `x`. The rule in
+`stub.RejectFileName` refuses a name that is not already in cleaned form, and it
+is applied — but Go's `ServeMux` normalises the request path before the handler
+sees it, so the name that reaches the check is already `x`.
+
+Nothing escapes: `..` climbing is refused by the mux with a 404 well before the
+handler, and no driver joins a name onto a filesystem path. The cost is only
+that the caller's name and the stored name differ, which is the exact thing the
+rule's own comment says it exists to prevent — so the rule is honest and the
+router quietly makes it moot for this one shape.
+
+**To change:** compare against `r.URL.EscapedPath()` rather than the routed
+value, or register the files routes on a mux that does not redirect. Both are
+more machinery than the problem currently justifies.
