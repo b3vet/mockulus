@@ -101,7 +101,7 @@ func (s *Store) UpsertScenario(ctx context.Context, name string, state store.Sce
 // that reset the flow and then walked it from the middle — a failure that
 // reads as a mockulus bug at whatever step first disagrees (D-OPEN-11).
 func (s *Store) DeleteAllScenarios(ctx context.Context) error {
-	raw, err := s.loadCollection(ctx, s.scenarios, collScenarios)
+	raw, err := s.loadCollection(ctx, s.scenarios, collScenarios, s.requireFor(ctx))
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (s *Store) DeleteAllScenarios(ctx context.Context) error {
 
 // ListScenarioStates returns every stored state by scenario name.
 func (s *Store) ListScenarioStates(ctx context.Context) (map[string]store.ScenarioState, error) {
-	raw, err := s.loadCollection(ctx, s.scenarios, collScenarios)
+	raw, err := s.loadCollection(ctx, s.scenarios, collScenarios, s.requireFor(ctx))
 	if err != nil {
 		return nil, err
 	}

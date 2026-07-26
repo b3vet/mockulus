@@ -171,12 +171,14 @@ hijack path.
 
 ---
 
-## D-OPEN-10 — Cross-pod read consistency on the rebuild path
+## D-OPEN-10 — Cross-pod read consistency on the rebuild path — CLOSED
 
-**Status:** same-pod writes are consistent, peer writes are not · **Owner:** M6 ·
-**Reversible:** yes
+**Resolved 2026-07-26: (b) implemented.** `BumpEpoch` publishes the position of
+the write behind it, and every pod folds that into its own scan requirement.
+Cross-pod reads are now as strong as same-pod ones and SPEC §8's bound holds as
+written; §7.3 documents the document and §8 the property.
 
-This one was measured, not reasoned about, and it is the most consequential
+This one was measured, not reasoned about, and it was the most consequential
 entry in this file.
 
 A KV range scan answers from the vbucket's **persisted** view. A mapping the
@@ -192,35 +194,169 @@ The driver now carries this pod's own mutation tokens into the read
 (`ConsistentWith`), which closes it for writes this pod made: 0 of 40 and 0 of
 30 on the same probes.
 
-**What is still open is the other pod's write.** `LoadAll` reads the epoch
+**What was still open was the other pod's write.** `LoadAll` reads the epoch
 *before* the scan and stamps the snapshot with it, so a pod rebuilding because a
-peer bumped the epoch can install a view predating that peer's write, stamp it
-with the new epoch, and read as converged. The stub is then missing on that pod
+peer bumped the epoch could install a view predating that peer's write, stamp it
+with the new epoch, and read as converged. The stub was then missing on that pod
 until `resync_interval` (5 min) rather than `sync_interval` (1 s). Measured on a
 second store handle: 2 misses in about 60 immediate reads, widest window 117 ms.
-This is a T3 (multi-pod) property; single-pod deployments are unaffected.
+This is a T3 (multi-pod) property; single-pod deployments were unaffected.
 
-It matters because §8's propagation bound is the thing the whole architecture is
-sold on, and 5 minutes is not 1 second.
+It mattered because §8's propagation bound is the thing the whole architecture
+is sold on, and 5 minutes is not 1 second.
 
-**Options:**
+**The three options were:** (a) accept it and state the real worst case in §8,
+which costs nothing and weakens the headline guarantee; (b) publish the causing
+write's position so any pod can fold it into its own scan requirement; (c)
+always bulk-load through N1QL at `RequestPlus`, which is cross-pod consistent by
+construction and costs the primary index and the scan throughput the range-scan
+path exists for (§7.2).
 
-- **(a) Accept and document.** State the real worst case in SPEC §8: a remote
-  write converges within `resync_interval`, not `sync_interval`. Costs nothing,
-  and makes the spec true — but it weakens the headline guarantee.
-- **(b) Publish the causing write's mutation token.** Have `BumpEpoch` record
-  the vbucket / partition-uuid / seqno in a meta document, so any pod folds it
-  into its own scan requirement. One extra KV upsert per admin write and one
-  extra KV get per reload; cross-pod reads become as strong as same-pod ones,
-  and the `sync_interval` bound holds as written. **Recommended.**
-- **(c) Always bulk-load through N1QL at `RequestPlus`.** Cross-pod consistent
-  by construction, but it costs the primary index and the scan throughput the
-  range-scan path exists for (§7.2).
+### What (b) turned out to be
 
-**To settle:** (b) is a contained change to `internal/store/couchbase` and the
-epoch document's shape. The probe that measures it is the second-handle
-immediate-read loop; whatever lands should be checked against it rather than
-argued.
+`meta::writes` holds one position per vbucket — seqno and partition uuid — in
+gocb's own `MutationState` encoding, so it stays legible to anyone holding the
+SDK. `BumpEpoch` merges this pod's outstanding positions into it and then bumps
+the counter; `LoadAll` reads the epoch, then the document, and hands the union
+of the two halves to the scan as `ConsistentWith`. The ordering is the property:
+publish before the bump, read the epoch before the document, and every position
+the epoch accounts for is one the reload has to observe.
+
+Two things in that sentence do not survive being written the obvious way, and
+both fail quietly rather than loudly.
+
+**Merging by `MutationState.Add` keeps the wrong token.** `MarshalJSON` walks
+the token slice in order and overwrites each vbucket's `SeqNo`/`VbUUID` as it
+goes, so what survives is whichever token came *last*, not whichever is newest —
+adding two states together and marshalling therefore keeps the older position
+about half the time, and the result looks like a requirement while being weaker
+than one. The merge is done at the JSON level instead, under the same
+`supersedes` rule the local watermark uses: higher sequence number within a
+history, and across histories the incoming position wins, because a failover
+restarts a vbucket's numbering and comparing the numbers across UUIDs pins the
+requirement to a position that never existed. `MutationState.Internal()` would
+have made this easier and is marked unsupported; the JSON is the supported road.
+
+**A shared document plus a plain upsert loses a peer's position** — and the one
+it loses is precisely what some third pod is about to need. It is written under
+CAS (read, merge, replace at the version read), bounded at eight rounds, and
+reported rather than looped. Measured with six handles publishing concurrently:
+0 of 6 positions lost.
+
+### Measured
+
+The probe is the one this entry named: a write on one store handle, an immediate
+`LoadAll` on a second, a fresh scope per trial. Both arms run against the same
+cluster in the same session, the A arm with the published document deleted after
+each bump so the reader falls back to the pre-fix guarantee.
+
+| | misses | widest window |
+|---|---|---|
+| A — local watermark only (pre-fix), idle node | 1 / 480 | 176 ms |
+| A — local watermark only (pre-fix), eight-way write pressure | 98 / 120 | 6.4 s |
+| B — published watermark, same pressure | 0 / 120 | — |
+
+The two A rows are the reason this sat open long enough to need an entry. On an
+idle node the disk queue drains between the write and the read, so the pre-fix
+arm is wrong roughly once in five hundred and looks like a flake; under the
+write pressure a CI suite actually generates it is wrong four times in five, for
+seconds at a time. The window is not the interesting number either way — a pod
+stamps that view with the epoch it read and is then read as converged, so what
+the deployment sees is not a 6 s stall but a stub missing until the next
+`resync_interval`.
+
+Re-measured on a second run against a fresh single node, the same probe gives
+102/120 and 90/120 on the pressure arm and 0/120 on the idle one — which is the
+shape rather than a contradiction: idle is the arm that has to be run into the
+hundreds before it fails once.
+
+That re-measurement is also what found the hole below, because the B arm did
+*not* reproduce as 0: it came back 1/120, and the one was the fix's own fallback
+path. With that closed, B is 0 / 480 across four runs, with one reload failing
+loudly — which is the trade being made and not a leftover.
+
+The document measured 30,809 bytes across all 1024 vbuckets — 30.1 bytes an
+entry, and that is the full spread, not a sample of it. (29,184 bytes on the
+re-measurement, which is the same document with shorter sequence numbers in it:
+what is bounded is the entry count, and the digits ride on how long the
+deployment has been writing.) It is not pruned. An
+entry could in principle be dropped once every pod has observed it, but "every
+pod" is not knowable from inside one of them, and the two ways to approximate it
+are worse than the 30 KB: a wall-clock expiry makes the guarantee depend on
+cross-pod clock agreement, where a fast clock drops a live requirement and says
+nothing, and pruning on a refused scan cannot attribute the refusal to a vbucket
+and so throws away every peer's position to remove one.
+
+### What it costs
+
+One KV get plus at most one CAS write per admin write, and one KV get per bulk
+read — nothing on the request path, and nothing at all on a replica that only
+serves and never reloads. A pod with no outstanding writes publishes nothing, so
+a deployment that never takes an admin write never creates the document; a pod
+on the N1QL fallback never reads it, because `RequestPlus` is already cross-pod
+consistent.
+
+### What it does when it breaks
+
+Every failure that leaves the *requirement* still meetable degrades to the
+local-only guarantee and logs rather than refusing to rebuild, because a
+stale-by-one-resync snapshot still serves and no snapshot does not (§4.6). The
+one that does not — a scan that times out meeting the requirement — fails the
+reload on purpose, for the reason set out below. An absent document is the
+ordinary state of a fresh keyspace
+and is not a warning. An unreadable one is — and it is the one failure a *writer*
+repairs rather than routes around: a document nobody can decode carries no
+requirement anybody can use, and left alone it would stop every pod in the
+deployment publishing for as long as it sat there, so the next publish replaces
+it at the version it read. A *refused* one is the interesting
+case: a failover gives the vbucket a new history and the published position
+still names the old one, so the server answers vb-uuid mismatch to that scan and
+will answer it forever. The scan is retried without the published half, and only
+if that retry succeeds is the document distrusted — at the exact CAS it failed
+at, so a republish earns its trust back and the merge heals it for every vbucket
+someone writes to. Measured against a hand-poisoned document — a position naming
+a vbucket history that never existed — the reload keeps every one of its five
+files and takes 96 ms doing it, the reload after it 94 ms, and a republish is
+enough for the next one to try the document again. The clock does not separate
+those first two, because the server refuses a vb-uuid mismatch immediately
+rather than waiting the scan out; what the memo saves is the round trip, and
+that is pinned by unit test rather than by the stopwatch.
+
+**That fallback was itself a way to be silently stale, and it took a second
+measurement to see it.** It was first written to run after *any* failed scan:
+retry without the published half, and if that answers, take it. But a scan
+carrying a requirement does not fail only when the requirement is impossible —
+it **waits** for the vbucket to reach the position, so the ordinary failure
+under load is the wait outrunning the scan budget and returning a timeout.
+Retrying that without the requirement asks the same question with the guarantee
+taken out, and it answers: a whole collection, no error, missing the write the
+reload was triggered by, stamped with the new epoch and read as converged. This
+entry's own bug, reached through its fix, about once in 120 reloads under
+eight-way pressure.
+
+So the fallback is now allowed only where it is a verdict rather than a delay,
+and the server is what says which: vb-uuid mismatch is status 168 and reaches
+gocb as `ErrMutationTokenOutdated`, confirmed against the poisoned document
+above. A timeout fails the reload instead — the previous snapshot stands, the
+pod is visibly behind rather than wrongly converged, and the poller's next tick
+retries it (§4.6). Across 480 trials that costs one loud reload failure and buys
+every silent one.
+
+**The regression test** is `sync-cross-pod-store-read-004`: four rounds of write
+on one replica, `GET /__admin/files` on another, every replica taking both
+parts. The assertion is a plain `expect` and that is the whole case — an
+`expect_eventually` would be satisfied by the next reload whoever causes it,
+since cases share a deployment and every concurrent admin write bumps the same
+epoch, so a pod holding a stale view gets repaired by a neighbour's traffic
+before any window closes. The file listing is a bulk read of the store rather
+than a render of the pod's snapshot, so it admits no "not yet".
+
+**Left open, deliberately:** scenario state writes note their positions but do
+not bump the epoch, so they reach the document only when the next admin write
+publishes. `GET /__admin/scenarios` on a peer can therefore still read past a
+state another pod has just written. It is a narrower window than this entry's —
+scenario state is read on the request path by a KV get, which is always current
+— but it is the same shape, and it is not closed here.
 
 ---
 
@@ -324,37 +460,99 @@ WireMock can tell the difference.
 
 ---
 
-## D-OPEN-14 — JSONPath body matching allocates on the request path
+## D-OPEN-14 — JSONPath body matching allocates on the request path — CLOSED
 
-**Status:** measured, not fixed · **Owner:** post-v1 · **Reversible:** yes
+**Resolved 2026-07-26: fixed — a definite path is now evaluated over the body
+as it arrived.** The entry recorded the one measured violation of SPEC §16.3
+rule 1: every other matcher shape was allocation-free per request, and a
+`matchesJsonPath` body criterion decoded the body into a whole `map[string]any`
+in order to read one leaf. That decode was the 1,152 bytes.
 
-The M6 benchmark pass put numbers on SPEC §16.3 rule 1, and one line stands out:
+`BenchmarkMatch/mixed/1000`, dev-arm64, median. The two builds were run
+alternately rather than one after the other — this machine drifts several
+percent as it warms, enough to have invented most of a result on its own.
 
-| Benchmark | ns/op | B/op | allocs/op |
+| Shape | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `Match/mixed/1000/exact` | 993 | 0 | 0 |
-| `Match/mixed/1000/regex` | 1,048 | 0 | 0 |
-| `Match/mixed/1000/jsonpath` | 1,483 | **1,152** | **29** |
+| `exact`, before | 1,006 | 0 | 0 |
+| `exact`, after | 1,076 | 0 | 0 |
+| `regex`, before | 1,064 | 0 | 0 |
+| `regex`, after | 1,057 | 0 | 0 |
+| `jsonpath`, before | 1,508 | 1,152 | 29 |
+| `jsonpath`, after | **861** | **100** | **4** |
 
-Every other matcher shape is allocation-free per request. A `matchesJsonPath`
-body criterion decodes the body into `map[string]any`, and that decode is the
-1,152 bytes: 29 allocations for one request, on the path §16.3 says must not
-allocate what it can avoid.
+The `exact` row is the one to be honest about: it moved 7% the wrong way, and
+nothing was done to it. That request is a GET with no body, so it never reaches
+the scanner, and its CPU profile is unchanged function for function either side
+— what moved is where the linker put the hot loop once `internal/matchers` grew.
+Measuring the two halves of that change separately gives ~2% each, which is the
+give-away, because layout effects do not add up and real work does. It is inside
+§16.2's 15% band; BASELINE.md records it against the row so it is not mistaken
+later for a regression with a cause.
 
-It is bounded and it is pay-per-use — a deployment with no JSONPath body
-matchers pays none of it — so it is not urgent. But it is the one measured
-violation of a rule the rest of the code holds to strictly, and at S2's shape it
-is the difference between the JSONPath row and the other two.
+**What landed.** `internal/jsonpath/scan.go` walks the raw body once, carrying
+the path's steps with it, and comes back with the byte range the path selects —
+no tree, and for the bare form no decode at all. It applies only to a DEFINITE
+path, which is what practically every stub writes (`$.customer.id`,
+`$.card.brand`); an indefinite one keeps the tree evaluation, where it was
+already correct. `internal/matchers` reaches it through two optional
+capabilities, `rawJSON` on the subject and `JSONPathScanner` on the evaluator,
+so a subject that has no undecoded document and an engine that will not take a
+path both fall back rather than having to be special-cased.
 
-**To change:** the decode is already cached per request in
-`ParsedRequest.bodySubject`, so several JSONPath matchers on one request share
-it. What would remove the rest is evaluating the path against the raw bytes
-rather than a decoded tree — a streaming evaluator over `encoding/json`'s
-scanner, or a decode into a reusable arena held by the pooled request.
+Two things the scan does that a faster version would not, and both are load
+bearing. It validates the WHOLE document rather than stopping at the node, so
+`{"card":{"brand":"visa"}} junk` stays the non-match `json.Unmarshal` makes it —
+and it refuses the numbers the decoder refuses, because one decode error rejects
+a document entirely. And it hands the selected node to `encoding/json` over that
+node's own bytes rather than passing text along, because the nested form
+compares what was selected AS TEXT: a number reformatted or an object's members
+reordered would change the answer `equalTo` gives.
 
-**To settle:** decide whether the S2 budget needs it. The benchmark that
-measures it is `BenchmarkMatch/mixed/1000/jsonpath`, and `test/load/BASELINE.md`
-records the number to beat.
+**Why the equivalence is believable.** It is tested, not asserted.
+`TestScanMatchesTree` runs 38 expressions over 102 documents and requires the
+same `Result` — the same node, of the same Go type — from both evaluators, plus
+the same verdict on whether the document is JSON at all;
+`TestMatchesJSONPathScansAndDecodesAlike` does the same one level up, at the
+seam where the answer actually reaches a client, over both forms and both
+polarities. `FuzzScanEquivalence` fuzzes expression and document together and
+found nothing in 75M executions.
+
+That a suite runs is not evidence that it would notice. Eleven deliberate
+breakages were put into the scan one at a time, and all eleven were caught:
+`null` counted as a present value; the FIRST duplicate key winning instead of
+the last; the tail left unvalidated; the number range check dropped; the nesting
+limit lifted; a negative index let into the scanner; the empty-collection test
+reading length instead of looking past whitespace, so `[ ]` counts as non-empty;
+`plainBody` admitting escapes and non-ASCII, so strings get unescaped by hand;
+`keyIs` comparing a key's raw bytes without decoding it; `decodeNode` handing a
+string's bytes on undecoded; and a scalar in the path's way selecting itself
+rather than nothing. `TestScanMatchesTree` killed ten of the eleven and
+`TestMatchesJSONPathScansAndDecodesAlike` eight, three fell to
+`FuzzScanEquivalence` on its seed corpus alone, and lifting the nesting limit
+took the test binary down with a stack overflow — which is the cap earning its
+second job.
+
+**What remains, and why.** The bare form allocates nothing — 0 B, 0 allocs,
+which `TestBareFormScanAllocatesNothing` holds it to. The nested form costs 4,
+and stepping the seam one call at a time says where they go: materializing the
+selected node as an `any` is 2, rendering it to text is free, and handing the
+`KeyValues` subject to the inner matcher is the other 2 — the subject escapes
+because `Matcher.Match` takes an interface.
+
+Both pairs are the shape of the seam rather than the evaluation. Removing the
+first means the engine handing over text instead of a value, which is exactly
+the equivalence above given up; removing the second means a pooled subject on a
+matcher shared by every request. 100 bytes and a scan is not what §16.3 rule 1
+was written about.
+
+**Also unfixed, deliberately:** a path with a NEGATIVE index (`$.items[-1].sku`)
+is definite but not scanned. Counting from the end needs the array's length,
+which one forward pass does not have; getting it means scanning the array twice,
+and a path carrying several of them would multiply what a body costs. Those keep
+the decode. `Path.Scannable()` is where that line is drawn and
+`TestScannableIsDefiniteWithoutNegativeIndices` is what stops it moving by
+accident.
 
 ---
 

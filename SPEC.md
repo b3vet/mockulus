@@ -518,6 +518,7 @@ One bucket (default `mockulus`), scope `_default` (configurable — deployment-p
 | `meta` | `seq` | Counter doc | none |
 | `meta` | `settings` | Global settings doc (§5.1) | none |
 | `meta` | `schema` | `{"schemaVersion":1}` — migration guard | none |
+| `meta` | `writes` | Published write positions (§7.3), in `gocb`'s `MutationState` encoding | none |
 
 Stored stub doc = the WM-compatible stub JSON verbatim under `"mapping"`, plus mockulus envelope fields:
 
@@ -543,6 +544,7 @@ Stored stub doc = the WM-compatible stub JSON verbatim under `"mapping"`, plus m
 
 - `seq`: incremented once per **newly created** stub (POST, or import items creating a new id); stored in the envelope; gives the cluster-global total order that reproduces WM's newest-wins (§5.3). PUT and import-`OVERWRITE` of an existing id **preserve** the stored seq — editing a stub must not change its match precedence (verified against pinned WM: an edit leaves the stub in place, and a stub that was losing to a later-inserted peer keeps losing). Counter gaps are irrelevant (ordering only).
 - `epoch`: bumped on any mutation of `mappings` or `files` (create/update/delete/reset/import/save). Level-triggered reload keys off inequality, not +1 steps.
+- `writes`: the position (vbucket / partition-uuid / seqno) of each admin write the deployment has made, merged under CAS and published **before** the epoch that announces it. Every bulk load folds it into its own scan requirement, which is what makes a peer's write as visible to a reload as this pod's own (§8). Bounded by construction — one entry per vbucket, 1024 per bucket, measured at 30 KB across all 1024 of them. Absent, unreadable, or refused by the cluster as a vb-uuid mismatch (the failover case) ⇒ the reload degrades to this pod's own writes and logs rather than refusing to rebuild. A scan that merely *times out* meeting the requirement fails the reload instead: dropping the requirement and retrying would answer with a view that quietly lacks the write the reload was triggered by, so the previous snapshot stands and the poller retries (§4.6, §8).
 
 ### 7.4 Persistence semantics
 
@@ -557,6 +559,7 @@ Stored stub doc = the WM-compatible stub JSON verbatim under `"mapping"`, plus m
 - Poller per pod: every `sync_interval` (default 1 s, min 100 ms) → `Epoch(ctx)` (one KV get of a counter doc — sub-ms, ~N pods × 1/s load on CB ≈ nothing).
 - `epoch != snapshot.Epoch` ⇒ trigger rebuild (single-flight; if a rebuild is running, mark dirty and re-run once after).
 - Rebuild = `LoadAll` + compile + swap (§6.2). Full reload keeps convergence level-triggered and idempotent — no delta bookkeeping, no missed-event class of bugs. Cost is bounded and off the hot path; measured by `mockulus_snapshot_reload_duration_seconds`.
+- The rebuild's bulk read is snapshot-consistent with every write the epoch it read accounts for, which is what makes the bound below a bound. A KV range scan answers from the vbucket's **persisted** view, so a document the cluster acknowledged from memory is absent from it until the disk queue catches up — and the scan reports success either way. A pod carries its own mutation tokens into the scan and folds in the peers' positions from `writes` (§7.3), so the reload observes the write that triggered it or fails and keeps the previous snapshot (§4.6). Without that, a reload can install a view predating a peer's write, stamp it with the new epoch, and be read as converged — which converges in `resync_interval`, not `sync_interval` (D-OPEN-10).
 - Belt-and-braces `resync_interval` full reload (§7.4).
 - The admin-write-handling pod swaps immediately via the incremental splice (§4.3 step 5) — no recompile on the write path — so single-pod test flows (`stub → call → verify`) have **zero** staleness; only cross-pod reads wait ≤ `sync_interval`. Reloads are per-pod coalesced (single-flight + dirty flag), bounding reload frequency to ~1/`sync_interval` per pod **regardless of cluster-wide write rate**; with the warm compile cache (§6.2) each such reload costs <500 ms off-hot-path CPU at 10k stubs (S10 gates the combination under a CI write storm).
 - Upgrade path to DCP (roadmap): the poller is behind a `ChangeSignal` interface; a DCP-based signaler slots in without touching the engine.

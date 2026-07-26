@@ -11,12 +11,12 @@
 contracts:
   - id: "B-PROSE-SYNC-PROPAGATION"
     section: "8"
-    section_hash: "f09a134f19ba09a3"
+    section_hash: "a50ef1b278f204bc"
     spec: "#8-cluster-synchronization"
     kind: "distributed"
     impl_milestone: "M2"
-    summary: "Epoch polling propagates stub changes to every replica, level-triggered and coalesced"
-    evidence: "with replicas addressed individually: a stub registered on one pod serves on another within the bound, the writing pod serves it immediately, and a delete goes away everywhere the same way"
+    summary: "Epoch polling propagates stub changes to every replica, level-triggered and coalesced, over a bulk read consistent with every write the epoch accounts for"
+    evidence: "with replicas addressed individually: a stub registered on one pod serves on another within the bound, the writing pod serves it immediately, a delete goes away everywhere the same way, and a bulk read on a replica that made no write does not answer from a view predating a peer's"
     # `pod:` is a token because an unpinned case rides the round-robin: it would
     # satisfy a propagation claim by landing on the writing replica, which is
     # the one pod that proves nothing about propagation.

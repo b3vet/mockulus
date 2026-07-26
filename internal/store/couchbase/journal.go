@@ -141,7 +141,7 @@ func (s *Store) DeleteJournalEntry(ctx context.Context, id string) error {
 // that was told to be empty is exactly the test that then fails for no reason
 // its author can see.
 func (s *Store) ClearJournal(ctx context.Context) error {
-	raw, err := s.loadCollection(ctx, s.journal, collJournal)
+	raw, err := s.loadCollection(ctx, s.journal, collJournal, s.requireFor(ctx))
 	if err != nil {
 		return err
 	}
