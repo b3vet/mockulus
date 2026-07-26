@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-sibling-keys-001
+behaviors: [B-DEV-DEVIATION-26, B-DEV-DEVIATION-27]
+# n/a: both are deviations. WireMock honours only the first matcher key on a
+# document, so a differential replay would report the designed difference.
+wm: n/a
+steps:
+  # Two criteria on one matcher document mean both. A stub author who writes
+  # "contains a" next to "doesNotContain b" has excluded something on purpose,
+  # and the reading that drops one is the reading that serves the request they
+  # were trying to keep out.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999c0d1-0000-4000-8000-000000000001",
+         "request":{"method":"POST","urlPath":"/e2e/matchers-sibling-keys-001/both",
+                    "bodyPatterns":[{"contains":"alpha","doesNotContain":"beta"}]},
+         "response":{"status":200,"body":"both held"}}
+    expect: {status: 201}
+
+  - request: {method: POST, path: /e2e/matchers-sibling-keys-001/both, body: "alpha only"}
+    expect: {status: 200, body: "both held"}
+
+  # Satisfies `contains` and fails `doesNotContain`. This is the request
+  # WireMock serves and mockulus does not, which is the whole of deviation #26.
+  - request: {method: POST, path: /e2e/matchers-sibling-keys-001/both, body: "alpha and beta"}
+    expect: {status: 404}
+
+  # And failing the first key is a non-match whichever way the keys are read,
+  # so this step would pass under either reading — it is here to show the case
+  # is not simply asserting that nothing ever matches.
+  - request: {method: POST, path: /e2e/matchers-sibling-keys-001/both, body: "gamma"}
+    expect: {status: 404}
+
+  # A one-operand `and` is refused at registration, as WireMock refuses it: a
+  # mappings file that registers here and 422s there cannot move back.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request":{"method":"GET","urlPath":"/e2e/matchers-sibling-keys-001/lonely",
+                    "headers":{"X-Trace":{"and":[{"contains":"a"}]}}},
+         "response":{"status":200}}
+    expect:
+      status: 422
+      body_json_subset: {errors: [{code: 10}]}
+
+  # Two operands register and both are required.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"9999c0d1-0000-4000-8000-000000000002",
+         "request":{"method":"GET","urlPath":"/e2e/matchers-sibling-keys-001/pair",
+                    "headers":{"X-Trace":{"and":[{"contains":"a"},{"contains":"z"}]}}},
+         "response":{"status":200,"body":"paired"}}
+    expect: {status: 201}
+  - request:
+      method: GET
+      path: /e2e/matchers-sibling-keys-001/pair
+      headers: {X-Trace: "abz"}
+    expect: {status: 200, body: "paired"}
+  - request:
+      method: GET
+      path: /e2e/matchers-sibling-keys-001/pair
+      headers: {X-Trace: "abc"}
+    expect: {status: 404}

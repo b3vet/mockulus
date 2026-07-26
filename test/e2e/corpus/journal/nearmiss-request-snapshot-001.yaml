@@ -4,6 +4,10 @@ behaviors:
   - B-ADMIN-NEAR-MISSES-REQUEST-POST
   - B-DEV-DEVIATION-1
   - B-ERR-1010
+  # Deviation #28: the report names the stubs closest to the request, and the
+  # ranking is mockulus' own. WireMock orders differently and nothing here
+  # reproduces that — no matching decision depends on it.
+  - B-DEV-DEVIATION-28
 # The default variant on purpose: this endpoint scores a supplied request
 # against the current snapshot with no journal involved, and the deployment a
 # team is standing in front of when a stub will not match is the one they never

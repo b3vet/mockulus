@@ -132,8 +132,24 @@ func (s *Store) DeleteJournalEntry(ctx context.Context, id string) error {
 }
 
 // ClearJournal removes every entry.
+//
+// By key rather than by statement, for the reason removeMappings gives: a
+// `DELETE FROM` is planned as a scan of the persisted view, so an entry written
+// moments earlier is invisible to it and survives a clear that answered 200.
+// The journal is the collection where that is most likely — entries are written
+// continuously by the request path — and a verification run against a journal
+// that was told to be empty is exactly the test that then fails for no reason
+// its author can see.
 func (s *Store) ClearJournal(ctx context.Context) error {
-	return s.deleteWhere(ctx, collJournal)
+	raw, err := s.loadCollection(ctx, s.journal, collJournal)
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(raw))
+	for id := range raw {
+		keys = append(keys, id)
+	}
+	return s.removeKeys(ctx, s.journal, "journal entries", keys)
 }
 
 // decodeInto is a small helper so callers do not repeat the unmarshal dance.
