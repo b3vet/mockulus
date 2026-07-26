@@ -64,6 +64,12 @@ const (
 	// request drive the expansion — would have to send megabytes to prove that
 	// a stub cannot be made to allocate without bound.
 	VariantTinyTemplate = "tiny-template"
+	// VariantBoundedJournal shrinks both bounds of deviation #16 until a case
+	// can reach them. The defaults are a 10k-entry scan window and a 64 KiB body
+	// cap, so honouring them would mean serving ten thousand requests and
+	// committing a fixture bigger than the rest of the corpus to observe two
+	// bounds that under-report in silence.
+	VariantBoundedJournal = "bounded-journal"
 	// VariantAccessLog turns on per-request logging with no sampling, so a
 	// logprobe can assert one line per request.
 	VariantAccessLog = "access-log"
@@ -108,9 +114,32 @@ const fileStoreFixture = "test/e2e/corpus/file-store"
 // variantEnv maps each variant to the configuration that defines it. Adding a
 // variant is a reviewed harness change, which is what keeps the matrix bounded.
 var variantEnv = map[string]map[string]string{
-	VariantDefault:       {},
-	VariantJournal:       {"MOCKULUS_JOURNAL_ENABLED": "true"},
-	VariantTinyJournal:   {"MOCKULUS_JOURNAL_ENABLED": "true", "MOCKULUS_JOURNAL_BUFFER": "1", "MOCKULUS_JOURNAL_BUFFER_BYTES": "1KiB"},
+	VariantDefault: {},
+	VariantJournal: {"MOCKULUS_JOURNAL_ENABLED": "true"},
+	VariantTinyJournal: {
+		"MOCKULUS_JOURNAL_ENABLED":      "true",
+		"MOCKULUS_JOURNAL_BUFFER":       "1",
+		"MOCKULUS_JOURNAL_BUFFER_BYTES": "1KiB",
+		// Debug because both caps are start-time-only and a drop leaves nothing
+		// in a response: without the startup dump a case can see the counter
+		// rise but not that a one-entry queue is what made it rise, which is the
+		// difference between proving the drop path and proving that something
+		// somewhere failed to record (SPEC §14.2).
+		"MOCKULUS_LOG_LEVEL": "debug",
+	},
+	VariantBoundedJournal: {
+		"MOCKULUS_JOURNAL_ENABLED": "true",
+		// Bare byte counts rather than IEC spellings: the case has to post a
+		// body past the cap, and 64 KiB of YAML in the corpus buys nothing that
+		// a few hundred bytes does not.
+		"MOCKULUS_JOURNAL_MAX_BODY":         "256",
+		"MOCKULUS_JOURNAL_QUERY_SCAN_LIMIT": "3",
+		// Debug for the same reason as the queue caps above, and more sharply:
+		// both of these bounds answer with a number that is simply wrong past
+		// them, so a case that could not see which bounds it ran under would be
+		// asserting an under-report it cannot attribute.
+		"MOCKULUS_LOG_LEVEL": "debug",
+	},
 	VariantAuthed:        {"MOCKULUS_ADMIN_AUTH_TOKEN": AdminToken},
 	VariantTemplatingOn:  {"MOCKULUS_TEMPLATING_ENABLED": "on"},
 	VariantTemplatingOff: {"MOCKULUS_TEMPLATING_ENABLED": "off"},
@@ -146,8 +175,21 @@ var variantEnv = map[string]map[string]string{
 	VariantFastClock: {
 		"MOCKULUS_EPHEMERAL_STUB_TTL": "3s",
 		"MOCKULUS_RESYNC_INTERVAL":    "2s",
-		"MOCKULUS_JOURNAL_TTL":        "5s",
-		"MOCKULUS_SYNC_INTERVAL":      "100ms",
+		// The journal is off by default (deviation #1), so the entry TTL beside
+		// it steers nothing unless the switch is flipped here too: there would
+		// be no entry for it to expire.
+		"MOCKULUS_JOURNAL_ENABLED": "true",
+		// Thirty seconds where the stub TTL above is three, because the two are
+		// observed through different machinery. An expired stub disappears from
+		// a KV range scan the moment it expires; a journal entry becomes visible
+		// only once the index behind the query endpoints has caught up, and that
+		// lag is part of the contract rather than a defect (§11.4, deviation
+		// #10). A TTL inside the lag would let an entry expire before it was
+		// ever visible, and the case watching for it would then be measuring the
+		// index rather than the TTL — an unreproducible failure whose message
+		// says the entry was never recorded.
+		"MOCKULUS_JOURNAL_TTL":   "30s",
+		"MOCKULUS_SYNC_INTERVAL": "100ms",
 	},
 	VariantCBVerbose:  {"MOCKULUS_LOG_LEVEL": "debug"},
 	VariantCBMajority: {"MOCKULUS_COUCHBASE_DURABILITY": "majority", "MOCKULUS_LOG_LEVEL": "debug"},

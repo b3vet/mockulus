@@ -685,7 +685,7 @@ Entries are visible to verification within ≤ flush interval + CB index lag (ty
 | Mock | `:8080` | Mock traffic; `/__admin/**` (unless `admin_on_mock_port: false`) |
 | Admin/ops | `:9090` | `/__admin/**`, `/healthz`, `/readyz`, `/metrics`, `/debug/pprof/**` |
 
-`net/http` servers with: `ReadHeaderTimeout` 10 s, `IdleTimeout` 75 s, `MaxHeaderBytes` 1 MiB, no `WriteTimeout` on the mock port (stub delays are legitimate; per-response deadline = delay + `write_slack`). HTTP/2: h2c available on the mock port but **off by default** (`h2c_enabled: false`) — fault injection is byte-faithful only on HTTP/1.1 (§12.5, deviation #15); full HTTP/2 when TLS is on. TLS optional (`tls_cert_file`/`tls_key_file`); in-mesh deployments typically terminate elsewhere.
+`net/http` servers with: `ReadHeaderTimeout` 10 s, `IdleTimeout` 75 s, `MaxHeaderBytes` 1 MiB, no `WriteTimeout` on the mock port (stub delays are legitimate; per-response deadline = delay + `write_slack`). HTTP/2: h2c available on the mock port but **off by default** (`h2c_enabled: false`) — fault injection is byte-faithful only on HTTP/1.1 (§12.5, deviation #15); full HTTP/2 when TLS is on. TLS optional (`tls_cert_file`/`tls_key_file`); in-mesh deployments typically terminate elsewhere. Minimum **TLS 1.2**, stated on the listener rather than inherited — `crypto/tls` has moved its default server floor before and it is still steerable by `GODEBUG`, so left unset what a deployment accepts would be a property of the toolchain it was built with. The key pair is loaded during configuration validation, so an unusable certificate exits non-zero instead of failing the first handshake on a pod Kubernetes has already routed traffic to (§4.4 step 1).
 
 ### 12.2 Routing
 
@@ -804,7 +804,7 @@ mockulus_match_candidates                                        histogram # can
 
 ### 14.3 Profiling & tracing
 
-`/debug/pprof` always on the admin port (never the mock port). OpenTelemetry tracing: roadmap (off-by-default even then).
+`/debug/pprof` always on the admin port (never the mock port), and behind `admin_auth_token` whenever one is set: a heap profile is a copy of every stub body the process is holding, which is exactly what §17 keeps out of the logs. `/healthz`, `/readyz` and `/metrics` stay unauthenticated on that port whatever the token setting — the kubelet and Prometheus cannot present one, and none of the three carries stub content. OpenTelemetry tracing: roadmap (off-by-default even then).
 
 ---
 
@@ -812,7 +812,7 @@ mockulus_match_candidates                                        histogram # can
 
 ### 15.1 Image
 
-Multi-stage build: `golang:1.24` builder → `gcr.io/distroless/static-debian12:nonroot`. `CGO_ENABLED=0`, `-trimpath`, version stamped via `-ldflags -X`. Runs as nonroot, read-only root FS, no shell. Target < 25 MB. Multi-arch (amd64, arm64) via buildx.
+Multi-stage build: `golang:1.24` builder → `gcr.io/distroless/static-debian12:nonroot`. `CGO_ENABLED=0`, `-trimpath`, version stamped via `-ldflags -X`. Runs as nonroot, read-only root FS, no shell. Target < 25 MB. Multi-arch (amd64, arm64) via buildx. `HEALTHCHECK` runs `mockulus -healthcheck`, which probes `/healthz` on the configured admin port — the base has no shell and no curl, so the binary is the only thing in the image that can make a request, and aiming a check at the mock port would read an unmatched-request 404 (§5.4) as an unhealthy pod. Kubernetes uses the probes of §15.2 instead; this is for teams running the image directly.
 
 ### 15.2 Probes
 
@@ -871,7 +871,8 @@ S5/S9 **timing** is asserted only here, on the reference rig; the E2E gate cover
 ## 17. Security
 
 - Mock traffic is untrusted input: body caps, header caps, regex timeouts (ReDoS), no reflection of internals in errors on the mock port.
-- Admin API: optional static bearer token (`admin_auth_token`; compare constant-time). Default open — expected posture is NetworkPolicy + in-cluster only + `admin_on_mock_port: false` when the mock port is exposed beyond the namespace. Chart makes this posture the documented "hardened" values preset.
+- Admin API: optional static bearer token (`admin_auth_token`; compare constant-time). It guards the whole `/__admin` mux rather than individual routes, so a route added later is protected by existing; it also guards `/debug/pprof/**` (§14.3), because a profile hands over the stub bodies the token exists to protect. A refusal is counted by `mockulus_admin_requests_total{code="401"}` — a deployment whose token is being guessed must not look idle. Default open — expected posture is NetworkPolicy + in-cluster only + `admin_on_mock_port: false` when the mock port is exposed beyond the namespace. Chart makes this posture the documented "hardened" values preset, and the preset **refuses to render without a token** rather than installing a release that reads as locked down with an open admin API.
+- Admin file names (`PUT /__admin/files/{name}`) are validated at the edge and **refused, never repaired**: relative, in cleaned form, no `..`, valid UTF-8, no control characters, bounded in length. Nothing joins a name onto a filesystem path today — the file driver builds its map by walking a directory — so this is defence in depth rather than a live traversal; repairing a name instead (trimming a leading `/`) is what would make it live the day a driver does, and in the meantime stores the caller's file under a name they did not choose.
 - Templates are sandboxed by construction: allowlisted helpers only; no file, env, network, or system access (`file`, `systemValue`, `secret`, `hostname` helpers deliberately excluded, §10.3).
 - Container: nonroot, read-only FS, no shell, no capabilities. `securityContext` set in chart. SBOM (`syft`) + vuln scan (`govulncheck`, `trivy`) in CI.
 - Secrets: CB password via env or `_FILE` mount; never logged (config dump redacts).

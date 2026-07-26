@@ -641,6 +641,14 @@ func WithIdentity(raw []byte, id string) ([]byte, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("stub mapping is not a JSON object: %w", err)
 	}
+	if doc == nil {
+		// JSON null decodes into a nil map without an error, and writing a key
+		// into one panics. The admin paths compile before they stamp, so they
+		// never get here — but the file driver stamps every mapping a project
+		// declares no id for, before anything has looked at it, so a `mappings/`
+		// file holding `null` took the process down on load.
+		return nil, fmt.Errorf("stub mapping is null, not an object")
+	}
 	encoded, err := json.Marshal(id)
 	if err != nil {
 		return nil, err

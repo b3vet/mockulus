@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: Apache-2.0
+id: security-auth-late-routes-001
+behaviors: [B-CFG-ADMIN-AUTH-TOKEN]
+config: authed
+# The token is ours; WireMock has no equivalent, so a differential replay would
+# report a designed difference as a diff.
+wm: n/a
+#
+# admin-auth-001 proves the token on GET /__admin/mappings, a route that existed
+# when the authed variant was written. Every route registered since — settings,
+# scenarios, the journal queries, the near-miss endpoints — went in after it, and
+# a route that forgot to be guarded would look exactly like a route that was.
+#
+# What actually makes them safe is that the guard wraps the mux rather than each
+# handler, so this case is really an assertion about that: one route per
+# milestone that landed after M1, plus the two that must stay open.
+steps:
+  # M2: global settings. An unauthenticated write here changes the response delay
+  # of every stub in the deployment.
+  - admin:
+      method: POST
+      path: /__admin/settings
+      headers: {Authorization: ""}
+      body: '{"fixedDelay": 5000}'
+    expect: {status: 401}
+  - admin: {method: GET, path: /__admin/settings, headers: {Authorization: ""}}
+    expect: {status: 401}
+
+  # M4: scenarios. Setting a state unauthenticated moves every stub gated on it.
+  - admin: {method: GET, path: /__admin/scenarios, headers: {Authorization: ""}}
+    expect: {status: 401}
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/security-auth-late-routes-001/state
+      headers: {Authorization: ""}
+      body: '{"state": "elsewhere"}'
+    expect: {status: 401}
+  - admin: {method: POST, path: /__admin/scenarios/reset, headers: {Authorization: ""}}
+    expect: {status: 401}
+
+  # M5: the journal. Its entries are request bodies and headers, which is the
+  # most sensitive thing this API can hand out.
+  - admin: {method: GET, path: /__admin/requests, headers: {Authorization: ""}}
+    expect: {status: 401}
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      headers: {Authorization: ""}
+      body: '{"method": "GET", "url": "/"}'
+    expect: {status: 401}
+  - admin: {method: DELETE, path: /__admin/requests, headers: {Authorization: ""}}
+    expect: {status: 401}
+  - admin: {method: GET, path: /__admin/requests/unmatched, headers: {Authorization: ""}}
+    expect: {status: 401}
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request
+      headers: {Authorization: ""}
+      body: '{"method": "GET", "url": "/anything"}'
+    expect: {status: 401}
+
+  # The deployment-wide reset, which is all of the above at once.
+  - admin: {method: POST, path: /__admin/reset, headers: {Authorization: ""}}
+    expect: {status: 401}
+
+  # The files API: an unauthenticated PUT would rewrite the body every stub
+  # naming that file serves.
+  - admin:
+      method: PUT
+      path: /__admin/files/security-auth-late-routes-001.txt
+      headers: {Authorization: ""}
+      body: "owned"
+    expect: {status: 401}
+
+  # An unsupported endpoint is refused before it is identified as unsupported,
+  # so the 404 catalog cannot be used to map the surface without a token.
+  - admin: {method: GET, path: /__admin/not-a-real-endpoint, headers: {Authorization: ""}}
+    expect: {status: 401}
+
+  # The same token opens the same routes, so the refusals above are the guard
+  # and not a route that is broken for everyone.
+  - admin: {method: GET, path: /__admin/settings}
+    expect: {status: 200}
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect: {status: 200}
+  # The journal is off in this variant, so the authenticated answer here is the
+  # journal-disabled 1010 rather than a listing. That is still the assertion this
+  # case is making: what distinguishes a guarded route from an unguarded one is
+  # the 401, and reaching a handler that can complain about its own
+  # configuration means the token was accepted and the request got through.
+  - admin: {method: GET, path: /__admin/requests}
+    expect:
+      status: 500
+      body_json_subset: {errors: [{code: 1010}]}
+
+  # Refusals are counted under the group they were aimed at. Without this a
+  # deployment whose token is being guessed looks idle to its operator.
+  - metricsprobe:
+      series: 'mockulus_admin_requests_total{endpoint_group="settings",code="401"}'
+      at_least: 2
+  - metricsprobe:
+      # The group keeps a known sub-resource rather than collapsing to the first
+      # segment, the same way `mappings/reset` does — near-misses/request and
+      # near-misses/request-pattern are different endpoints and an operator
+      # reading this counter wants to know which one is being probed.
+      series: 'mockulus_admin_requests_total{endpoint_group="near-misses/request",code="401"}'
+      at_least: 1

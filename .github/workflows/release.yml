@@ -36,15 +36,18 @@ jobs:
       - run: go test -race -count=1 ./...
 
       - name: E2E gate on the shippable binary
+        # With T5: a tag ships the compat claim, so the differential runs here
+        # too rather than being inherited from whatever the merge pipeline saw.
         run: |
           go build -trimpath -o bin/mockulus ./cmd/mockulus
-          go run ./test/e2e/runner --binary bin/mockulus --parallel 16
+          go run ./test/e2e/runner --binary bin/mockulus --parallel 16 --differential
 
       - name: license gate
         run: |
           go install github.com/google/go-licenses@latest
-          go-licenses check ./cmd/... ./internal/... \
-            --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC
+          make license-check
+          make license-report
+          git diff --exit-code THIRD_PARTY_LICENSES
 
   publish:
     name: publish

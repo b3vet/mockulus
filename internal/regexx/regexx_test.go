@@ -158,39 +158,63 @@ func TestLiteralPrefix(t *testing.T) {
 	}
 }
 
-// The prefilter is only sound if every subject that matches also starts with
-// the reported prefix. A wrong prefix silently drops matching stubs, so this
-// property is worth asserting directly on the fallback engine's extractor,
-// which cannot lean on RE2 for the answer.
-func TestBacktrackingLiteralPrefixNeverOverclaims(t *testing.T) {
+// The prefilter is a rejection filter, so a prefix that is not genuinely
+// required drops matching stubs rather than merely slowing them down. Patterns
+// that fall through to the backtracking engine therefore report no prefix at
+// all: deriving one meant scanning a pattern without parsing it, and every
+// shape below is one fuzzing found a counterexample for.
+func TestBacktrackingEngineClaimsNoPrefix(t *testing.T) {
 	cases := []struct {
 		pattern  string
 		subjects []string
 	}{
 		{`(?=.*x)/api/.*`, []string{"/api/x", "/api/foo/x"}},
-		{`/a(b|c)d`, []string{"/abd", "/acd"}},
-		{`/a?bc`, []string{"/bc", "/abc"}},
-		{`/x*y`, []string{"/y", "/xxy"}},
-		// A top-level alternation makes the first branch one option of
-		// several, so nothing in it is required of the subject.
+		// A top-level alternation makes the first branch one option of several.
 		{`/aq|/bq++`, []string{"/aq", "/bq"}},
-		{`/a|/b|/c`, []string{"/a", "/b", "/c"}},
-		// A counted closure that can take none of its atom leaves that atom
-		// as optional as `?` does.
+		// A counted closure that can take none of its atom.
 		{`/x{0,2}+y`, []string{"/y", "/xy"}},
-		{`/x{0}+y`, []string{"/y"}},
-		{`/x{2,3}+y`, []string{"/xxy"}},
-		// Dropping an optional atom must drop the whole character, not the
-		// last byte of its encoding.
-		{`/é?/x`, []string{"//x", "/é/x"}},
 	}
 	for _, c := range cases {
-		prefix := backtrackingLiteralPrefix(c.pattern)
+		p, err := Compile(c.pattern, Options{})
+		if err != nil {
+			t.Errorf("compile %q: %v", c.pattern, err)
+			continue
+		}
+		if p.Engine != EngineBacktracking {
+			t.Errorf("%q compiled on %v; this case exists to cover the fallback engine",
+				c.pattern, p.Engine)
+			continue
+		}
+		if prefix := p.LiteralPrefix(); prefix != "" {
+			t.Errorf("pattern %q claims the prefix %q; the fallback engine must claim none",
+				c.pattern, prefix)
+		}
+		// And the subjects really do match, so the case is about a prefix that
+		// would have been wrong rather than about a pattern that matches nothing.
 		for _, s := range c.subjects {
-			if !strings.HasPrefix(s, prefix) {
-				t.Errorf("pattern %q reported prefix %q, but matching subject %q does not start with it",
-					c.pattern, prefix, s)
+			if !p.MatchString(s) {
+				t.Errorf("pattern %q does not match %q, so this case proves nothing", c.pattern, s)
 			}
+		}
+	}
+}
+
+// Java takes no quantifier on a possessive one, and pinned WireMock 3.13.2
+// answers 422 for each of these. Accepting them would register a stub that
+// cannot exist on the server this claims compatibility with, and .NET would
+// give it a meaning Java never assigned — the accept-and-behave-differently
+// case the fail-loud contract exists to prevent (SPEC §5.5 deviation #14).
+func TestQuantifiedPossessiveIsRejected(t *testing.T) {
+	for _, pattern := range []string{`a*+*`, `a++?`, `0*+*+`, `a?+*`, `a{1,2}+?`} {
+		if _, err := Compile(pattern, Options{Anchored: true}); err == nil {
+			t.Errorf("%q compiled; WireMock rejects it", pattern)
+		}
+	}
+	// The plain possessive forms still work — this rejects the double
+	// quantifier, not the feature the fallback engine exists to support.
+	for _, pattern := range []string{`a++`, `a*+`, `a?+`, `a{1,3}+`} {
+		if _, err := Compile(pattern, Options{Anchored: true}); err != nil {
+			t.Errorf("%q should compile: %v", pattern, err)
 		}
 	}
 }

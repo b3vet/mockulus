@@ -7,5 +7,6 @@ Mockulus is not affiliated with, endorsed by, or sponsored by the
 WireMock project or WireMock Inc. "WireMock" is used solely to describe
 API compatibility.
 
-Third-party attributions — including the vendored MIT-licensed Handlebars
-engine under internal/handlebars — are listed in THIRD_PARTY_LICENSES.
+Third-party attributions are listed in THIRD_PARTY_LICENSES. Nothing is
+vendored into this repository; every file here is Mockulus-authored and
+Apache-2.0, and everything else is a Go module in that file.

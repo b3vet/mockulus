@@ -63,7 +63,29 @@ type Options struct {
 	// AllowContentPatterns admits the byte-oriented matchers, which are valid
 	// in some positions and not others — see contentPatterns.
 	AllowContentPatterns bool
+
+	// depth counts how many combinators this document sits inside; see
+	// maxNesting.
+	depth int
 }
+
+// maxNesting bounds how deeply combinators may be nested inside one another.
+//
+// The bound exists because every level re-reads the whole document below it:
+// a nested operand arrives as a json.RawMessage, and decoding one costs a
+// validating scan plus a copy of everything it contains. That makes compiling a
+// chain of combinators quadratic in the document, which one admin POST turns
+// into a denial of service against every team sharing the deployment. Measured
+// on the pinned build before this bound existed: a 32 MiB body — inside the
+// admin cap — nested a thousand deep spent 73 s of CPU and allocated 16.9 GB,
+// and WireMock's own parser accepts nesting to a thousand, so matching its
+// limit would not have bounded anything. Twenty is five times deeper than the
+// deepest combinator anyone writes and leaves the worst case around a second.
+//
+// Refusing is safe in the way P3 asks for: the stub never registers, so nothing
+// silently matches differently. Only the expected documents of equalToJson and
+// the response bodies nest freely — those are parsed once, not per level.
+const maxNesting = 20
 
 // nested returns the options a criterion's operands compile under.
 //
@@ -74,6 +96,7 @@ type Options struct {
 // {"bodyPatterns":[{"not":{"binaryEqualTo":"…"}}]} is a 422 there.
 func (o Options) nested() Options {
 	o.AllowContentPatterns = false
+	o.depth++
 	return o
 }
 
@@ -117,6 +140,13 @@ var modifierKeys = map[string]bool{
 // A document may carry several matcher keys at once, which WireMock treats as
 // a conjunction — {"contains": "a", "doesNotContain": "b"} means both.
 func Compile(raw json.RawMessage, pointer string, opts Options) (Matcher, []Problem) {
+	// Checked before the decode rather than after it, so the level that breaks
+	// the bound is also the last one whose cost is paid.
+	if opts.depth > maxNesting {
+		return nil, []Problem{{Pointer: pointer, Detail: fmt.Sprintf(
+			"matchers may not nest more than %d combinators deep", maxNesting)}}
+	}
+
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, []Problem{{Pointer: pointer, Detail: "matcher must be a JSON object: " + err.Error()}}

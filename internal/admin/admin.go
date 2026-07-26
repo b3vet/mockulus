@@ -10,7 +10,6 @@
 package admin
 
 import (
-	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -158,23 +157,29 @@ func New(opts Options) *Handler {
 	mux.HandleFunc("/__admin/", h.notFound)
 	mux.HandleFunc("/__admin", h.notFound)
 
-	h.mux = h.withAuth(h.withMetrics(mux))
+	// Metrics wrap authentication rather than the other way round, so a
+	// refusal is counted under the group it was aimed at. A deployment whose
+	// token is being guessed otherwise looks idle: the requests never reach the
+	// counter, and the one signal an operator has that someone is knocking is
+	// the one the middleware order throws away.
+	h.mux = h.withMetrics(h.withAuth(mux))
 	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
 
-// withAuth enforces the optional static admin token. Comparison is
-// constant-time so the endpoint cannot be used as an oracle (SPEC §17).
+// withAuth enforces the optional static admin token on every admin route,
+// including the ones registered after this was written: it wraps the mux rather
+// than each handler, so a new route is guarded by existing.
+//
+// Comparison is constant-time so the endpoint cannot be used as an oracle
+// (SPEC §17).
 func (h *Handler) withAuth(next http.Handler) http.Handler {
-	token := h.cfg.AdminAuthToken
-	if token == "" {
+	if h.cfg.AdminAuthToken == "" {
 		return next
 	}
-	want := []byte("Token " + token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, want) != 1 {
+		if !h.cfg.AdminTokenAccepted(r.Header.Get("Authorization")) {
 			wmcompat.WriteErrors(w, http.StatusUnauthorized,
 				wmcompat.NewError(wmcompat.CodeMalformed, "admin API requires a valid Authorization token"))
 			return

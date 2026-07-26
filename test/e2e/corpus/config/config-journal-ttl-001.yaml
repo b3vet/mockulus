@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-journal-ttl-001
+behaviors:
+  - B-CFG-JOURNAL-TTL
+# The TTL is the store's, set on the document as it is written, so only a real
+# store has one to enforce.
+requires: [couchbase]
+# fast-clock is a thirty-second entry TTL. The production default is thirty
+# minutes, which no case can outlast (SPEC §19.4).
+config: fast-clock
+# n/a: WireMock's journal lives until the process restarts or something clears
+# it, so an entry that ages out has no oracle answer.
+wm: n/a
+steps:
+  # An unmatched request, deliberately: the journal takes matched and unmatched
+  # alike (§11.1), and recording one costs this case no stub — which matters on
+  # a deployment whose other cases assert on the whole mapping listing.
+  - request: {port: mock, method: GET, path: /e2e/config-journal-ttl-001/orders}
+    expect: {status: 404}
+
+  # On record first, or the disappearance below would be indistinguishable from
+  # never having arrived. The window is the generous one deviation #10 tells
+  # suites to use: an entry becomes visible when the flusher has written it and
+  # the index behind this endpoint has caught up, and neither is this case's to
+  # hurry along.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/config-journal-ttl-001/orders"}'
+    expect_eventually:
+      status: 200
+      within: 20s
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # And then gone, with nothing having deleted it. This is what keeps a
+  # long-lived shared deployment's journal bounded without anyone remembering to
+  # clear it — the same argument as the ephemeral stub TTL, applied to the one
+  # thing mockulus writes on behalf of mock traffic.
+  #
+  # Wider than the TTL because the gate asserts eventual correctness and never
+  # latency (§19.3): expiry is the store's to act on, and the entry stops being
+  # returned when the store says so.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/config-journal-ttl-001/orders"}'
+    expect_eventually:
+      status: 200
+      within: 90s
+      body_json: {count: 0, requestJournalDisabled: false}
+
+  # A count of nought is also what a broken journal reports, so the last step is
+  # the one that tells the two apart: recording still works, and it is the entry
+  # that aged out rather than the writer that stopped.
+  - request: {port: mock, method: GET, path: /e2e/config-journal-ttl-001/orders}
+    expect: {status: 404}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/config-journal-ttl-001/orders"}'
+    expect_eventually:
+      status: 200
+      within: 20s
+      body_json: {count: 1, requestJournalDisabled: false}

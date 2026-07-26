@@ -27,8 +27,16 @@ func parseYAML(src string) (map[string]string, error) {
 	// The root frame has indent -1 so any top-level key (indent 0) nests under it.
 	stack := []frame{{indent: -1, prefix: ""}}
 
-	for lineNo, raw := range strings.Split(src, "\n") {
-		line := strings.TrimRight(raw, "\r")
+	// Line endings are normalised before splitting rather than trimmed after.
+	// A CRLF file is the common case and trimming handles it, but a lone CR is
+	// still a line break in YAML and to every editor that produced one — and
+	// splitting on "\n" alone would swallow a whole file into one line, or
+	// leave a carriage return inside a key. The operator then gets an "unknown
+	// key" quoting a character they cannot see.
+	src = strings.ReplaceAll(src, "\r\n", "\n")
+	src = strings.ReplaceAll(src, "\r", "\n")
+
+	for lineNo, line := range strings.Split(src, "\n") {
 		at := func(format string, args ...any) error {
 			return fmt.Errorf("line %d: %s", lineNo+1, fmt.Sprintf(format, args...))
 		}

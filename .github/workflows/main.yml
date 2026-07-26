@@ -30,7 +30,12 @@ jobs:
       # Not the instrumented build: the artifact that would ship is the one
       # re-gated here.
       - run: go build -trimpath -o bin/mockulus ./cmd/mockulus
-      - run: go run ./test/e2e/runner --binary bin/mockulus --parallel 16
+
+      # --differential is topology T5, which §19.4 puts on merge and release
+      # rather than on every PR: every `wm: verified` case is replayed against
+      # the pinned WireMock and diffed, so recorded truth cannot drift away from
+      # the compat oracle between releases.
+      - run: go run ./test/e2e/runner --binary bin/mockulus --parallel 16 --differential
 
       - uses: actions/upload-artifact@v4
         if: always()
