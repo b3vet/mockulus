@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: Apache-2.0
+id: sync-cross-pod-store-read-004
+behaviors:
+  - B-PROSE-SYNC-PROPAGATION
+  - B-ADMIN-GET-PUT-DELETE-FILES-NAME-GET-FILES
+requires: [couchbase, multi-pod]
+# The default variant is deliberate. `resync_interval` is 5 min here, so nothing
+# below can be arriving from the unconditional sweep.
+config: default
+# n/a: there is no peer in a single WireMock whose write another node could fail
+# to read. The expectation comes from SPEC §8.
+wm: n/a
+#
+# A bulk read of the store is a KV range scan, and a range scan answers from the
+# vbucket's *persisted* view. A document the cluster acknowledged from memory is
+# simply absent from it until the disk queue catches up, and the scan says
+# nothing about that: it reports success with the document missing. The pod that
+# made the write carries its own mutation tokens into the scan and so cannot be
+# shown the gap. A pod that made no write had, until the writer began publishing
+# its position, no way to know there was anything to wait for — it would build a
+# view predating a peer's write, stamp it with the epoch that write bumped, and
+# be read as converged (D-OPEN-10).
+#
+# `GET /__admin/files` is the observable that admits no "not yet". The listing
+# is a bulk read of the store rather than a render of the pod's own snapshot, so
+# a name that is in the keyspace and missing from the answer is a wrong answer
+# and not a stale one. If the scan cannot meet its requirement it fails and the
+# pod answers the 503 of §4.6 — which leaves exactly one way for these steps to
+# go wrong, and it is the regression they exist to catch.
+#
+# Every assertion here is `expect` and not `expect_eventually`, and that is the
+# whole case. An eventual assertion would be satisfied by the next reload
+# whoever causes it: cases share one deployment and every concurrent admin write
+# bumps the same epoch, so a replica holding a view that predates a peer's write
+# is repaired by a neighbour's traffic long before any window closes. The bug
+# would go green under polling; it can only be pinned by a read that has to be
+# right the first time.
+#
+# Four rounds rather than one, and every replica takes both parts. The window
+# is the disk queue's, so it is narrow and it is a matter of timing — one round
+# would catch a regression only when it happened to land inside it, and a pod
+# that publishes but never reads (or reads but never publishes) would go
+# unnoticed with fewer.
+#
+# Files carry the case id because the collection is deployment-global (§19.3).
+steps:
+  # Round 1: pod 0 writes, pod 1 reads. The listing is served by a replica that
+  # has handled no write at all, so nothing local to it can be standing in for
+  # the requirement.
+  - admin:
+      pod: 0
+      method: PUT
+      path: /__admin/files/sync-cross-pod-store-read-004-alpha.json
+      body: '{"round":"alpha, written on pod 0"}'
+    expect: {status: 201}
+
+  - admin: {pod: 1, method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"sync-cross-pod-store-read-004-alpha\.json"'
+
+  # Round 2: pod 1 writes, pod 2 reads. Pod 1 has just been made to read a
+  # peer's write; now it has to publish its own for somebody else.
+  - admin:
+      pod: 1
+      method: PUT
+      path: /__admin/files/sync-cross-pod-store-read-004-beta.json
+      body: '{"round":"beta, written on pod 1"}'
+    expect: {status: 201}
+
+  - admin: {pod: 2, method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"sync-cross-pod-store-read-004-beta\.json"'
+
+  # Round 3: pod 2 writes, pod 0 reads. Pod 0 wrote in round 1 and holds its own
+  # outstanding position, so this is the merge rather than either half of it —
+  # a reader that replaced the published requirement with its own instead of
+  # folding the two together passes rounds 1 and 2 and fails here.
+  - admin:
+      pod: 2
+      method: PUT
+      path: /__admin/files/sync-cross-pod-store-read-004-gamma.json
+      body: '{"round":"gamma, written on pod 2"}'
+    expect: {status: 201}
+
+  - admin: {pod: 0, method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"sync-cross-pod-store-read-004-gamma\.json"'
+
+  # Round 4: the whole run so far has to still be readable from one replica in
+  # one answer. Three writes from three pods, and the reader made one of them —
+  # a document that kept only the last position published, or only the newest
+  # per bucket rather than per vbucket, loses one of these three.
+  - admin:
+      pod: 0
+      method: PUT
+      path: /__admin/files/sync-cross-pod-store-read-004-delta.json
+      body: '{"round":"delta, written on pod 0"}'
+    expect: {status: 201}
+
+  - admin: {pod: 2, method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"sync-cross-pod-store-read-004-alpha\.json"'
+
+  - admin: {pod: 2, method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"sync-cross-pod-store-read-004-delta\.json"'
+
+  # The deletes are cleanup, and they are only cleanup. A removal lags into the
+  # persisted view exactly as a create does and rides the same requirement, but
+  # the answer that would show it is a listing that must *not* name a file, and
+  # the assertion vocabulary has no negative form for a body — `body_regex` is
+  # RE2, which has no lookaround to spell one with. That direction is pinned
+  # where it can be: `observed` and `supersedes` are unit-tested against it, and
+  # removeMappings takes its keys from this same watermarked read (D-OPEN-11).
+  - admin: {pod: 1, method: DELETE, path: /__admin/files/sync-cross-pod-store-read-004-alpha.json}
+    expect: {status: 200}
+
+  - admin: {pod: 2, method: DELETE, path: /__admin/files/sync-cross-pod-store-read-004-beta.json}
+    expect: {status: 200}
+
+  - admin: {pod: 0, method: DELETE, path: /__admin/files/sync-cross-pod-store-read-004-gamma.json}
+    expect: {status: 200}
+
+  - admin: {pod: 1, method: DELETE, path: /__admin/files/sync-cross-pod-store-read-004-delta.json}
+    expect: {status: 200}
