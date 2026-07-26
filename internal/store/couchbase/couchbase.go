@@ -804,20 +804,6 @@ func (s *Store) removeKeys(ctx context.Context, coll *gocb.Collection, what stri
 	return nil
 }
 
-// deleteWhere issues a bulk delete of a whole collection.
-//
-// The journal purge is the last caller, and for it the statement's staleness
-// costs only what it deletes: the collection is not read by a bulk scan, so
-// nothing can be resurrected by a reload the way a mapping could. What survives
-// is the same exposure removeMappings documents — a document written moments
-// earlier is not visible to the statement's scan and is not deleted — which
-// that caller inherits until its own milestone lands.
-func (s *Store) deleteWhere(ctx context.Context, coll string) error {
-	stmt := fmt.Sprintf("DELETE FROM `%s`.`%s`.`%s`", s.bucketName, s.scopeName, coll)
-	_, err := s.cluster.Query(stmt, &gocb.QueryOptions{Context: ctx, Timeout: s.queryTimeout})
-	return wrap(err)
-}
-
 // MarkAllPersistent makes every mapping durable and clears its expiry, backing
 // `POST /__admin/mappings/save` (deviation #4).
 //

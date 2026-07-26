@@ -137,8 +137,15 @@ var modifierKeys = map[string]bool{
 
 // Compile builds a matcher from one matcher document.
 //
-// A document may carry several matcher keys at once, which WireMock treats as
-// a conjunction — {"contains": "a", "doesNotContain": "b"} means both.
+// A document may carry several matcher keys at once, and mockulus treats them
+// as a conjunction: {"contains": "a", "doesNotContain": "b"} means both.
+//
+// WireMock does not. Probing the pinned version showed it honours only the
+// first key its binding happens to visit and discards the rest, so the same
+// document means less there — silently, and in a way that makes a stub match
+// requests its author wrote a criterion to exclude. Conjunction is the reading
+// a person writing two criteria intends, and dropping one is not a failure mode
+// worth reproducing, so this is a deliberate divergence (SPEC §5.5).
 func Compile(raw json.RawMessage, pointer string, opts Options) (Matcher, []Problem) {
 	// Checked before the decode rather than after it, so the level that breaks
 	// the bound is also the last one whose cost is paid.
@@ -358,8 +365,13 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		if err := json.Unmarshal(value, &items); err != nil {
 			return fail(key + " takes an array of matchers")
 		}
-		if len(items) == 0 {
-			return fail(key + " needs at least one matcher")
+		// WireMock requires two, and answers 422 for a one-operand form. A
+		// combinator over a single matcher is that matcher, so accepting it
+		// costs nothing at match time — but a mappings file that registers here
+		// and is refused there is one that cannot move back, which is the
+		// direction of D2 that matters.
+		if len(items) < 2 {
+			return fail(key + " needs at least two matchers")
 		}
 		children := make([]Matcher, 0, len(items))
 		var problems []Problem

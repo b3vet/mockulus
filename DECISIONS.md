@@ -1,83 +1,63 @@
-# Open decisions
+# Decisions
 
-Questions that are genuinely open — where the implementation has taken a
+Questions that were genuinely open — where the implementation has taken a
 position that is defensible but reversible, and someone should confirm it before
 v1.0. Each entry records what was chosen, why, what it would cost to change, and
 what evidence would settle it.
 
 Settled decisions live in the ADR (SPEC §3) and the deviation list (SPEC §5.5).
-This file is the waiting room, not the record.
+This file is the waiting room, not the record — an entry marked **CLOSED** keeps
+its reasoning here and its consequence there.
 
 ---
 
-## D-OPEN-1 — Multi-value selection under `caseInsensitive`
+## D-OPEN-1 — Multi-value selection under `caseInsensitive` — CLOSED
 
-**Status:** implemented as plain any-of · **Owner:** M6 · **Reversible:** yes
+**Resolved 2026-07-26: stands as a deviation.** Plain any-of is what mockulus
+does — a repeated header or query parameter satisfies an `equalTo` +
+`caseInsensitive` criterion when *any* value matches. WireMock appears to pick
+the minimum-distance value instead.
 
-When a repeated header or query parameter meets an `equalTo` matcher with
-`caseInsensitive: true`, WireMock appears to select the **minimum-distance**
-value rather than simply accepting any value that matches. The evidence is
-single-agent but internally corroborated.
-
-Mockulus implements plain any-of: the criterion is satisfied when at least one
-value matches. The divergent corner needs all three of a multi-valued key,
-`caseInsensitive`, and a near-miss sibling at non-zero distance — and closing it
-would put a distance computation on the matching hot path, against SPEC §16.3
-rule 1.
-
-**To change:** `matchAnyValue` in `internal/matchers/matchers.go` would take a
-distance function and return an argmin rather than a boolean.
-
-**To settle:** re-probe with `contains` + `caseInsensitive`, and with a second
-exact-match-at-non-zero-distance matcher, to establish whether the affected class
-is exactly `{equalTo + caseInsensitive}`.
-
-If it stands, it becomes a numbered deviation in §5.5.
+Closing it this way rather than chasing parity: the divergent corner needs all
+three of a multi-valued key, `caseInsensitive`, and a near-miss sibling at
+non-zero distance, and reproducing it would put a distance computation on the
+matching hot path against SPEC §16.3 rule 1. Recorded in the §5.5 deviation
+list; no code change.
 
 ---
 
-## D-OPEN-2 — `hasExactly` semantics
+## D-OPEN-2 — `hasExactly` semantics — CLOSED (not a decision)
 
-**Status:** rejected with 422, deferred to the roadmap · **Owner:** roadmap 1.5
-
-Probing showed `hasExactly` is **size-equality plus each-pattern-matches-some-value**,
-not the multiset bijection the name suggests: `hasExactly[{equalTo:"a"},{equalTo:"a"}]`
-matches `?x=a&x=zzz`.
-
-This only gates the roadmap item — v1 rejects the matcher outright (SPEC §5.2) —
-but the finding is recorded here so whoever implements it does not have to
-rediscover it, and does not implement the intuitive-but-wrong version.
+**Resolved 2026-07-26: nothing to decide here.** `hasExactly` is rejected 422 in
+v1 and is a roadmap item; this entry only recorded a probe result so whoever
+implements it does not build the intuitive-but-wrong version. The finding —
+that it is size-equality plus each-pattern-matches-some-value, so
+`hasExactly[{equalTo:"a"},{equalTo:"a"}]` matches `?x=a&x=zzz` — now lives with
+the roadmap item where it belongs.
 
 ---
 
-## D-OPEN-3 — Near-miss distance weighting
+## D-OPEN-3 — Near-miss distance weighting — CLOSED
 
-**Status:** unresolved, still `[DH]` in SPEC §6.8 · **Owner:** M5
+**Resolved 2026-07-26: no ordering is claimed.** Near misses are a list of
+stubs *similar* to a request that did not match — a debugging aid, nothing more.
+No matching decision depends on the order, WireMock's ranking is not reproduced,
+and the `[DH]` in SPEC §6.8 is closed on those terms rather than by
+reverse-engineering a formula. Recorded as deviation #28.
 
-Two independent probes established only one ordering fact: an HTTP-method
-mismatch outranks a one-character URL difference. Both explicitly warned against
-extrapolating a formula from that.
-
-SPEC §6.8 already sets the bar at "helpful and stable, not bit-identical", since
-diagnostic output is outside the strict-compat surface. So this may never need a
-precise answer — but M5 should decide deliberately rather than by default.
-
-**To settle:** a systematic sweep — hold every criterion fixed but one, vary the
-edit distance, and find the crossover per criterion.
+The scoring that exists (a criterion wholly absent costs a full unit, a close one
+costs proportionally less by normalized edit distance) stays as an implementation
+detail, free to change, because nothing is promised about it.
 
 ---
 
-## D-OPEN-4 — Response framing
+## D-OPEN-4 — Response framing — CLOSED (not a decision)
 
-**Status:** Go's default (Content-Length on small bodies) · **Owner:** M6
-
-WireMock always uses `Transfer-Encoding: chunked` and never sets
-`Content-Length`, at every body size. Go sets `Content-Length` for bodies it can
-buffer. The difference is invisible to any HTTP client and the differential diff
-ignores connection headers, so this is recorded rather than fixed.
-
-It would matter only to a test asserting on framing itself, which would be
-asserting on something neither server promises.
+**Resolved 2026-07-26: this is the tool's default, not an open question.**
+mockulus frames a response the way `net/http` does. The entry existed because
+framing is observable and WireMock's Jetty makes different choices in corners
+(when it chunks, when it sets Content-Length), but nothing depends on matching
+those, no case asserts them, and no client has been shown to care.
 
 ---
 
@@ -115,49 +95,32 @@ being a question.
 
 ---
 
-## D-OPEN-6 — Sibling matcher keys on one document
+## D-OPEN-6 — Sibling matcher keys on one document — CLOSED
 
-**Status:** implemented as a conjunction · **Owner:** M6 · **Reversible:** yes
+**Resolved 2026-07-26: conjunction stands, and is now documented as a
+deviation.** `{"contains": "a", "doesNotContain": "b"}` requires both. WireMock
+honours only the first key its binding visits and discards the rest, so the same
+document means *less* there — the stub matches requests its author wrote a
+criterion to exclude, silently.
 
-`{"contains": "a", "doesNotContain": "b"}` is one matcher document carrying two
-matcher keys. Mockulus treats it as a **conjunction** — both must hold — and a
-code comment asserts that WireMock does the same. Probing during the M1
-compatibility pass contradicted that comment: pinned WireMock 3.13.2 appears to
-honour only the **first** key it deserializes and discard the rest.
-
-The conjunction is the more useful reading and the safer one: a stub written
-with two criteria almost certainly means both, and silently dropping one is how
-a test passes against a request it should have rejected. But it is a divergence,
-and right now it is an undocumented one resting on a comment that is wrong.
-
-**To change:** `Compile` in `internal/matchers/compile.go` collects every
-recognised key into `built`; honouring only the first would mean stopping after
-one, or rejecting the multi-key form outright.
-
-**To settle:** establish WireMock's key ordering — whether "first" means source
-order, or the order its Jackson binding happens to visit — because a behavior
-that depends on JSON member order is one no client can rely on either, which
-would argue for the third option: **reject the multi-key form at registration**
-(P3) rather than pick a winner.
-
-Whichever way it lands, it becomes a numbered deviation in §5.5 or a corrected
-comment.
+Conjunction is what a person writing two criteria intends, and it errs toward
+refusing more rather than less. Done: the comment on `Compile` in
+`internal/matchers/compile.go` claimed WireMock agreed and no longer does;
+recorded as deviation #26; pinned by `matchers-sibling-keys-001`.
 
 ---
 
-## D-OPEN-7 — `and` / `or` with a single operand
+## D-OPEN-7 — `and` / `or` with a single operand — CLOSED
 
-**Status:** accepted; WireMock rejects · **Owner:** M6 · **Reversible:** yes
+**Resolved 2026-07-26: matched to WireMock.** Both now require at least two
+operands and answer 422 for a one-operand form, as WireMock does. A combinator
+over a single matcher is that matcher, so accepting it cost nothing at match
+time — but a mappings file that registers here and is refused there cannot move
+back, which is the direction of D2 that matters.
 
-WireMock requires `and` and `or` to carry at least two operands and answers 422
-code 10 for a one-operand form. Mockulus accepts it, and a one-operand `and` is
-simply that operand.
-
-Accepting it is harmless in itself, but it breaks the D2 contract in the
-direction that matters least and is still worth noticing: a stub that registers
-here and 422s there is a mappings file that cannot be migrated back to WireMock.
-
-**To change:** an arity check in `compileCombinator`, one condition and a test.
+Done in `compileCombinator`; recorded as deviation #27 (a note that the arity is
+part of the accepted surface, not that the two differ); pinned by
+`matchers-sibling-keys-001`.
 
 ---
 
@@ -261,35 +224,19 @@ argued.
 
 ---
 
-## D-OPEN-11 — `deleteWhere` still backs the journal
+## D-OPEN-11 — `deleteWhere` behind the journal — CLOSED (was unfinished work)
 
-**Status:** mappings and scenarios fixed, one caller left · **Owner:** M5 ·
-**Reversible:** no reason not to
+**Resolved 2026-07-26: finished rather than decided.** This was never a
+question — it was the tail of the D-OPEN-10 fix. Scenarios were converted when
+M4 landed; `ClearJournal` was missed and still issued a `DELETE FROM`, which is
+planned as a scan of the persisted view, so an entry written moments earlier was
+invisible to it and survived a clear that answered 200.
 
-The `DELETE FROM` statement behind bulk removal is planned as a KV sequential
-scan of the same persisted view as D-OPEN-10, so a document written milliseconds
-earlier is invisible to it and is **never deleted** — while the caller is told
-200. Measured 7 times in 20 against an idle single node. Unlike the read case
-this is permanent rather than transient: the document really exists, so every
-later reload keeps serving it.
-
-For mappings this is fixed: `DELETE /__admin/mappings` and
-`POST /__admin/mappings/reset` now select keys with the watermarked bulk read
-and remove by key, which also gives each removal a mutation token for the reload
-that follows. 7 in 20 became 0 in 20.
-
-`DeleteAllScenarios` took the same treatment at M4, which is where it mattered
-most: a scenario state document is written by the request that transitions the
-flow, so the reset a suite makes between tests is the call most likely to land
-inside the window, and what it leaves behind is a flow that resumes from the
-middle. `scenario-reset-001` drives a transition and resets with nothing in
-between, and asserts the read-back with no polling window at all.
-
-`ClearJournal` still calls the old path. The journal collection is not read by a
-bulk scan, so a surviving entry cannot resurrect a stub — the blast radius is a
-`DELETE /__admin/requests` that silently does not clear.
-
-**To change:** the same `removeKeys` treatment, applied when M5 lands.
+That is the collection where it mattered most: entries are written continuously
+by the request path, and a verification run against a journal that was told to
+be empty fails for a reason its author cannot see. It now selects keys through
+the watermarked bulk read and removes by key, like mappings and scenarios.
+`deleteWhere` has no callers left and is deleted.
 
 ---
 
@@ -411,21 +358,12 @@ records the number to beat.
 
 ---
 
-## D-OPEN-15 — `./x` is accepted as a file name where `RejectFileName` would refuse it
+## D-OPEN-15 — `./x` accepted as a file name — CLOSED (not a decision)
 
-**Status:** cosmetic, unfixed · **Owner:** post-v1 · **Reversible:** yes
+**Resolved 2026-07-26: nothing to decide.** `PUT /__admin/files/./x` stores the
+file as `x` because Go's `ServeMux` normalises the request path before the
+handler sees it, so the name reaching `RejectFileName` is already clean.
 
-`PUT /__admin/files/./x` answers 201 and stores the file as `x`. The rule in
-`stub.RejectFileName` refuses a name that is not already in cleaned form, and it
-is applied — but Go's `ServeMux` normalises the request path before the handler
-sees it, so the name that reaches the check is already `x`.
-
-Nothing escapes: `..` climbing is refused by the mux with a 404 well before the
-handler, and no driver joins a name onto a filesystem path. The cost is only
-that the caller's name and the stored name differ, which is the exact thing the
-rule's own comment says it exists to prevent — so the rule is honest and the
-router quietly makes it moot for this one shape.
-
-**To change:** compare against `r.URL.EscapedPath()` rather than the routed
-value, or register the files routes on a mux that does not redirect. Both are
-more machinery than the problem currently justifies.
+Nothing escapes — `..` climbing is refused by the mux well before the handler,
+and no driver joins a name onto a filesystem path. The only cost is that the
+caller's spelling and the stored name differ for this one shape. Left as is.
