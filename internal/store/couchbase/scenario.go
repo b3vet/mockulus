@@ -73,7 +73,7 @@ func (s *Store) UpsertScenario(ctx context.Context, name string, state store.Sce
 // DeleteAllScenarios clears every state document, so every scenario reads back
 // as Started (SPEC §9.4).
 func (s *Store) DeleteAllScenarios(ctx context.Context) error {
-	return s.deleteWhere(ctx, collScenarios, "")
+	return s.deleteWhere(ctx, collScenarios)
 }
 
 // ListScenarioStates returns every stored state by scenario name.

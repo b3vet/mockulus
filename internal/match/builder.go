@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/b3vet/mockulus/internal/metrics"
@@ -36,10 +35,12 @@ type Builder struct {
 	stubOpts stub.Options
 	cache    *compileCache
 
+	// mu serialises rebuilds against each other and against splices, which is
+	// also what gives an admin write read-your-writes without any coalescing
+	// machinery: the write persists and bumps the epoch, then blocks here, so
+	// its splice lands after any rebuild already in flight rather than being
+	// discarded by that rebuild's swap.
 	mu sync.Mutex
-	// dirty records that a change arrived while a rebuild was already running,
-	// so exactly one further rebuild follows it.
-	dirty atomic.Bool
 }
 
 // NewBuilder wires a builder to its store and engine. stubOpts carries the
@@ -65,24 +66,25 @@ func NewBuilder(st store.StubStore, engine *Engine, log *slog.Logger,
 // unreadable stub cannot freeze propagation cluster-wide (SPEC §6.9). Only a
 // store read failure abandons the rebuild, leaving the previous snapshot in
 // place (SPEC §4.6).
+//
+// A load that succeeds is taken at its word, including when it returns nothing.
+// Refusing to install an empty snapshot over a populated one is tempting —
+// that is what a store answering from a stale view looks like, and the cost of
+// being wrong is every stub in the deployment going dark at once — but it
+// cannot be decided from here. `DELETE /__admin/mappings` produces the
+// identical pair of observations, and the epoch does not separate them either:
+// a deletion bumps it, but so does the registration whose reload a stale view
+// races, so both arrive as "the counter moved and the store is empty". Nothing
+// in LoadAll's answer says which happened. The guarantee therefore belongs to
+// the driver — it must fail rather than return a view it cannot show is
+// current — and internal/store/couchbase carries this pod's own mutations into
+// the read for exactly that reason.
 func (b *Builder) Rebuild(ctx context.Context, trigger string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	for {
-		b.dirty.Store(false)
-		if err := b.rebuildOnce(ctx, trigger); err != nil {
-			return err
-		}
-		if !b.dirty.Load() {
-			return nil
-		}
-	}
+	return b.rebuildOnce(ctx, trigger)
 }
-
-// MarkDirty records that store state changed. If a rebuild is in flight it will
-// run once more; otherwise the caller is expected to trigger one.
-func (b *Builder) MarkDirty() { b.dirty.Store(true) }
 
 func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 	start := time.Now()
