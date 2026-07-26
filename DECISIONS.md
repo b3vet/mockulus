@@ -377,7 +377,7 @@ WireMock can tell the difference.
 
 ---
 
-## D-OPEN-13 — JSONPath body matching allocates on the request path
+## D-OPEN-14 — JSONPath body matching allocates on the request path
 
 **Status:** measured, not fixed · **Owner:** post-v1 · **Reversible:** yes
 
@@ -411,7 +411,7 @@ records the number to beat.
 
 ---
 
-## D-OPEN-14 — `./x` is accepted as a file name where `RejectFileName` would refuse it
+## D-OPEN-15 — `./x` is accepted as a file name where `RejectFileName` would refuse it
 
 **Status:** cosmetic, unfixed · **Owner:** post-v1 · **Reversible:** yes
 
