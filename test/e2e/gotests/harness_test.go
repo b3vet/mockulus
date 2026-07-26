@@ -245,6 +245,17 @@ func (m *mockulus) waitReady(t *testing.T) {
 
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		// A process that has already exited will never answer, and polling it
+		// for the rest of the window turns "it died" into "it never became
+		// ready" — the same message a genuinely slow start produces, thirty
+		// seconds later. The distinction is the whole diagnostic.
+		select {
+		case <-m.exited:
+			t.Fatalf("mockulus exited with code %d before becoming ready:\n%s",
+				m.cmd.ProcessState.ExitCode(), strings.Join(m.logs(), "\n"))
+		default:
+		}
+
 		resp, err := harnessClient.Get(m.adminURL("/readyz"))
 		if err == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
@@ -255,7 +266,7 @@ func (m *mockulus) waitReady(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatalf("mockulus never became ready:\n%s", strings.Join(m.logs(), "\n"))
+	t.Fatalf("mockulus was still running but never became ready:\n%s", strings.Join(m.logs(), "\n"))
 }
 
 // harnessClient issues the harness' own administrative traffic. Tests that are

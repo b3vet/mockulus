@@ -43,9 +43,6 @@ type ParsedRequest struct {
 	form       url.Values
 	formParsed bool
 
-	// contentType is the request's media type, lower-cased, without parameters.
-	contentType string
-
 	// bodySubject persists for the whole request so a body examined by several
 	// matchers is converted and parsed once.
 	bodySubject matchers.Body
@@ -53,6 +50,11 @@ type ParsedRequest struct {
 	// keyScratch backs the subject handed to each key criterion. One suffices:
 	// criteria are evaluated strictly one at a time.
 	keyScratch matchers.KeyValues
+
+	// keyBuf assembles the snapshot index keys, whose shape is
+	// "METHOD\x00url" (SPEC §6.1). See indexLookup for why they are not simply
+	// concatenated.
+	keyBuf []byte
 
 	// pathVars holds the bindings produced by a urlPathTemplate match, which
 	// the pathParameters criteria of that same stub then consume.
@@ -74,9 +76,20 @@ var requestPool = sync.Pool{
 		return &ParsedRequest{
 			pathVars:       make(map[string]string, 4),
 			scenarioStates: make(map[string]string, 2),
+			keyBuf:         make([]byte, 0, initialKeyBuf),
 		}
 	},
 }
+
+// initialKeyBuf comfortably holds a method and a path of ordinary length, so a
+// pooled request assembles its index keys without growing the buffer.
+const initialKeyBuf = 128
+
+// maxPooledKeyBuf bounds what a pooled request keeps. The buffer grows to the
+// longest URL that instance has seen, and net/http will accept a request line
+// close to a megabyte; without this, one such request permanently inflates a
+// pool entry that every later request reuses.
+const maxPooledKeyBuf = 4 << 10
 
 // AcquireRequest takes a ParsedRequest from the pool and binds it to an
 // incoming request and its already-read body.
@@ -94,7 +107,7 @@ func ReleaseRequest(pr *ParsedRequest) {
 
 func (r *ParsedRequest) bind(req *http.Request, body []byte) {
 	r.Method = req.Method
-	r.FullURL = req.URL.RequestURI()
+	r.FullURL = requestTarget(req)
 	r.Path = r.FullURL
 	if i := strings.IndexByte(r.FullURL, '?'); i >= 0 {
 		r.Path = r.FullURL[:i]
@@ -102,14 +115,37 @@ func (r *ParsedRequest) bind(req *http.Request, body []byte) {
 	r.header = req.Header
 	r.body = body
 	r.bodySubject.Set(body)
-	r.contentType = mediaType(req.Header.Get("Content-Type"))
+}
+
+// requestTarget returns the request line's target: path and query exactly as
+// the client wrote them, which is what a byte-exact `url` criterion compares
+// against.
+//
+// net/http keeps that string verbatim in RequestURI, and re-deriving it from
+// the parsed URL instead is not free — URL.RequestURI re-escapes the path,
+// scanning it byte by byte with a per-byte function call, which the serve
+// profile showed costing as much as the whole match. For an origin-form target
+// the two agree exactly, because url.setPath keeps the raw form in RawPath
+// whenever the default encoding would differ from it;
+// TestRequestTargetIsTheTargetAsReceived holds them to that over the encodings
+// where it would be easiest to be wrong.
+//
+// The leading-slash guard is what limits the shortcut to the origin form. A
+// proxy client's absolute target is the case where the two genuinely disagree —
+// RequestURI carries the scheme and host, and a stub's URL criterion is written
+// against neither — so that one goes the long way round.
+func requestTarget(req *http.Request) string {
+	if uri := req.RequestURI; uri != "" && uri[0] == '/' {
+		return uri
+	}
+	return req.URL.RequestURI()
 }
 
 // Reset clears every reference the request held. Pooled memory that keeps a
 // pointer to a previous request's body is a leak that only shows up under load,
 // so this is deliberately exhaustive.
 func (r *ParsedRequest) Reset() {
-	r.Method, r.Path, r.FullURL, r.contentType = "", "", "", ""
+	r.Method, r.Path, r.FullURL = "", "", ""
 	r.header = nil
 	r.body = nil
 
@@ -120,6 +156,15 @@ func (r *ParsedRequest) Reset() {
 	r.bodySubject.Reset()
 	r.keyScratch.Set(false, nil)
 
+	// Truncated rather than dropped: it holds bytes copied out of the request
+	// rather than a reference into it, and keeping the capacity is the whole
+	// reason index lookups allocate nothing. An outsized one is dropped.
+	if cap(r.keyBuf) > maxPooledKeyBuf {
+		r.keyBuf = nil
+	} else {
+		r.keyBuf = r.keyBuf[:0]
+	}
+
 	clear(r.pathVars)
 	clear(r.scenarioStates)
 	r.scenarioErr = nil
@@ -127,6 +172,23 @@ func (r *ParsedRequest) Reset() {
 
 // Body returns the raw request body.
 func (r *ParsedRequest) Body() []byte { return r.body }
+
+// indexLookup probes one of the snapshot's URL indexes for this request.
+//
+// The key is assembled into the request's own buffer rather than written as
+// method+methodSep+url, because Go keeps a concatenated string off the heap
+// only while it fits a 32-byte stack buffer. A method plus any realistic path
+// exceeds that, and every request probes four keys — so the obvious spelling
+// costs four heap allocations on the exact-URL hit that most traffic is, while
+// a benchmark using a short path reports none of them (SPEC §16.3 rule 1). The
+// map lookup takes a string view of the buffer, which the compiler does not
+// copy.
+func (r *ParsedRequest) indexLookup(index map[string][]int32, method, url string) []int32 {
+	r.keyBuf = append(r.keyBuf[:0], method...)
+	r.keyBuf = append(r.keyBuf, methodSep...)
+	r.keyBuf = append(r.keyBuf, url...)
+	return index[string(r.keyBuf)]
+}
 
 // HeaderValues returns every value sent for a header, looked up
 // case-insensitively.
@@ -171,10 +233,15 @@ func (r *ParsedRequest) CookieSubject(name string) matchers.Subject {
 // FormSubject returns the subject for a form field, parsing the body as
 // urlencoded form data on first use. A request that is not form-encoded has no
 // form fields rather than an error: the criterion simply does not match.
+//
+// The media type is read here rather than in bind, because this is the only
+// thing that wants it: deriving it up front would charge every request for a
+// header lookup and a case fold on behalf of the one stub in a thousand that
+// matches on form parameters (P2).
 func (r *ParsedRequest) FormSubject(name string) matchers.Subject {
 	if !r.formParsed {
 		r.formParsed = true
-		if r.contentType == "application/x-www-form-urlencoded" {
+		if mediaType(r.header.Get("Content-Type")) == "application/x-www-form-urlencoded" {
 			if parsed, err := url.ParseQuery(string(r.body)); err == nil {
 				r.form = parsed
 			}

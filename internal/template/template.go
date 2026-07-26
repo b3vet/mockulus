@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/b3vet/mockulus/internal/handlebars"
@@ -83,11 +84,15 @@ func BuildContext(r *http.Request, body []byte, pathVars map[string]string,
 	// `request.path` is both the path string and an indexable segment list, so
 	// {{request.path}} and {{request.path.[0]}} both work. A map that also
 	// carries the string under a key the stringifier prefers gives both.
+	//
+	// Index keys are spelled with strconv rather than fmt here and in the two
+	// models below: this runs once per segment of every templated request, and
+	// fmt on the request path is what SPEC §16.3 rule 4 forbids.
 	pathModel := map[string]any{
 		"segments": segments,
 	}
 	for i, seg := range segments {
-		pathModel[fmt.Sprint(i)] = seg
+		pathModel[strconv.Itoa(i)] = seg
 	}
 	for name, value := range pathVars {
 		pathModel[name] = value
@@ -108,7 +113,7 @@ func BuildContext(r *http.Request, body []byte, pathVars map[string]string,
 		"cookies":      cookieModel(r),
 		"query":        queryModel(fullURL),
 		"body":         string(body),
-		"bodyAsBase64": base64.StdEncoding.EncodeToString(body),
+		"bodyAsBase64": base64Body(body),
 	}
 
 	ctx := map[string]any{"request": request}
@@ -117,6 +122,30 @@ func BuildContext(r *http.Request, body []byte, pathVars map[string]string,
 	}
 	return ctx
 }
+
+// base64Body defers `request.bodyAsBase64` until a template reads it.
+//
+// Encoding on the way in charges every templated response for a second copy of
+// the request body at four-thirds its size, whether or not the template
+// mentions it — and the bodies a mock server is handed are as large as the API
+// it stands in for, so that cost has no ceiling (P2). Everything that consumes
+// a context value goes through handlebars.Stringify or toFloat, both of which
+// take a Stringer, so deferring is invisible to templates.
+//
+// The empty body stays a string: Truthy has no case for a Stringer and would
+// report the encoding of nothing as true, which would flip {{#if}} on a body
+// that is not there.
+func base64Body(body []byte) any {
+	if len(body) == 0 {
+		return ""
+	}
+	return base64Value(body)
+}
+
+type base64Value []byte
+
+// String implements fmt.Stringer.
+func (b base64Value) String() string { return base64.StdEncoding.EncodeToString(b) }
 
 // pathValue lets `request.path` be both a string and a container, which is what
 // {{request.path}} and {{request.path.[1]}} each need.
@@ -163,7 +192,7 @@ func headerValues(values []string) any {
 	}
 	model := map[string]any{}
 	for i, v := range values {
-		model[fmt.Sprint(i)] = v
+		model[strconv.Itoa(i)] = v
 	}
 	return pathValue{text: values[0], model: model}
 }
@@ -195,7 +224,7 @@ func queryModel(requestURI string) map[string]any {
 			// A repeated parameter grows into an indexable list.
 			values := []string{existing.text}
 			for i := 1; ; i++ {
-				v, ok := existing.model[fmt.Sprint(i)]
+				v, ok := existing.model[strconv.Itoa(i)]
 				if !ok {
 					break
 				}
