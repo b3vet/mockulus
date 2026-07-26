@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-bounds-001
+behaviors:
+  - B-DEV-DEVIATION-16
+  - B-CFG-JOURNAL-QUERY-SCAN-LIMIT
+  - B-CFG-JOURNAL-MAX-BODY
+# The scan window is deployment-wide — the newest N entries in the journal, not
+# the newest N this case wrote — so a neighbouring case's traffic would fill it
+# and the under-report below would be measuring the run's scheduling instead of
+# the bound.
+requires: [exclusive]
+config: bounded-journal
+# n/a: WireMock keeps its journal in memory, evaluates criteria over all of it
+# and stores bodies whole. There is no oracle for a bound it does not have —
+# the bound is deviation #16 itself.
+wm: n/a
+steps:
+  # Which bounds this instance is running under. Both of them under-report in
+  # silence, so a case that could not name the numbers would be asserting that
+  # verification is wrong without being able to say what made it wrong.
+  - logprobe: {contains: "journal_max_body=256"}
+  - logprobe: {contains: "journal_query_scan_limit=3"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"53000001-0000-4000-8000-000000000001",
+         "request":{"method":"POST","urlPath":"/e2e/journal-bounds-001/orders"},
+         "response":{"status":201,"body":"created"}}
+    expect: {status: 201}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # A 384-byte body against a 256-byte cap, laid out so a criterion can point
+  # either side of the boundary: every line is exactly 32 bytes including its
+  # newline, which puts lines 01–08 inside the cap and line 09 onwards past it.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/journal-bounds-001/orders
+      body: |
+        line-01-padpadpadpadpadpadpadpa
+        line-02-padpadpadpadpadpadpadpa
+        line-03-padpadpadpadpadpadpadpa
+        line-04-padpadpadpadpadpadpadpa
+        line-05-padpadpadpadpadpadpadpa
+        line-06-padpadpadpadpadpadpadpa
+        line-07-padpadpadpadpadpadpadpa
+        line-08-padpadpadpadpadpadpadpa
+        line-09-padpadpadpadpadpadpadpa
+        line-10-padpadpadpadpadpadpadpa
+        line-11-padpadpadpadpadpadpadpa
+        line-12-padpadpadpadpadpadpadpa
+    expect: {status: 201, body: "created"}
+
+  # The cap is flagged, not applied in silence. A reader who finds a body that
+  # ends mid-document has to be able to tell "this is what was sent" from "this
+  # is what we kept", and `bodyTruncated` is the whole of that difference.
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      body: '{"urlPath":"/e2e/journal-bounds-001/orders"}'
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        requests:
+          - url: /e2e/journal-bounds-001/orders
+            bodyTruncated: true
+
+  # Inside the cap, verification works exactly as it reads: the request carried
+  # this text and the count says so.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/journal-bounds-001/orders",
+         "bodyPatterns":[{"contains":"line-08-"}]}
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # And past it, the answer is wrong. The request above carried `line-09-`; it
+  # was served, it was recorded, and a criterion naming that text counts nought.
+  #
+  # This is the half of deviation #16 that can bite silently, so it is pinned
+  # rather than avoided. A verification that errored here would send its author
+  # to read the deviation; one that answers zero sends them to look for a bug in
+  # the code under test. The next step is the proof that the entry is there —
+  # the same journal, the same criteria, one clause removed.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/journal-bounds-001/orders",
+         "bodyPatterns":[{"contains":"line-09-"}]}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-bounds-001/orders"}'
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # A clean journal for the scan window, and waited for rather than assumed: the
+  # bound below counts entries, so one left over from above would come out of
+  # the three the window holds.
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_subset: {meta: {total: 0}}
+
+  # Five calls, every one of them served and answered.
+  - request: {port: mock, method: POST, path: /e2e/journal-bounds-001/orders, body: "1"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-bounds-001/orders, body: "2"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-bounds-001/orders, body: "3"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-bounds-001/orders, body: "4"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-bounds-001/orders, body: "5"}
+    expect: {status: 201, body: "created"}
+
+  # Verified as three. Not "three so far" — the window never widens, so this is
+  # the number a suite would read a minute later too, and `verify(exactly(5))`
+  # against this deployment fails for a reason that has nothing to do with the
+  # code it is testing.
+  #
+  # Eventual rather than immediate because entries become visible within a flush
+  # interval (§11.4), and stable once reached: the guard rail caps the answer at
+  # three however many more arrive.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-bounds-001/orders"}'
+    expect_eventually:
+      status: 200
+      body_json: {count: 3, requestJournalDisabled: false}
+
+  # `find` reads the same window, so it hands back the same three entries the
+  # count reported rather than the five that were served. Three elements are
+  # named because the subset comparison is positional and demands at least as
+  # many as it lists: what it pins is that the window was full, and the exact
+  # bound is pinned by the count above and the total below.
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      body: '{"urlPath":"/e2e/journal-bounds-001/orders"}'
+    expect:
+      status: 200
+      body_json_subset:
+        requestJournalDisabled: false
+        requests:
+          - url: /e2e/journal-bounds-001/orders
+          - url: /e2e/journal-bounds-001/orders
+          - url: /e2e/journal-bounds-001/orders
+
+  # The listing tells the same story from the other side: `meta.total` is what a
+  # client reads to decide whether it has seen everything, and here it reports
+  # the window rather than the journal. Asserted as an exact number, which this
+  # case has earned by owning the deployment — on a shared one it would be a
+  # claim about what every other case had served.
+  - admin: {method: GET, path: /__admin/requests}
+    expect: {status: 200, body_json_subset: {meta: {total: 3}}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/53000001-0000-4000-8000-000000000001}
+    expect: {status: 200}

@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-queue-full-001
+behaviors:
+  - B-DEGRADED-JOURNAL-QUEUE-FULL
+  - B-CFG-JOURNAL-BUFFER-JOURNAL-BUFFER-BYTES
+  - B-METRIC-JOURNAL-DROPPED-TOTAL
+# The one-entry, one-kibibyte queue. The production caps are 8192 entries and
+# 64 MiB, so reaching them from a case would mean generating load rather than
+# asserting behavior — and the behavior is the same behavior at either size
+# (SPEC §19.4).
+config: tiny-journal
+# n/a: WireMock records on the request path itself and has no queue to fill, so
+# there is no oracle answer to this. The deviation is deliberate and is the
+# reason the journal is survivable at all (D3).
+wm: n/a
+steps:
+  # Which caps this instance is running under. A drop leaves nothing in any
+  # response — that is the point of it — so without the startup dump the
+  # counter below could be rising for any reason at all, including a store that
+  # is quietly refusing every write.
+  - logprobe: {contains: "journal_buffer=1"}
+  - logprobe: {contains: "journal_buffer_bytes=1KiB"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"52000001-0000-4000-8000-000000000001",
+         "request":{"method":"POST","urlPath":"/e2e/journal-queue-full-001/orders"},
+         "response":{"status":201,"body":"created"}}
+    expect: {status: 201}
+
+  # One request whose entry is larger than the entire byte budget. It cannot be
+  # queued under any timing, on any machine, at any load — which is what makes
+  # the counter below attributable to this step rather than to a burst that
+  # happened to be fast enough. It is also the cap that matters in production:
+  # a thousand small entries and a thousand 64 KiB entries are very different
+  # amounts of a pod's memory, and only the byte cap can tell them apart.
+  #
+  # And it is answered exactly as if it had been recorded. That is the contract:
+  # the client cannot tell, because nothing about recording sits between the
+  # match and the write.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/journal-queue-full-001/orders
+      body: |
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+    expect: {status: 201, body: "created"}
+
+  # Counted, not swallowed. An entry that vanished with nothing to show for it
+  # would make the journal a source of quietly wrong answers; this counter is
+  # what turns "my verification is short" into an alert an operator can act on.
+  # The probe polls because the decision to drop is taken after the response has
+  # been written, so the client can hold the answer before the counter moves.
+  - metricsprobe: {series: mockulus_journal_dropped_total, at_least: 1, within: 10s}
+
+  # A burst against a queue one entry deep, which is the shape the production
+  # cap has under load: entries arriving faster than four flushers can drain
+  # them. Every one of these is asserted in full — status and body — because
+  # the claim is not that the requests survived but that they were served
+  # correctly, and a mock that answered 200 with the wrong body while its
+  # journal was full would have failed at the only job it has.
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "1"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "2"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "3"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "4"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "5"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "6"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "7"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "8"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "9"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "10"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "11"}
+    expect: {status: 201, body: "created"}
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "12"}
+    expect: {status: 201, body: "created"}
+
+  # A second oversized entry, after the burst rather than before it. Two
+  # guaranteed drops is what lets the floor below be a step up from the first
+  # probe instead of the same claim restated: the counter kept moving, and the
+  # requests either side of it were still answered.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/journal-queue-full-001/orders
+      body: |
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+        drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler-drop-path-filler
+    expect: {status: 201, body: "created"}
+
+  - metricsprobe: {series: mockulus_journal_dropped_total, at_least: 2, within: 10s}
+
+  # Dropping is not failing over to not recording at all. Whatever fits still
+  # goes through, which is what makes an overflowing journal a lossy record
+  # rather than a dead one.
+  - metricsprobe: {series: mockulus_journal_enqueued_total, at_least: 1, within: 10s}
+
+  # And verification still answers. A full queue is a shortfall in what was
+  # recorded, never an error handed to the client: `requestJournalDisabled` is
+  # false, the endpoint is 200, and the number next to it is simply lower than
+  # the traffic that was served. That the count is not asserted here is the
+  # honest position — under load it is not a knowable number, which is deviation
+  # #16's warning arriving from the other direction.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-queue-full-001/orders"}'
+    expect: {status: 200, body_json_subset: {requestJournalDisabled: false}}
+
+  # Still serving, after all of it, with nothing having restarted.
+  - request: {port: mock, method: POST, path: /e2e/journal-queue-full-001/orders, body: "last"}
+    expect: {status: 201, body: "created"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/52000001-0000-4000-8000-000000000001}
+    expect: {status: 200}

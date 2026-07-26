@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/dlclark/regexp2"
@@ -120,7 +119,24 @@ func Compile(source string, opts Options) (*Pattern, error) {
 	}
 	p.Engine = EngineBacktracking
 	p.bt = bt
-	p.literalPrefix = backtrackingLiteralPrefix(source)
+
+	// No literal prefix on this engine, deliberately.
+	//
+	// The prefilter is a REJECTION filter (SPEC §6.3): a candidate whose prefix
+	// does not match is dropped without running its pattern. So a prefix that is
+	// not genuinely required does not cost performance, it loses requests that
+	// should have been served — silently, and only for the stubs unlucky enough
+	// to use the construct that fooled it.
+	//
+	// RE2 computes one exactly, and that is where the value is anyway: patterns
+	// only reach this engine when they use lookaround, backreferences or
+	// possessive quantifiers (§6.6), which is the uncommon path. Deriving one
+	// here meant scanning a pattern without parsing it, and fuzzing walked
+	// straight through every attempt to make that sound — `abc(d)|x` requires
+	// nothing, `\xe8)?a(` matches "a", `0++?a` is a possessive plus made
+	// optional by the `?` that follows it, and each fix exposed the next shape.
+	// A scanner that does not parse the grammar cannot decide a question about
+	// the grammar, and the answer it gets wrong is the one that drops traffic.
 	return p, nil
 }
 
@@ -158,44 +174,3 @@ func (p *Pattern) Source() string { return p.source }
 // a match to be possible, or the empty string when nothing can be concluded.
 // The match engine uses it to prefilter pattern stubs cheaply.
 func (p *Pattern) LiteralPrefix() string { return p.literalPrefix }
-
-// backtrackingLiteralPrefix extracts a conservative literal prefix from a
-// pattern the fallback engine compiled, since regexp2 exposes no equivalent of
-// RE2's LiteralPrefix. It stops at the first character that could introduce
-// alternation, repetition or a class, and returns nothing at all when the
-// pattern opens with one — a wrong prefix would silently drop matching stubs,
-// so this errs entirely toward returning less.
-func backtrackingLiteralPrefix(source string) string {
-	// last is where the most recently scanned literal character starts, so a
-	// quantifier that can take none of it drops exactly that character and not
-	// the trailing byte of its encoding.
-	last := -1
-	i := 0
-	for i < len(source) {
-		c := source[i]
-		if c == '\\' {
-			// An escape may be a literal (\.) or a class (\d); either way the
-			// prefix ends here rather than guessing.
-			break
-		}
-		if c == '|' {
-			// Everything scanned so far is one branch of an alternation, so
-			// nothing in it is required of a matching subject.
-			return ""
-		}
-		if c == '*' || c == '?' || (c == '{' && closureMinIsZero(source, i)) {
-			// A quantifier applies to the character before it, so that
-			// character is not guaranteed to be present.
-			if last < 0 {
-				return ""
-			}
-			return source[:last]
-		}
-		if strings.IndexByte(`.+()[]{}^$`, c) >= 0 {
-			break
-		}
-		last = i
-		i += runeWidth(source, i)
-	}
-	return source[:i]
-}

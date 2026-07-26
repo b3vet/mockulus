@@ -91,6 +91,31 @@ jobs:
             done
           done
 
+  differential:
+    name: T5 — differential against pinned WireMock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Nightly rather than only on merge because the oracle is a pinned image
+      # and this lane is where a bump to WIREMOCK_VERSION gets found out — on a
+      # schedule nobody is waiting on, instead of in the PR that bumped it.
+      - name: build
+        run: go build -trimpath -o bin/mockulus ./cmd/mockulus
+      - name: replay every wm:verified case against the oracle
+        run: go run ./test/e2e/runner --binary bin/mockulus --parallel 16 --differential
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-artifacts
+          path: test/e2e/.artifacts/
+          if-no-files-found: ignore
+
   vuln:
     name: vulnerability scan
     runs-on: ubuntu-latest

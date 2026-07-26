@@ -113,7 +113,20 @@ func Parse(source string) (*Template, error) {
 type parser struct {
 	src string
 	pos int
+	// depth counts the blocks currently open; see maxBlockNesting.
+	depth int
 }
+
+// maxBlockNesting bounds how deeply block helpers may be nested.
+//
+// The parser descends once per open block, and a stack overflow in Go is a
+// fatal error rather than a panic: nothing recovers it, so the process dies and
+// takes every other team's mocks with it. Measured before this bound existed, a
+// template of a million nested {{#if}} — 15 MiB, inside the admin body cap —
+// did exactly that. A hundred is two orders of magnitude past the deepest
+// template anyone writes and three orders below where the stack runs out, so
+// the refusal only ever lands on a document that was never going to render.
+const maxBlockNesting = 100
 
 // parseNodes reads until end of input, or until the closing tag of openBlock.
 func (p *parser) parseNodes(openBlock string) ([]Node, error) {
@@ -198,6 +211,12 @@ func (p *parser) parseNodes(openBlock string) ([]Node, error) {
 
 // parseBlock reads a block helper's arguments and both branches.
 func (p *parser) parseBlock(header string) (*Node, error) {
+	if p.depth >= maxBlockNesting {
+		return nil, fmt.Errorf("blocks may not nest more than %d deep", maxBlockNesting)
+	}
+	p.depth++
+	defer func() { p.depth-- }()
+
 	expr, err := parseExpression(header)
 	if err != nil {
 		return nil, fmt.Errorf("%w (in block {{#%s}})", err, header)

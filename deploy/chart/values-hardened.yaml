@@ -22,6 +22,9 @@ config:
   adminOnMockPort: false
 
 adminAuth:
+  # This is what makes the line above true rather than aspirational: the chart
+  # refuses to render until a token is supplied.
+  required: true
   existingSecret: ""   # set this; the release fails closed without a token
   tokenKey: token
 

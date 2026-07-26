@@ -15,6 +15,7 @@
 package config
 
 import (
+	"crypto/subtle"
 	"crypto/tls"
 	"fmt"
 	"os"
@@ -192,6 +193,21 @@ func (c Config) EffectiveStore() string {
 
 // TLSEnabled reports whether the mock listener should serve TLS.
 func (c Config) TLSEnabled() bool { return c.TLSCertFile != "" && c.TLSKeyFile != "" }
+
+// AdminTokenAccepted reports whether an Authorization header satisfies
+// `admin_auth_token`. It answers false for every request when no token is
+// configured, so a caller must check AdminAuthToken first to keep the default
+// open posture of SPEC §17.
+//
+// The comparison lives beside the key rather than in the handler because two
+// listeners guard themselves with it — the admin API and the profiling
+// endpoints of §14.3 — and a second copy is a second chance for one of them to
+// drift into a byte-by-byte compare that leaks the token one character at a
+// time.
+func (c Config) AdminTokenAccepted(authorization string) bool {
+	want := []byte("Token " + c.AdminAuthToken)
+	return subtle.ConstantTimeCompare([]byte(authorization), want) == 1
+}
 
 // Validate reports every problem with the resolved configuration at once, so a
 // misconfigured deployment does not need one restart per mistake.

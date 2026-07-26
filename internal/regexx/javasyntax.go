@@ -105,10 +105,38 @@ type javaTranslator struct {
 	groups []int
 
 	changed bool
+
+	// err records a construct the scan can only reject once it has already
+	// emitted the atom it applies to. quantifierSuffix is the case: it cannot
+	// know a possessive is illegal until it sees what follows.
+	err error
 }
+
+// maxTranslatedBytes bounds what a rewrite may produce.
+//
+// Expansion is inherent rather than accidental: `\H` is the complement of
+// horizontal whitespace across Unicode and comes out as a few hundred bytes of
+// explicit ranges, and a POSIX class is not much smaller. That is fine for a
+// pattern a person wrote, and not fine for one machine-generated from a
+// template — a stub body of repeated class escapes would otherwise turn a few
+// kilobytes of admin request into hundreds of megabytes of compiled pattern,
+// held in the snapshot for as long as the stub lives.
+//
+// The bound is on the output rather than a ratio to the input, because the
+// ratio for a legitimate two-character escape is already a hundredfold and any
+// ratio loose enough to admit it admits the attack too.
+const maxTranslatedBytes = 1 << 20
 
 func (t *javaTranslator) run() error {
 	for i := 0; i < len(t.src); {
+		if t.err != nil {
+			return t.err
+		}
+		if len(t.out) > maxTranslatedBytes {
+			return fmt.Errorf(
+				"the pattern expands past %d bytes once its Java-only syntax is written out; "+
+					"the class escapes in it cover most of Unicode", maxTranslatedBytes)
+		}
 		switch c := t.src[i]; c {
 		case '\\':
 			next, err := t.escape(i)
@@ -176,7 +204,7 @@ func (t *javaTranslator) run() error {
 			i += w
 		}
 	}
-	return nil
+	return t.err
 }
 
 // quantifierSuffix consumes the lazy or possessive marker that may follow a
@@ -189,6 +217,20 @@ func (t *javaTranslator) quantifierSuffix(i int) int {
 			if t.atom >= 0 {
 				t.makeAtomic()
 				t.atom = -1
+				// Java takes no quantifier on a possessive one: `a*+*` and
+				// `a++?` are syntax errors there, and pinned WireMock rejects
+				// both with a 422. .NET would happily quantify the atomic group
+				// this just emitted, so accepting them would mean registering a
+				// stub that cannot exist on the server we claim compatibility
+				// with — and silently giving it a meaning Java never assigned.
+				if next := i + 1; next < len(t.src) {
+					switch t.src[next] {
+					case '*', '+', '?', '{':
+						t.err = fmt.Errorf(
+							"a quantifier cannot follow a possessive quantifier (at offset %d); "+
+								"Java rejects this and so does WireMock", next)
+					}
+				}
 				return i + 1
 			}
 		case '?':

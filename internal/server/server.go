@@ -12,6 +12,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -89,6 +90,12 @@ func New(opts Options) *Server {
 		// No WriteTimeout on the mock port: stub delays are legitimate, and the
 		// per-response deadline is applied by the renderer (SPEC §12.1).
 		ErrorLog: slog.NewLogLogger(opts.Logger.With("listener", "mock").Handler(), slog.LevelDebug),
+		// The floor is stated rather than inherited. crypto/tls has moved its
+		// default server minimum twice, and it is still steerable from outside
+		// the binary by GODEBUG — so left unset, what a mockulus deployment
+		// accepts would be a property of the toolchain it happened to be built
+		// with and the environment it happened to start in (SPEC §12.1).
+		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	s.admin = &http.Server{
@@ -186,13 +193,54 @@ func (s *Server) adminRouter(admin http.Handler) http.Handler {
 	}
 
 	// pprof lives on the admin port only, never on the mock port (SPEC §14.3).
-	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
-	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+	profile := s.withAdminToken(pprofHandler())
+	mux.Handle("GET /debug/pprof/", profile)
+	mux.Handle("GET /debug/pprof/cmdline", profile)
+	mux.Handle("GET /debug/pprof/profile", profile)
+	mux.Handle("GET /debug/pprof/symbol", profile)
+	mux.Handle("GET /debug/pprof/trace", profile)
 
 	return recoverMiddleware(s.log, mux)
+}
+
+// pprofHandler routes the profiling endpoints. They are registered on their own
+// mux so one token check in front covers all of them, including any the stdlib
+// grows later under /debug/pprof/.
+func pprofHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	return mux
+}
+
+// withAdminToken puts `admin_auth_token` in front of the profiling endpoints.
+//
+// A heap profile is a copy of everything the process is holding, which on this
+// process means stub bodies — the same bytes SPEC §17 keeps out of the logs
+// because teams put real credentials in their mocks. Leaving pprof open on a
+// port whose only credential is this token would let anyone who can reach :9090
+// read those bodies without ever presenting it, and /debug/pprof/cmdline hands
+// over the process' arguments on the way past.
+//
+// /healthz, /readyz and /metrics stay open even when a token is set: the
+// kubelet and Prometheus cannot present one, and neither endpoint carries stub
+// content. Profiling is the one that does.
+func (s *Server) withAdminToken(next http.Handler) http.Handler {
+	if s.cfg.AdminAuthToken == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.cfg.AdminTokenAccepted(r.Header.Get("Authorization")) {
+			wmcompat.WriteErrors(w, http.StatusUnauthorized,
+				wmcompat.NewError(wmcompat.CodeMalformed,
+					"profiling requires the same Authorization token as the admin API"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleHealthz reports process liveness. It never consults the store: a

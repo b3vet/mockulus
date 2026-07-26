@@ -71,6 +71,11 @@ couchbase:
 # Optional static bearer token for the admin API. Left empty the API is open,
 # which assumes the in-cluster posture described in SECURITY.md.
 adminAuth:
+  # Refuse to render a release that has no token. values-hardened.yaml turns
+  # this on, so the hardened posture cannot be installed half-applied — without
+  # it, forgetting the --set would produce a release that looks locked down and
+  # has an open admin API.
+  required: false
   token: ""
   existingSecret: ""
   tokenKey: token

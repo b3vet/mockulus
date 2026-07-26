@@ -61,6 +61,20 @@ config-docs: ## Regenerate the SPEC §13 configuration table from the config str
 spdx: ## Verify every mockulus-authored source file carries an SPDX header
 	@./scripts/check-spdx.sh
 
+# The two halves of the §22.1 license gate. `check` is the one that can fail a
+# build; `report` regenerates the attribution file CI diffs against, which is
+# what stops THIRD_PARTY_LICENSES from becoming a record that was true once.
+LICENSE_ALLOWLIST := Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC
+
+.PHONY: license-check
+license-check: ## Verify every module in the shipped binary's graph is on the allowlist
+	go-licenses check ./cmd/... ./internal/... --allowed_licenses=$(LICENSE_ALLOWLIST)
+
+.PHONY: license-report
+license-report: ## Regenerate THIRD_PARTY_LICENSES from the module graph
+	go-licenses report ./cmd/mockulus --template=.github/licenses.tpl \
+		--ignore $(MODULE) > THIRD_PARTY_LICENSES
+
 .PHONY: image
 image: ## Build the shippable container image
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .

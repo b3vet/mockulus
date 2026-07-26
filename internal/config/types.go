@@ -45,18 +45,36 @@ func (b Bytes) String() string {
 		gib = 1 << 30
 	)
 	n := int64(b)
+	// A suffix is only used when parse would accept the result back. Rendering
+	// is what the startup config dump prints, and a dump line nobody can feed
+	// back in is a line that misreports the running configuration — the one
+	// thing it exists to do. parse sanity-bounds a suffixed number at
+	// maxSuffixedBytes, so above that the value prints as plain bytes, which
+	// has no bound to cross.
+	suffixed := func(unit int64, suffix string) (string, bool) {
+		if n%unit != 0 {
+			return "", false
+		}
+		scaled := n / unit
+		if scaled > maxSuffixedBytes/unit {
+			return "", false
+		}
+		return strconv.FormatInt(scaled, 10) + suffix, true
+	}
+
 	switch {
 	case n == 0:
 		return "0"
-	case n%gib == 0:
-		return strconv.FormatInt(n/gib, 10) + "GiB"
-	case n%mib == 0:
-		return strconv.FormatInt(n/mib, 10) + "MiB"
-	case n%kib == 0:
-		return strconv.FormatInt(n/kib, 10) + "KiB"
-	default:
-		return strconv.FormatInt(n, 10)
 	}
+	for _, u := range []struct {
+		unit   int64
+		suffix string
+	}{{gib, "GiB"}, {mib, "MiB"}, {kib, "KiB"}} {
+		if out, ok := suffixed(u.unit, u.suffix); ok {
+			return out
+		}
+	}
+	return strconv.FormatInt(n, 10)
 }
 
 var byteSuffixes = []struct {
@@ -68,6 +86,11 @@ var byteSuffixes = []struct {
 	{"KiB", 1 << 10},
 	{"B", 1},
 }
+
+// maxSuffixedBytes bounds a size written with a unit. It is a sanity limit
+// rather than a type limit — nothing configures four exbibytes of anything —
+// and String is held to the same bound so that every rendered value parses.
+const maxSuffixedBytes = int64(1) << 62
 
 func (b *Bytes) parse(s string) error {
 	s = strings.TrimSpace(s)
@@ -83,7 +106,7 @@ func (b *Bytes) parse(s string) error {
 			if n < 0 {
 				return fmt.Errorf("invalid size %q: must not be negative", s)
 			}
-			if n > (1<<62)/sfx.mult {
+			if n > maxSuffixedBytes/sfx.mult {
 				return fmt.Errorf("invalid size %q: out of range", s)
 			}
 			*b = Bytes(n * sfx.mult)

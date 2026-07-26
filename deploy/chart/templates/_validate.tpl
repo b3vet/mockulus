@@ -59,4 +59,21 @@ which is the same contract the admin API applies to unsupported stubs (P3).
 {{- if and .Values.couchbase.connstr (not .Values.couchbase.existingSecret) (not .Values.couchbase.username) -}}
 {{- fail "mockulus: couchbase.connstr is set, so either couchbase.existingSecret or couchbase.username and couchbase.password are required" -}}
 {{- end -}}
+{{- if and .Values.adminAuth.required (not .Values.adminAuth.existingSecret) (not .Values.adminAuth.token) -}}
+{{- fail `
+
+  mockulus: adminAuth.required is set and no token was supplied.
+
+  The hardened preset asks for one because the rest of it — the admin API off
+  the mock port, a NetworkPolicy around the ops port — narrows who can reach
+  the admin API without ever requiring a credential from them. Rendering
+  without the token would produce a release that reads as locked down and has
+  an open admin API, which is worse than no preset at all.
+
+    --set adminAuth.existingSecret=mockulus-admin-token
+
+  Prefer an existing Secret over adminAuth.token: a token passed as a value is
+  a token in the release history.
+` -}}
+{{- end -}}
 {{- end -}}

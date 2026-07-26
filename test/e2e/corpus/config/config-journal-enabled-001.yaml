@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+id: config-journal-enabled-001
+behaviors:
+  - B-CFG-JOURNAL-ENABLED
+  - B-DEV-DEVIATION-1
+# No `config:` at all, which is the point: this is a deployment nobody
+# configured. The journal being off is what a user gets by doing nothing
+# (deviation #1), and the ten cases under corpus/journal/ are the other half of
+# this knob — every one of them declares `config: journal` because none of them
+# would work here.
+#
+# n/a: WireMock records unconditionally and has no disabled state to compare
+# against; the deviation is the whole subject.
+wm: n/a
+steps:
+  # The mock path is untouched by the switch. That is the trade being made:
+  # nothing is recorded, and in exchange serving a request costs nothing beyond
+  # serving it (§11.1).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"5e000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/config-journal-enabled-001/orders"},
+         "response":{"status":200,"body":"served"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/config-journal-enabled-001/orders}
+    expect: {status: 200, body: "served"}
+
+  # Every journal-dependent endpoint, one by one, because a client library calls
+  # whichever one its verify() happens to compile to and a switch that only
+  # covered some of them would leave the rest reporting an empty journal instead
+  # of an absent one. Reported rather than answered empty: `verify(exactly(0))`
+  # against a deployment that records nothing would otherwise pass for the one
+  # reason it must never pass for.
+  #
+  # The detail names the key to set, which is the whole of the remedy — a 500
+  # saying only "journal disabled" leaves the reader to find out that the
+  # journal is a thing that can be enabled and what it is called.
+  - admin: {method: GET, path: /__admin/requests}
+    expect:
+      status: 500
+      body_json:
+        errors:
+          - code: 1010
+            title: Journal disabled
+            detail: "the request journal is disabled; set journal_enabled to record and verify requests"
+
+  - admin: {method: GET, path: /__admin/requests/5e000001-0000-4000-8000-0000000000ff}
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin: {method: DELETE, path: /__admin/requests/5e000001-0000-4000-8000-0000000000ff}
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin: {method: POST, path: /__admin/requests/reset}
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/config-journal-enabled-001/orders"}'
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      body: '{"urlPath":"/e2e/config-journal-enabled-001/orders"}'
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/remove
+      body: '{"urlPath":"/e2e/config-journal-enabled-001/orders"}'
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin: {method: GET, path: /__admin/requests/unmatched}
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin: {method: GET, path: /__admin/requests/unmatched/near-misses}
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  # The near-miss endpoint that ranks *recorded* requests against a pattern
+  # needs the journal and says so; its sibling ranks a supplied request against
+  # the stubs and answers normally. The two sit next to each other in the API
+  # and only one of them is journal-backed, which is exactly the distinction a
+  # blanket "near-misses are off" would blur.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: '{"urlPath":"/e2e/config-journal-enabled-001/orders"}'
+    expect: {status: 500, body_json_subset: {errors: [{code: 1010}]}}
+
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request
+      body: '{"method":"GET","url":"/e2e/config-journal-enabled-001/orders"}'
+    expect: {status: 200}
+
+  # "Zero journal work on the hot path" is a claim about cost, not only about
+  # answers, and the counter is where it is falsifiable: a request was served
+  # above, and nothing was enqueued for it. Asserted as an exact zero rather
+  # than through `metricsprobe`, which can only require a floor — and a floor of
+  # nought is satisfied by any deployment at all.
+  - admin: {port: admin, method: GET, path: /metrics}
+    expect:
+      status: 200
+      body_regex: '(?m)^mockulus_journal_enqueued_total 0$'
+
+  - admin: {method: DELETE, path: /__admin/mappings/5e000001-0000-4000-8000-000000000001}
+    expect: {status: 200}

@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-metrics-001
+behaviors:
+  - B-METRIC-JOURNAL-ENQUEUED-TOTAL
+  - B-METRIC-JOURNAL-FLUSH-DURATION-SECONDS
+config: journal
+# n/a: these are mockulus' own operational series. WireMock's journal is written
+# on the request path and has neither a queue to admit an entry to nor a batch
+# to time.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"54000001-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/journal-metrics-001/orders"},
+         "response":{"status":200,"body":"served"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/journal-metrics-001/orders}
+    expect: {status: 200, body: "served"}
+  - request: {port: mock, method: GET, path: /e2e/journal-metrics-001/orders}
+    expect: {status: 200, body: "served"}
+  - request: {port: mock, method: GET, path: /e2e/journal-metrics-001/orders}
+    expect: {status: 200, body: "served"}
+
+  # Admission to the queue, which is the last thing done with the entry before
+  # the request is finished with. Polled because it happens after the response
+  # has been written: reading once would be asserting that the handler had got
+  # that far before the probe arrived, which is a race rather than a claim.
+  - metricsprobe: {series: mockulus_journal_enqueued_total, at_least: 1, within: 10s}
+
+  # The flusher's side of the same entries, and the reason this probe is on the
+  # histogram's `_count` rather than on its presence: a histogram that is
+  # declared and registered is exposed whether or not anything ever observes
+  # into it, so `present` would pass against a metric nothing records. A count
+  # above zero is a batch that was actually timed.
+  - metricsprobe: {series: mockulus_journal_flush_duration_seconds_count, at_least: 1, within: 10s}
+
+  # What the two counters describe, arriving where a client can read it: the
+  # entries went onto the queue, a flusher timed writing them, and verification
+  # finds them.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/journal-metrics-001/orders"}'
+    expect_eventually:
+      status: 200
+      body_json: {count: 3, requestJournalDisabled: false}
+
+  # Nothing was dropped. The drop counter is the queue's overflow signal and
+  # journal-queue-full-001 is where it moves; here it must sit still, or it
+  # would be a counter that rises during ordinary operation and therefore one
+  # nobody could alert on. Asserted as an exact zero because `metricsprobe` can
+  # only require a floor, and every counter clears a floor of nought.
+  #
+  # An exact value is normally a claim about every case sharing this instance
+  # rather than about this one. It is defensible here and only here: the caps
+  # this variant runs under are the production ones, 8192 entries and 64 MiB,
+  # and nothing a corpus running eight cases at a time can do fills either.
+  - admin: {port: admin, method: GET, path: /metrics}
+    expect:
+      status: 200
+      body_regex: '(?m)^mockulus_journal_dropped_total 0$'
+
+  - admin: {method: DELETE, path: /__admin/mappings/54000001-0000-4000-8000-000000000001}
+    expect: {status: 200}

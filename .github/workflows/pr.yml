@@ -38,8 +38,11 @@ jobs:
         run: make spdx
 
       - name: gofmt
+        # No exclusions: internal/handlebars was written here rather than
+        # vendored (SPEC §10.1, §22.1), so it is held to the same bar as the
+        # rest of the tree.
         run: |
-          unformatted=$(gofmt -l . | grep -v '^internal/handlebars/' || true)
+          unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "These files are not gofmt-clean:"; echo "$unformatted"; exit 1
           fi
@@ -101,14 +104,14 @@ jobs:
       - name: every dependency is on the allowlist
         # Copyleft is denied for the shipped binary's module graph with no
         # exceptions (SPEC §22.1).
+        run: make license-check
+      - name: THIRD_PARTY_LICENSES matches the module graph
+        # Regenerating and diffing is what makes the attribution file a record
+        # rather than a promise: a new dependency fails here until its entry is
+        # committed alongside it.
         run: |
-          go-licenses check ./cmd/... ./internal/... \
-            --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC
-      - name: regenerate the module-derived attributions
-        run: |
-          go-licenses report ./cmd/mockulus \
-            --template=.github/licenses.tpl > /tmp/third-party.txt || true
-          cat /tmp/third-party.txt
+          make license-report
+          git diff --exit-code THIRD_PARTY_LICENSES
 
   e2e:
     name: e2e gate (T1)
