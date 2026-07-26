@@ -42,38 +42,75 @@ func (s *Store) GetScenario(ctx context.Context, name string) (store.ScenarioSta
 	return state, store.CAS(res.Cas()), nil
 }
 
+// A state write joins the pod's write watermark for the same reason a mapping
+// write does: everything that reads this collection in bulk — the admin listing
+// and the reset — reads the persisted view, which a transition acknowledged
+// from memory is not in yet. Without the token the listing answers a flow that
+// has already moved with the state it left behind, and the reset does not see
+// the document it is meant to remove. The cost is one mutex on a path that is
+// already making a KV round trip, and only stubs that transition pay it (P2).
+
 // InsertScenario creates a state document, failing if one already exists.
 func (s *Store) InsertScenario(ctx context.Context, name string, state store.ScenarioState) error {
-	_, err := s.scenarios.Insert(keyPrefixScenario+name, state, &gocb.InsertOptions{
+	res, err := s.scenarios.Insert(keyPrefixScenario+name, state, &gocb.InsertOptions{
 		Context: ctx, Timeout: s.scenarioTimeout(ctx), DurabilityLevel: s.durability,
 	})
-	return wrap(err)
+	if err != nil {
+		return wrap(err)
+	}
+	s.writes.note(res.MutationToken())
+	return nil
 }
 
 // ReplaceScenario overwrites a state document only if its CAS still matches,
 // which is what makes a transition safe when several pods serve the same
 // scenario at once.
 func (s *Store) ReplaceScenario(ctx context.Context, name string, state store.ScenarioState, cas store.CAS) error {
-	_, err := s.scenarios.Replace(keyPrefixScenario+name, state, &gocb.ReplaceOptions{
+	res, err := s.scenarios.Replace(keyPrefixScenario+name, state, &gocb.ReplaceOptions{
 		Context: ctx, Timeout: s.scenarioTimeout(ctx),
 		DurabilityLevel: s.durability,
 		Cas:             gocb.Cas(cas),
 	})
-	return wrap(err)
+	if err != nil {
+		return wrap(err)
+	}
+	s.writes.note(res.MutationToken())
+	return nil
 }
 
 // UpsertScenario writes unconditionally, for a transition with no gate.
 func (s *Store) UpsertScenario(ctx context.Context, name string, state store.ScenarioState) error {
-	_, err := s.scenarios.Upsert(keyPrefixScenario+name, state, &gocb.UpsertOptions{
+	res, err := s.scenarios.Upsert(keyPrefixScenario+name, state, &gocb.UpsertOptions{
 		Context: ctx, Timeout: s.scenarioTimeout(ctx), DurabilityLevel: s.durability,
 	})
-	return wrap(err)
+	if err != nil {
+		return wrap(err)
+	}
+	s.writes.note(res.MutationToken())
+	return nil
 }
 
 // DeleteAllScenarios clears every state document, so every scenario reads back
 // as Started (SPEC §9.4).
+//
+// The keys come from the watermarked bulk read rather than from a `DELETE FROM`
+// statement, for the reason removeMappings sets out: the statement's own scan
+// is of the persisted view, so the state document a request wrote milliseconds
+// ago is not there to be deleted and survives a reset that answered 200. For
+// mappings that meant a stub nobody could get rid of; here it means a suite
+// that reset the flow and then walked it from the middle — a failure that
+// reads as a mockulus bug at whatever step first disagrees (D-OPEN-11).
 func (s *Store) DeleteAllScenarios(ctx context.Context) error {
-	return s.deleteWhere(ctx, collScenarios)
+	raw, err := s.loadCollection(ctx, s.scenarios, collScenarios)
+	if err != nil {
+		return err
+	}
+
+	keys := make([]string, 0, len(raw))
+	for id := range raw {
+		keys = append(keys, id)
+	}
+	return s.removeKeys(ctx, s.scenarios, "scenario states", keys)
 }
 
 // ListScenarioStates returns every stored state by scenario name.

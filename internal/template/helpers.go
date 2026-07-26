@@ -628,6 +628,13 @@ func toFloat(v any) (float64, error) {
 		return f, nil
 	case nil:
 		return 0, fmt.Errorf("expected a number, got nothing")
+	case fmt.Stringer:
+		// Query parameters, header values and path segments arrive as a value
+		// that is both a scalar and an indexable list (§10.2). A number helper
+		// has to read the same characters the body would have printed, or
+		// {{math request.query.a '+' request.query.b}} — which WireMock 3.13.2
+		// answers with the sum — fails on every request that supplies one.
+		return toFloat(t.String())
 	default:
 		return 0, fmt.Errorf("expected a number, got %T", v)
 	}

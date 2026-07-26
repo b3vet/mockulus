@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+id: scenario-walk-001
+behaviors:
+  - B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE
+  - B-METRIC-SCENARIO-READS-TOTAL
+wm: verified
+steps:
+  # Three stubs on one URL, distinguished only by where the flow is. This is the
+  # whole feature: the same call answers differently as a test walks through it,
+  # which is what lets one endpoint stand in for a service that has state.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000001-0000-4000-8000-000000000001",
+         "scenarioName":"scenario-walk-001",
+         "requiredScenarioState":"Started",
+         "newScenarioState":"ordered",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-walk-001/order"},
+         "response":{"status":200,"body":"no order yet"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000001-0000-4000-8000-000000000002",
+         "scenarioName":"scenario-walk-001",
+         "requiredScenarioState":"ordered",
+         "newScenarioState":"shipped",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-walk-001/order"},
+         "response":{"status":200,"body":"order placed"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000001-0000-4000-8000-000000000003",
+         "scenarioName":"scenario-walk-001",
+         "requiredScenarioState":"shipped",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-walk-001/order"},
+         "response":{"status":200,"body":"order shipped"}}
+    expect: {status: 201}
+
+  # Nothing has written a state document, and this still answers: an absent
+  # document reads as `Started` rather than as an error, so a scenario exists
+  # from the moment a stub names it and needs no setup call (SPEC §9.1).
+  - request: {port: mock, method: GET, path: /e2e/scenario-walk-001/order}
+    expect: {status: 200, body: "no order yet"}
+
+  # The same request, one state later. The stub that just served declared
+  # newScenarioState, so the flow moved before the response was written — a
+  # client that re-requests immediately sees the next step, never the one it
+  # already consumed.
+  - request: {port: mock, method: GET, path: /e2e/scenario-walk-001/order}
+    expect: {status: 200, body: "order placed"}
+
+  - request: {port: mock, method: GET, path: /e2e/scenario-walk-001/order}
+    expect: {status: 200, body: "order shipped"}
+
+  # A terminal stub sets no newScenarioState, so repeating the call repeats the
+  # answer. Without that the third stub would have to name a state no stub
+  # requires, and the flow would fall off the end of itself.
+  - request: {port: mock, method: GET, path: /e2e/scenario-walk-001/order}
+    expect: {status: 200, body: "order shipped"}
+
+  # The one sanctioned read on the request path, counted so an operator can see
+  # what scenarios cost them (SPEC §9.2, §14.1). It is not counted per candidate:
+  # all three stubs above are in one scenario, and the state behind them is
+  # fetched once per request and memoized.
+  - metricsprobe: {series: mockulus_scenario_reads_total, at_least: 1}

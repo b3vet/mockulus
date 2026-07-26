@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+id: scenario-reset-001
+behaviors: [B-ADMIN-SCENARIOS-RESET-POST]
+# The reset is deployment-wide — it is one of the calls SPEC §1 tells shared
+# runners never to make — so this case owns the deployment while it runs.
+# couchbase because the bug this asserts against is the store's: a state
+# document written milliseconds earlier is not in the persisted view a bulk
+# delete scans, and the memory driver has no such view to be behind (D-OPEN-11).
+requires: [couchbase, exclusive]
+# n/a: the listing this reads back carries a field WireMock's does not (see
+# scenario-admin-listing-001 and DECISIONS.md D-OPEN-13).
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000004-0000-4000-8000-000000000001",
+         "scenarioName":"scenario-reset-001-alpha",
+         "requiredScenarioState":"Started",
+         "newScenarioState":"alpha-moved",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-reset-001/alpha"},
+         "response":{"status":200,"body":"alpha at the start"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000004-0000-4000-8000-000000000002",
+         "scenarioName":"scenario-reset-001-alpha",
+         "requiredScenarioState":"alpha-moved",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-reset-001/alpha"},
+         "response":{"status":200,"body":"alpha has moved"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000004-0000-4000-8000-000000000003",
+         "scenarioName":"scenario-reset-001-beta",
+         "requiredScenarioState":"Started",
+         "newScenarioState":"beta-moved",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-reset-001/beta"},
+         "response":{"status":200,"body":"beta at the start"}}
+    expect: {status: 201}
+
+  # Two scenarios, both driven off their initial state, because the contract is
+  # "all scenarios" and a case with one cannot tell that apart from "the one I
+  # named".
+  - request: {port: mock, method: GET, path: /e2e/scenario-reset-001/alpha}
+    expect: {status: 200, body: "alpha at the start"}
+  - request: {port: mock, method: GET, path: /e2e/scenario-reset-001/beta}
+    expect: {status: 200, body: "beta at the start"}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: "scenario-reset-001-alpha", state: "alpha-moved"}
+        - path: scenarios
+          match: {name: "scenario-reset-001-beta", state: "beta-moved"}
+
+  # The reset follows the transitions with nothing in between, which is the
+  # window that matters: a bulk delete driven by a statement scans the persisted
+  # view, and a state document this recent is not in it yet, so the reset
+  # answers 200 with the state still there. Selecting the keys with the
+  # watermarked read instead — the one that either sees this pod's own writes or
+  # fails — is what makes the answer true (D-OPEN-11).
+  - admin: {method: POST, path: /__admin/scenarios/reset}
+    expect: {status: 200}
+
+  # Asserted immediately and without polling. A reset that needs a window to
+  # become true is a reset that lied to the caller, and a suite that resets and
+  # starts its next test has already made its first call by then.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: "scenario-reset-001-alpha", state: "Started"}
+        - path: scenarios
+          match: {name: "scenario-reset-001-beta", state: "Started"}
+
+  # And through the serving path, which is where a suite would find out. The
+  # scenarios are back at the start because their documents are gone, not
+  # because something wrote "Started" into them: an absent document reads as the
+  # initial state (SPEC §9.1, §9.4).
+  - request: {port: mock, method: GET, path: /e2e/scenario-reset-001/alpha}
+    expect: {status: 200, body: "alpha at the start"}
+  - request: {port: mock, method: GET, path: /e2e/scenario-reset-001/beta}
+    expect: {status: 200, body: "beta at the start"}

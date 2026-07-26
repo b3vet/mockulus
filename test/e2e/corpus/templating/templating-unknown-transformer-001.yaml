@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-unknown-transformer-001
+behaviors: [B-RESP-TRANSFORMERS, B-ERR-1004, B-DEV-DEVIATION-14]
+# Deviation #14. Pinned WireMock 3.13.2 registers this document with a 201 and
+# then serves the stub with the unknown transformer silently doing nothing —
+# probed directly — so there is no oracle answer to diff a 422 against.
+wm: n/a
+steps:
+  # `response-template` is the only transformer mockulus ships, and a name it
+  # does not recognise is a stub asking for behavior nobody will provide. Naming
+  # what is supported in the detail is the difference between "no" and a fix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000e-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-unknown-transformer-001/hooked"},
+         "response": {"status": 200,
+                      "body": "hi",
+                      "transformers": ["response-template", "body-changer"]}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1004
+            title: "Unknown transformer"
+            source: {pointer: "/response/transformers/1"}
+      body_regex: 'unknown transformer.*body-changer.*response-template'
+
+  # The pointer has to index the offending entry rather than the array, and a
+  # document with two bad names proves it does: both are reported, in one
+  # response, each against its own index. A 422 that stopped at the first would
+  # cost a CI user a second round trip to find the second.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000e-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-unknown-transformer-001/twice"},
+         "response": {"status": 200,
+                      "body": "hi",
+                      "transformers": ["body-changer", "header-adder"]}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1004
+            source: {pointer: "/response/transformers/0"}
+          - code: 1004
+            source: {pointer: "/response/transformers/1"}
+
+  # Rejected means nothing was written. The documents carried their own ids, so
+  # this asks the store rather than inferring absence from a non-match.
+  - admin: {method: GET, path: /__admin/mappings/1003000e-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/templating-unknown-transformer-001/hooked}
+    expect: {status: 404}

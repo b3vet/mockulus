@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-blocks-001
+behaviors: [B-TPL-IF-UNLESS-EACH-WITH-LOOKUP]
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000b-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/templating-blocks-001/profile"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "if=[{{#if request.query.tier}}{{request.query.tier}}{{else}}anonymous{{/if}}] unless=[{{#unless request.query.tier}}no-tier{{else}}tiered{{/unless}}] with=[{{#with request.query}}{{tier}}/{{region}}{{/with}}] lookup=[{{lookup request.query 'region'}}] each=[{{#each (jsonPath request.body '$.tags')}}{{@index}}={{this}};{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # One stub answering two requests is what makes the branches assertions
+  # rather than renderings: the same five constructs have to produce different
+  # text for the two, so a block helper that always took one branch fails on
+  # the other request even though it passed on this one.
+  #
+  # `#with` pushes a scope: `{{tier}}` inside it resolves against
+  # request.query, and would resolve to nothing at the top level. `lookup`
+  # reaches the same map by a key given as an argument, which is the form a
+  # stub needs when the key is itself computed.
+  - request:
+      method: POST
+      path: /e2e/templating-blocks-001/profile?tier=gold&region=eu
+      headers: {Content-Type: application/json}
+      body: '{"tags": ["red", "green", "blue"]}'
+    expect:
+      status: 200
+      body: "if=[gold] unless=[tiered] with=[gold/eu] lookup=[eu] each=[0=red;1=green;2=blue;]"
+
+  # The else branches, and an empty collection. `#each` over an empty list
+  # emits nothing at all rather than one blank iteration — the difference
+  # between a rendered JSON array that parses and one that carries a stray
+  # separator. `region` stays on the query so the two requests differ only in
+  # the field the branches read; dropping the query entirely would test
+  # something else.
+  - request:
+      method: POST
+      path: /e2e/templating-blocks-001/profile?region=eu
+      headers: {Content-Type: application/json}
+      body: '{"tags": []}'
+    expect:
+      status: 200
+      body: "if=[anonymous] unless=[no-tier] with=[/eu] lookup=[eu] each=[]"

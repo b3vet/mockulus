@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -28,13 +29,25 @@ func (h *Handler) journalDisabled(w http.ResponseWriter) {
 		"the request journal is disabled; set journal_enabled to record and verify requests"))
 }
 
+// journalReportedDisabled is the `requestJournalDisabled` flag WireMock puts on
+// every verification envelope, and a client library reads it before trusting a
+// count: a verify() against a deployment with no journal must fail loudly
+// rather than report zero calls. Reaching any of these writers means the
+// journal is on, so it is always false — the disabled path answers with an
+// error instead of an envelope (deviation #1).
+const journalReportedDisabled = false
+
 // serveEvent is a decoded journal entry, kept as raw JSON plus the fields
 // criteria are evaluated against.
 type serveEvent struct {
-	ID      string
-	Raw     json.RawMessage
-	Request eventRequest
-	Matched bool
+	ID  string
+	Raw json.RawMessage
+	// RequestRaw is the entry's `request` sub-document, untouched. Half the
+	// verification endpoints return serve events and half return the bare
+	// logged requests inside them, so both forms have to survive decoding.
+	RequestRaw json.RawMessage
+	Request    eventRequest
+	Matched    bool
 }
 
 type eventRequest struct {
@@ -46,30 +59,50 @@ type eventRequest struct {
 	Body    string         `json:"body"`
 }
 
-// listRequests returns journal entries newest-first.
+// listRequests returns journal entries newest-first, as serve events.
+//
+// `limit` is applied here rather than pushed into the store query, because
+// `meta.total` counts the window the query considered rather than the page it
+// returned — measured on pinned WireMock 3.13.2, where `?limit=1` against a
+// four-entry journal answers one request and `"total": 4`. A client reads that
+// field to decide whether it has seen everything, so a total that only ever
+// equalled the page size would tell it the journal is exhausted every time.
 func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	if h.journal == nil {
 		h.journalDisabled(w)
 		return
 	}
 
-	events, err := h.loadEvents(r, queryInt(r, "limit", h.cfg.JournalQueryScanLimit))
+	q, ok := h.journalBounds(w, r)
+	if !ok {
+		return
+	}
+	events, err := h.loadEvents(r.Context(), q)
 	if err != nil {
 		h.storeError(w, "query_journal", err)
 		return
 	}
+	total := len(events)
 
+	if limit := queryInt(r, "limit", total); limit < total {
+		events = events[:limit]
+	}
 	raws := make([]json.RawMessage, 0, len(events))
 	for _, e := range events {
 		raws = append(raws, e.Raw)
 	}
 	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
-		"requests": raws,
-		"meta":     map[string]any{"total": len(raws)},
+		"requests":               raws,
+		"meta":                   map[string]any{"total": total},
+		"requestJournalDisabled": journalReportedDisabled,
 	})
 }
 
 // getRequest returns one entry.
+//
+// An unknown id is a bare 404 with no body, which is the not-found a WireMock
+// client library already handles — the same reasoning as an unknown mapping id
+// (§5.1), and measured the same way on the pinned oracle.
 func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
 	if h.journal == nil {
 		h.journalDisabled(w)
@@ -77,8 +110,7 @@ func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	entry, err := h.journal.GetJournalEntry(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
-		wmcompat.WriteErrors(w, http.StatusNotFound,
-			wmcompat.NewError(wmcompat.CodeMalformed, "no journal entry with that id"))
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	if err != nil {
@@ -121,20 +153,29 @@ func (h *Handler) countRequests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{"count": len(matched)})
+	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
+		"count":                  len(matched),
+		"requestJournalDisabled": journalReportedDisabled,
+	})
 }
 
 // findRequests returns the recorded requests satisfying the criteria.
+//
+// The elements are the logged *requests*, not the serve events that hold them —
+// measured against pinned WireMock 3.13.2, where this endpoint and
+// `/requests/unmatched` both answer with bare request documents while
+// `GET /__admin/requests` answers with serve events. A client deserializes this
+// into typed LoggedRequests, so handing it a serve event would leave every
+// field it reads — url, method, headers — null.
 func (h *Handler) findRequests(w http.ResponseWriter, r *http.Request) {
 	matched, ok := h.matchRequests(w, r)
 	if !ok {
 		return
 	}
-	raws := make([]json.RawMessage, 0, len(matched))
-	for _, e := range matched {
-		raws = append(raws, e.Raw)
-	}
-	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{"requests": raws})
+	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
+		"requests":               loggedRequests(matched),
+		"requestJournalDisabled": journalReportedDisabled,
+	})
 }
 
 // removeRequests deletes the entries satisfying the criteria.
@@ -154,7 +195,10 @@ func (h *Handler) removeRequests(w http.ResponseWriter, r *http.Request) {
 	for _, e := range matched {
 		raws = append(raws, e.Raw)
 	}
-	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{"requests": raws})
+	// `serveEvents`, not `requests`: what was removed is reported in full,
+	// which is the one place WireMock answers a criteria query with the whole
+	// event rather than the request inside it.
+	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{"serveEvents": raws})
 }
 
 // unmatchedRequests returns the entries that matched no stub, which is the
@@ -164,22 +208,36 @@ func (h *Handler) unmatchedRequests(w http.ResponseWriter, r *http.Request) {
 		h.journalDisabled(w)
 		return
 	}
-	events, err := h.loadEvents(r, h.cfg.JournalQueryScanLimit)
+	q, ok := h.journalBounds(w, r)
+	if !ok {
+		return
+	}
+	events, err := h.loadEvents(r.Context(), q)
 	if err != nil {
 		h.storeError(w, "query_journal", err)
 		return
 	}
 
-	raws := make([]json.RawMessage, 0)
+	unmatched := make([]serveEvent, 0, len(events))
 	for _, e := range events {
 		if !e.Matched {
-			raws = append(raws, e.Raw)
+			unmatched = append(unmatched, e)
 		}
 	}
 	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
-		"requests": raws,
-		"meta":     map[string]any{"total": len(raws)},
+		"requests":               loggedRequests(unmatched),
+		"requestJournalDisabled": journalReportedDisabled,
 	})
+}
+
+// loggedRequests projects serve events down to the request documents inside
+// them, which is what the criteria endpoints return.
+func loggedRequests(events []serveEvent) []json.RawMessage {
+	out := make([]json.RawMessage, 0, len(events))
+	for _, e := range events {
+		out = append(out, e.RequestRaw)
+	}
+	return out
 }
 
 // matchRequests loads the scan window and applies the criteria in the body.
@@ -203,7 +261,11 @@ func (h *Handler) matchRequests(w http.ResponseWriter, r *http.Request) ([]serve
 		return nil, false
 	}
 
-	events, err := h.loadEvents(r, h.cfg.JournalQueryScanLimit)
+	q, ok := h.journalBounds(w, r)
+	if !ok {
+		return nil, false
+	}
+	events, err := h.loadEvents(r.Context(), q)
 	if err != nil {
 		h.storeError(w, "query_journal", err)
 		return nil, false
@@ -218,38 +280,64 @@ func (h *Handler) matchRequests(w http.ResponseWriter, r *http.Request) ([]serve
 	return matched, true
 }
 
-// loadEvents reads and decodes the newest entries within the scan window.
+// journalBounds reads the window a journal query runs over.
 //
-// The window is a guard rail, not a limitation of the query: the journal serves
-// functional tests, not analytics, and a count beyond it under-reports by
-// design (deviation #16).
-func (h *Handler) loadEvents(r *http.Request, limit int) ([]serveEvent, error) {
-	q := store.JournalQuery{Limit: limit}
-	if since := r.URL.Query().Get("since"); since != "" {
-		if t, err := time.Parse(time.RFC3339, since); err == nil {
-			q.Since = t
-		}
-	}
+// A `since` that is not a timestamp is rejected rather than dropped. Ignoring it
+// would answer a windowed verification with the entire journal, so a
+// `verify(exactly(1))` written to look at the last minute would silently count
+// every call the deployment has ever served — the accept-and-behave-differently
+// P3 exists to prevent. WireMock rejects it too, naming the same parameter.
+func (h *Handler) journalBounds(w http.ResponseWriter, r *http.Request) (store.JournalQuery, bool) {
+	// The scan limit is a guard rail, not a limitation of the query: the journal
+	// serves functional tests, not analytics, and a count beyond it under-reports
+	// by design (deviation #16).
+	q := store.JournalQuery{Limit: h.cfg.JournalQueryScanLimit}
 
-	entries, err := h.journal.QueryJournal(r.Context(), q)
+	since := r.URL.Query().Get("since")
+	if since == "" {
+		return q, true
+	}
+	t, err := time.Parse(time.RFC3339, since)
+	if err != nil {
+		wmcompat.WriteError(w, wmcompat.NewFieldError(wmcompat.CodeMalformed, "since",
+			since+" is not an ISO-8601 timestamp"))
+		return q, false
+	}
+	q.Since = t
+	return q, true
+}
+
+// loadEvents reads and decodes the entries the query selects.
+func (h *Handler) loadEvents(ctx context.Context, q store.JournalQuery) ([]serveEvent, error) {
+	entries, err := h.journal.QueryJournal(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 
 	out := make([]serveEvent, 0, len(entries))
 	for _, entry := range entries {
+		// The `request` sub-document is captured raw as well as decoded: the
+		// endpoints answering with logged requests hand it straight back, and
+		// re-serialising the decoded struct instead would drop every field
+		// criteria never look at — absoluteUrl, clientIp, the timestamps — from
+		// a document a client deserializes whole.
 		var decoded struct {
-			Request    eventRequest `json:"request"`
-			WasMatched bool         `json:"wasMatched"`
+			Request    json.RawMessage `json:"request"`
+			WasMatched bool            `json:"wasMatched"`
 		}
 		if err := json.Unmarshal(entry.Data, &decoded); err != nil {
 			continue
 		}
+		var request eventRequest
+		if err := json.Unmarshal(decoded.Request, &request); err != nil {
+			continue
+		}
 		out = append(out, serveEvent{
-			ID:      entry.ID,
-			Raw:     entry.Data,
-			Request: decoded.Request,
-			Matched: decoded.WasMatched,
+			ID:         entry.ID,
+			Raw:        entry.Data,
+			RequestRaw: decoded.Request,
+			Request:    request,
+			Matched:    decoded.WasMatched,
 		})
 	}
 	return out, nil

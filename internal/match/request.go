@@ -61,6 +61,12 @@ type ParsedRequest struct {
 	// scenarioStates memoizes scenario state reads so a request touching
 	// several stubs in one scenario reads its state once (SPEC §9.2).
 	scenarioStates map[string]string
+	// scenarioErr holds a state read that could not be answered. It is carried
+	// out of matching rather than returned from it because the gate is a
+	// predicate: without somewhere to put the failure, an unreachable store
+	// reads as "this stub does not match" and the request is answered from the
+	// wrong side of the state machine (SPEC §9.2).
+	scenarioErr error
 }
 
 var requestPool = sync.Pool{
@@ -116,6 +122,7 @@ func (r *ParsedRequest) Reset() {
 
 	clear(r.pathVars)
 	clear(r.scenarioStates)
+	r.scenarioErr = nil
 }
 
 // Body returns the raw request body.
@@ -212,6 +219,19 @@ func (r *ParsedRequest) ScenarioState(name string) (string, bool) {
 func (r *ParsedRequest) MemoizeScenarioState(name, state string) {
 	r.scenarioStates[name] = state
 }
+
+// FailScenarioRead records a state read the store could not answer.
+//
+// The first failure is kept: it is the one that made the request unanswerable,
+// and a later candidate's error says nothing new about why.
+func (r *ParsedRequest) FailScenarioRead(err error) {
+	if r.scenarioErr == nil {
+		r.scenarioErr = err
+	}
+}
+
+// ScenarioError returns the state read that failed, or nil.
+func (r *ParsedRequest) ScenarioError() error { return r.scenarioErr }
 
 // parseQuery extracts the query string from a request URI and parses it.
 // Values that fail to unescape are kept in raw form rather than dropped: a stub

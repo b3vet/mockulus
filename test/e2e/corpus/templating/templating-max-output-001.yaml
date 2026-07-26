@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-max-output-001
+behaviors: [B-CFG-TEMPLATE-MAX-OUTPUT-BYTES, B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL]
+# The cap is a mockulus safeguard; WireMock renders until it runs out of heap,
+# so there is no oracle answer for the refusal.
+wm: n/a
+# tiny-template is a 1 KiB output cap. The default is 10 MB, which a case could
+# only reach by sending a request large enough to be its own problem.
+config: tiny-template
+steps:
+  # The realistic runaway, and the reason the cap cannot be switched off: this
+  # stub is one line of nested {{#each}} and the size of what it renders is
+  # quadratic in a list the *caller* supplies. Whoever registered it did not
+  # choose how much memory it allocates — which makes an unbounded render a
+  # denial of service reachable by anyone who can reach the mock port.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030014-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/templating-max-output-001/grid"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "{{#each (jsonPath request.body '$.items')}}{{#each (jsonPath request.body '$.items')}}{{this}}{{/each}}{{/each}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Three items in, nine characters out. The control: the cap does not stand
+  # between a stub and an ordinary response, and the expansion is real.
+  - request:
+      method: POST
+      path: /e2e/templating-max-output-001/grid
+      headers: {Content-Type: application/json}
+      body: '{"items": ["a", "b", "c"]}'
+    expect:
+      status: 200
+      body: "abcabcabc"
+
+  # Thirty-four items — under 150 bytes on the wire — ask for 1156. The render
+  # is abandoned at the cap rather than completed and measured afterwards, so
+  # the bytes beyond it are never allocated, and the body names the setting that
+  # refused so an operator knows which number to raise.
+  - request:
+      method: POST
+      path: /e2e/templating-max-output-001/grid
+      headers: {Content-Type: application/json}
+      body: '{"items": ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z","0","1","2","3","4","5","6","7"]}'
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'template output exceeds template_max_output_bytes'
+
+  # Refusing is a render failure like any other, and counted like one.
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}
+
+  # The stub is not quarantined by having been driven over the cap: the next
+  # caller who asks for a size it can serve gets served. A cap that took the
+  # stub out of the snapshot would hand any client a way to disable a mock for
+  # everyone else on the deployment.
+  - request:
+      method: POST
+      path: /e2e/templating-max-output-001/grid
+      headers: {Content-Type: application/json}
+      body: '{"items": ["a", "b", "c"]}'
+    expect:
+      status: 200
+      body: "abcabcabc"

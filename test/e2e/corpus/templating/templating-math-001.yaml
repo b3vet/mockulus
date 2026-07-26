@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-math-001
+behaviors: [B-TPL-MATH-NUMBER]
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030005-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-math-001/arithmetic"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "sum={{math 7 '+' 5}} difference={{math 7 '-' 5}} product={{math 7 'x' 5}} star={{math 7 '*' 5}} quotient={{math 8 '/' 2}} modulo={{math 7 '%' 5}} nested={{math (math 2 'x' 3) '+' 4}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The body is pinned character for character rather than probed for digits,
+  # because arithmetic is where a template silently produces a plausible wrong
+  # answer: an operand order swapped in `-`, a `%` reading as percent-of, an
+  # `x` alias nobody wired up. Each operator is given operands whose result
+  # only that operator produces, so no two of them could be transposed and
+  # still render this line.
+  #
+  # `nested` is the subexpression form. A renderer that evaluated the inner
+  # call as text would concatenate rather than add, and 10 is what tells the
+  # two apart.
+  - request: {method: GET, path: /e2e/templating-math-001/arithmetic}
+    expect:
+      status: 200
+      body: "sum=12 difference=2 product=35 star=35 quotient=4 modulo=2 nested=10"

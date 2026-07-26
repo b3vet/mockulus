@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: Apache-2.0
+id: nearmiss-request-snapshot-001
+behaviors:
+  - B-ADMIN-NEAR-MISSES-REQUEST-POST
+  - B-DEV-DEVIATION-1
+  - B-ERR-1010
+# The default variant on purpose: this endpoint scores a supplied request
+# against the current snapshot with no journal involved, and the deployment a
+# team is standing in front of when a stub will not match is the one they never
+# turned journaling on in. Proving it there is the whole point.
+config: default
+# Ranking is over every stub in the deployment, so the case empties it and puts
+# it back.
+requires: [exclusive]
+# n/a: near-miss scoring is outside the strict-compat surface by §6.8, and the
+# journal-disabled error is deviation #1 — WireMock has no such state to answer
+# from, since its journal is always on.
+wm: n/a
+steps:
+  # The global reset first, on a deployment with no journal to clear: a reset
+  # that failed here would be broken in exactly the configuration mockulus
+  # ships with.
+  - admin: {method: POST, path: /__admin/reset}
+    expect: {status: 200}
+
+  # …and then the delete, because the reset spares persistent stubs and ranking
+  # needs the field empty rather than merely thinned.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000007-0000-4000-8000-000000000001",
+         "name":"orders-for-acme",
+         "request":{"method":"GET",
+                    "urlPath":"/e2e/nearmiss-request-snapshot-001/orders",
+                    "headers":{"X-Tenant":{"equalTo":"acme"}}},
+         "response":{"status":200,"body":"orders"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000007-0000-4000-8000-000000000002",
+         "name":"invoices-upload",
+         "request":{"method":"POST",
+                    "urlPath":"/e2e/nearmiss-request-snapshot-001/invoices"},
+         "response":{"status":201,"body":"invoices"}}
+    expect: {status: 201}
+
+  # No traffic anywhere above: the request being scored is described in the
+  # body, never sent. That is what makes this the endpoint you reach for while
+  # a stub is still refusing to match.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request
+      body: |
+        {"method":"GET",
+         "url":"/e2e/nearmiss-request-snapshot-001/orders?page=2",
+         "headers":{"X-Tenant":"wrong"}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - stubMapping:
+              id: "51000007-0000-4000-8000-000000000001"
+              name: orders-for-acme
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Tenant
+                  expected: 'equalTo "acme"'
+                  actual: wrong
+            # The request is echoed back in the shape a recorded one has, down
+            # to the query being an object per parameter, so a client can read
+            # both with the same type.
+            request:
+              method: GET
+              url: /e2e/nearmiss-request-snapshot-001/orders?page=2
+              headers: {X-Tenant: wrong}
+              queryParams:
+                page: {key: page, values: ["2"]}
+          - stubMapping:
+              id: "51000007-0000-4000-8000-000000000002"
+              name: invoices-upload
+
+  # Its sibling is the other way round — it ranks recorded requests against a
+  # supplied pattern — so it needs the journal and says so. Reported rather than
+  # answered empty: a verification helper that read nought calls from a
+  # deployment that records none would be reporting a fact it never checked.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: '{"method":"GET","urlPath":"/e2e/nearmiss-request-snapshot-001/orders"}'
+    expect:
+      status: 500
+      body_json_subset:
+        errors:
+          - code: 1010
+            title: Journal disabled
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect:
+      status: 500
+      body_json_subset:
+        errors:
+          - code: 1010
+
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}

@@ -29,6 +29,18 @@ func (s *Snapshot) NearMisses(req *ParsedRequest, limit int) []wmcompat.NearMiss
 	return wmcompat.TopNearMisses(all, limit)
 }
 
+// ScoreRequest measures one compiled request pattern against one request.
+//
+// The near-miss endpoints rank in two directions: `/near-misses/request` holds
+// the request still and varies the stub, `/near-misses/request-pattern` holds
+// the pattern still and varies the recorded request. It is the same
+// per-criterion measurement either way, so the second direction borrows this
+// one rather than growing a scorer of its own — two scorers would drift, and
+// the same endpoint family would then answer the same question two ways.
+func ScoreRequest(cs *stub.CompiledStub, req *ParsedRequest) wmcompat.NearMiss {
+	return scoreStub(cs, req)
+}
+
 // scoreStub measures one stub against the request, criterion by criterion.
 func scoreStub(cs *stub.CompiledStub, req *ParsedRequest) wmcompat.NearMiss {
 	sc := wmcompat.NewScorer()

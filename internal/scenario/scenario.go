@@ -84,6 +84,18 @@ func (c *Client) Transition(ctx context.Context, name, requiredState, newState s
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
+	if requiredState == "" {
+		// Nothing to lose a race against: a stub that declares no gate is
+		// asking for the scenario to end up here whatever it was, so the write
+		// is unconditional and last-write-wins (SPEC §9.3). Running it through
+		// the CAS loop would cost a second round trip on the request path and
+		// could still abandon the write after three lost races — an outcome
+		// "unconditional" does not have.
+		return c.store.UpsertScenario(ctx, name, store.ScenarioState{
+			State: newState, UpdatedAt: time.Now().UTC(),
+		})
+	}
+
 	for attempt := range casAttempts {
 		if attempt > 0 {
 			c.metrics.ScenarioCASRetries.Inc()
@@ -100,7 +112,7 @@ func (c *Client) Transition(ctx context.Context, name, requiredState, newState s
 			state = current.State
 		}
 
-		if requiredState != "" && state != requiredState {
+		if state != requiredState {
 			// Another pod transitioned after this request's match-time gate
 			// passed. WireMock has no cross-node race to have semantics for;
 			// ours is to skip the transition and count it.

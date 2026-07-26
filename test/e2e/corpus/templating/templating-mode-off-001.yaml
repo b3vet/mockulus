@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-mode-off-001
+behaviors: [B-CFG-TEMPLATING-ENABLED, B-ERR-1004]
+# `off` builds no engine at all, which WireMock has no equivalent of: its
+# transformer is always loaded and a stub can always ask for it.
+wm: n/a
+config: templating-off
+steps:
+  # The strongest form of the claim: the stub asks for the transformer by name,
+  # the way it would on any other instance, and gets its body back verbatim.
+  # Nothing is rejected — `off` is an operator's decision about the deployment,
+  # not a judgement about the stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030012-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-mode-off-001/mode"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Modes": "{{#if request.query.forced}}templating-on{{else}}templating-off{{/if}}"},
+                      "body": "tier={{request.query.tier}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The header is the sharper of the two assertions. Its branches are named
+  # after the modes that would have rendered it, so an instance that evaluated
+  # it would answer with exactly one of them and this one answers with the
+  # whole expression — the two outcomes differ by text present rather than by
+  # text missing, which a header that simply failed to interpolate could not
+  # tell apart.
+  - request:
+      method: GET
+      path: /e2e/templating-mode-off-001/mode?tier=gold&forced=1
+    expect:
+      status: 200
+      headers: {X-Modes: "{{#if request.query.forced}}templating-on{{else}}templating-off{{/if}}"}
+      body: "tier={{request.query.tier}}"
+
+  # There is no compiler to run, so the registration-time rejection of
+  # deviation #13 has nothing to reject with: a body that could not parse
+  # anywhere else registers here and is served as the text it is. That is the
+  # honest consequence of switching the engine off, and pinning it is what
+  # stops the mode from quietly becoming "compile anyway, render never".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030012-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-mode-off-001/unclosed"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "unclosed {{#if request.method}}here",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/templating-mode-off-001/unclosed}
+    expect:
+      status: 200
+      body: "unclosed {{#if request.method}}here"
+
+  # What the mode does not switch off: a transformer nobody can provide is
+  # still a 422. The name is validated against what mockulus implements, not
+  # against what this instance happens to have built, or `off` would turn the
+  # fail-loud contract into accept-and-ignore for every stub on the deployment.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030012-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-mode-off-001/hooked"},
+         "response": {"status": 200,
+                      "body": "hi",
+                      "transformers": ["body-changer"]}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1004
+            title: "Unknown transformer"
+            source: {pointer: "/response/transformers/0"}

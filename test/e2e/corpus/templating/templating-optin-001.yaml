@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-optin-001
+behaviors: [B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # Two stubs differing in one field, so what the field does is the only thing
+  # this case can be measuring. `transformers` is absent here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000d-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-optin-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "path={{request.path}} tier={{request.query.tier}}"}}
+    expect: {status: 201}
+
+  # The load-bearing half, and the reason the default mode is called wm-compat:
+  # a body carrying `{{` is served character for character unless the stub asked
+  # for the transformer. Re-derived from pinned WireMock 3.13.2, where the same
+  # document answers the same way — which is what makes a JSON fixture that
+  # happens to contain braces safe to mock without escaping anything.
+  - request:
+      method: GET
+      path: /e2e/templating-optin-001/literal?tier=gold
+    expect:
+      status: 200
+      body: "path={{request.path}} tier={{request.query.tier}}"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000d-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-optin-001/rendered"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "path={{request.path}} tier={{request.query.tier}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The opt-in taken. Both interpolations have to resolve: a `path` that came
+  # back as the literal would mean the transformer was ignored, and a `tier`
+  # that did would mean only part of the body reached the engine.
+  - request:
+      method: GET
+      path: /e2e/templating-optin-001/rendered?tier=gold
+    expect:
+      status: 200
+      body: "path=/e2e/templating-optin-001/rendered tier=gold"
+
+  # The same stub, a request without the parameter: an unresolved reference
+  # renders as nothing rather than as its own path expression or the word null,
+  # which is what lets a template stand in for an optional field.
+  - request: {method: GET, path: /e2e/templating-optin-001/rendered}
+    expect:
+      status: 200
+      body: "path=/e2e/templating-optin-001/rendered tier="

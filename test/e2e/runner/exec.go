@@ -162,29 +162,42 @@ const (
 	portAdmin = "admin"
 )
 
-func (e *Executor) httpStep(ctx context.Context, c *Case, dep *Deployment,
-	step Step, hs *HTTPStep, defaultPort string, res *Result) error {
+// target resolves the base URL a step addresses, from the replica its `pod:`
+// names and the listener its `port:` does.
+//
+// Both are resolved together because they are one question. `admin_on_mock_port`
+// means most admin paths answer on either listener, so a case that pinned a pod
+// but let the port default would still be talking to that pod — while a case
+// that got the pod wrong would silently address the load balancer and assert a
+// round-robin position. The port is validated rather than defaulted: an
+// unrecognised name would otherwise fall through to one of the two listeners and
+// pass, which is the accept-and-behave-differently the gate exists to prevent.
+func target(dep *Deployment, hs *HTTPStep, defaultPort string) (base, port string, err error) {
+	mock, admin, err := dep.Pod(hs.Pod)
+	if err != nil {
+		return "", "", err
+	}
 
-	port := defaultPort
+	port = defaultPort
 	if hs.Port != "" {
 		port = hs.Port
 	}
-	// Resolving the listener and the replica together is what makes `pod:` mean
-	// the same thing on both ports: pod 1's admin API and pod 1's mock port
-	// belong to one process, and a case watching a write land on a replica has
-	// to be able to name that replica on either.
-	mock, admin, err := dep.Pod(hs.Pod)
-	if err != nil {
-		return err
-	}
-	var base string
 	switch port {
 	case portMock:
-		base = mock
+		return mock, port, nil
 	case portAdmin:
-		base = admin
+		return admin, port, nil
 	default:
-		return fmt.Errorf("unknown port %q, want mock or admin", hs.Port)
+		return "", "", fmt.Errorf("port %q: want %q or %q", port, portMock, portAdmin)
+	}
+}
+
+func (e *Executor) httpStep(ctx context.Context, c *Case, dep *Deployment,
+	step Step, hs *HTTPStep, defaultPort string, res *Result) error {
+
+	base, port, err := target(dep, hs, defaultPort)
+	if err != nil {
+		return err
 	}
 
 	body, err := e.body(hs)

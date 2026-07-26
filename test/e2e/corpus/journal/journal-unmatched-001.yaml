@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+id: journal-unmatched-001
+behaviors: [B-ADMIN-REQUESTS-UNMATCHED-GET]
+config: journal
+# The filtered listing is deployment-wide, and what makes this case a filtering
+# claim is the position an entry holds in it — which is nothing to assert while
+# other cases are writing to the same journal.
+requires: [exclusive]
+# n/a: the entries are logged requests carrying a server-minted id, a client IP
+# and an absolute URL bearing the instance's own port, and the step that reads
+# them polls.
+wm: n/a
+steps:
+  # Entries are written off the request path, so a purge removes what has landed
+  # and a call recorded a moment earlier arrives after it. One call of this
+  # case's own, waited for, puts everything the run had queued on the far side
+  # of the delete — which is what makes the count below a claim about these two
+  # calls.
+  - request: {port: mock, method: GET, path: /e2e/journal-unmatched-001/settle}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {request: {url: /e2e/journal-unmatched-001/settle}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # The delay separates the two entries in time, so "newest first" below is
+  # ordering rather than a tie-break between two calls stamped the same
+  # millisecond.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"51000005-0000-4000-8000-000000000001",
+         "request":{"method":"GET","urlPath":"/e2e/journal-unmatched-001/served"},
+         "response":{"status":200,"body":"served","fixedDelayMilliseconds":25}}
+    expect: {status: 201}
+
+  # Unmatched first, matched second — deliberately. Both listings are newest
+  # first, so if `unmatched` were not filtering, the entry at position nought
+  # would be the matched call.
+  - request: {port: mock, method: GET, path: /e2e/journal-unmatched-001/no-such-stub}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/journal-unmatched-001/served}
+    expect: {status: 200, body: "served"}
+
+  # Both are on record, matched and unmatched alike (§11.1), and in that order.
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        meta: {total: 2}
+        requests:
+          - wasMatched: true
+            request: {url: /e2e/journal-unmatched-001/served}
+          - wasMatched: false
+            request: {url: /e2e/journal-unmatched-001/no-such-stub}
+
+  # And the filtered listing skips the newer of the two: this is the first place
+  # anyone looks when a test fails, and an unmatched listing that also carried
+  # the calls that worked would be no help at all.
+  - admin: {method: GET, path: /__admin/requests/unmatched}
+    expect:
+      status: 200
+      body_json_subset:
+        requestJournalDisabled: false
+        requests:
+          - url: /e2e/journal-unmatched-001/no-such-stub
+            method: GET
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}

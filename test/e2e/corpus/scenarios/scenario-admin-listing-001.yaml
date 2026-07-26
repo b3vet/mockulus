@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: scenario-admin-listing-001
+behaviors: [B-ADMIN-SCENARIOS-GET]
+# n/a: WireMock's listing carries a fourth field — the member stubs, under
+# `mappings` — that SPEC §5.1 does not name, so the two documents differ by more
+# than identity and a differential diff would report it every run. The divergence
+# is measured and recorded in DECISIONS.md (D-OPEN-13) rather than papered over
+# with a wm_ignore; what §5.1 does name is asserted here in full.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000002-0000-4000-8000-000000000001",
+         "scenarioName":"scenario-admin-listing-001",
+         "requiredScenarioState":"Started",
+         "newScenarioState":"checked-out",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-admin-listing-001/basket"},
+         "response":{"status":200,"body":"basket open"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000002-0000-4000-8000-000000000002",
+         "scenarioName":"scenario-admin-listing-001",
+         "requiredScenarioState":"checked-out",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-admin-listing-001/basket"},
+         "response":{"status":200,"body":"basket closed"}}
+    expect: {status: 201}
+
+  # By identity, never by position: this instance is shared with every other
+  # case on the lane, so the index of this scenario and the length of the list
+  # depend on which cases the run happened to select (test/e2e/README.md).
+  #
+  # possibleStates is derived from the stubs rather than stored, which is why a
+  # scenario nobody has driven yet already reports both of its states — and why
+  # the list is exactly the states some stub can act on, so a client reading it
+  # learns where the flow can be put, not where it has been.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match:
+            id: "scenario-admin-listing-001"
+            name: "scenario-admin-listing-001"
+            state: "Started"
+            possibleStates: ["Started", "checked-out"]
+
+  - request: {port: mock, method: GET, path: /e2e/scenario-admin-listing-001/basket}
+    expect: {status: 200, body: "basket open"}
+
+  # The stored half of the merge. Only the current state is persisted; the
+  # definition beside it is still the snapshot's, which is what keeps a scenario
+  # from outliving the stubs that gave it meaning.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match:
+            name: "scenario-admin-listing-001"
+            state: "checked-out"
+            possibleStates: ["Started", "checked-out"]

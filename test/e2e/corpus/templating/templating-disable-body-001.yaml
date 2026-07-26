@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-disable-body-001
+behaviors: [B-RESP-TRANSFORMERPARAMETERS]
+# n/a, and the reason is a measurement rather than a preference: pinned
+# WireMock 3.13.2 has no `disableBodyTemplating` parameter at all. Its
+# transformer reads one parameter, `disableBodyFileTemplating`, and that one
+# guards only the `bodyFileName` path — an inline body is templated either way,
+# probed with every plausible spelling. So WireMock renders this body and
+# mockulus does not, and there is nothing to diff. What is pinned below is what
+# mockulus does (SPEC §10.1), not what the oracle would answer.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030010-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-disable-body-001/report"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Rendered": "tier={{request.query.tier}}"},
+                      "body": "tier={{request.query.tier}}",
+                      "transformers": ["response-template"],
+                      "transformerParameters": {"disableBodyTemplating": true}}}
+    expect: {status: 201}
+
+  # The opt-out is scoped to the body, which is what its name says and what
+  # makes it useful: a stub whose payload is someone else's document — a
+  # Handlebars template, an Angular fixture, anything already carrying `{{` —
+  # can still template the headers around it.
+  #
+  # The two assertions are the same expression rendered and not rendered, one
+  # in a header and one in the body, so a build that dropped the scoping in
+  # either direction fails on one of them.
+  - request:
+      method: GET
+      path: /e2e/templating-disable-body-001/report?tier=gold
+    expect:
+      status: 200
+      headers: {X-Rendered: "tier=gold"}
+      body: "tier={{request.query.tier}}"

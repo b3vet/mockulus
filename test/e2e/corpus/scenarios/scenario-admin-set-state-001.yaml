@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: scenario-admin-set-state-001
+behaviors:
+  - B-ADMIN-SCENARIOS-NAME-STATE-PUT
+  - B-ERR-1031
+# n/a: the statuses are §5.1's and the codes are Appendix B's. WireMock answers
+# an unsupported target state 422 with its own code 11, so the rejected halves
+# of this case cannot be diffed against it; the measurement is recorded in
+# DECISIONS.md (D-OPEN-13) rather than left as an unexplained gap.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000003-0000-4000-8000-000000000001",
+         "scenarioName":"scenario-admin-set-state-001",
+         "requiredScenarioState":"Started",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-admin-set-state-001/ticket"},
+         "response":{"status":200,"body":"ticket open"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"49000003-0000-4000-8000-000000000002",
+         "scenarioName":"scenario-admin-set-state-001",
+         "requiredScenarioState":"escalated",
+         "request":{"method":"GET","urlPath":"/e2e/scenario-admin-set-state-001/ticket"},
+         "response":{"status":200,"body":"ticket escalated"}}
+    expect: {status: 201}
+
+  # A scenario exists because a stub names it, so a name no stub mentions is not
+  # an empty scenario waiting to be filled — it is a typo, and answering 200 to
+  # it would leave a suite driving a flow that does not exist and blaming the
+  # step that finally disagreed.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/scenario-admin-set-state-001-typo/state
+      body: '{"state":"escalated"}'
+    expect:
+      status: 404
+      body_json_subset:
+        errors:
+          - code: 1031
+            title: "Invalid scenario"
+
+  # A state no stub in this scenario can act on is refused for the same reason,
+  # and the pointer names the field that carried it. Accepting it would park the
+  # flow somewhere every subsequent request falls through to 404 — the stub is
+  # fine, the scenario is fine, and nothing matches (P3).
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/scenario-admin-set-state-001/state
+      body: '{"state":"vaporised"}'
+    expect:
+      status: 400
+      body_json_subset:
+        errors:
+          - code: 1031
+            source: {pointer: "/state"}
+
+  # Nothing the refused writes described took effect.
+  - request: {port: mock, method: GET, path: /e2e/scenario-admin-set-state-001/ticket}
+    expect: {status: 200, body: "ticket open"}
+
+  # The supported spelling. Setting state directly is how a suite starts a test
+  # from the middle of a flow instead of replaying every call that leads there.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/scenario-admin-set-state-001/state
+      body: '{"state":"escalated"}'
+    expect: {status: 200}
+
+  # Asserted through the serving path, not through the listing: what the write
+  # has to change is which stub matches, and a listing that agreed while the
+  # request path did not would be the more expensive bug of the two.
+  - request: {port: mock, method: GET, path: /e2e/scenario-admin-set-state-001/ticket}
+    expect: {status: 200, body: "ticket escalated"}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: "scenario-admin-set-state-001", state: "escalated"}

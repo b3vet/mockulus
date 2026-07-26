@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-base64-urlencode-001
+behaviors: [B-TPL-BASE64-URLENCODE]
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030007-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-base64-urlencode-001/codecs"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "encoded={{base64 'mockulus'}} pad1={{base64 'a'}} pad2={{base64 'ab'}} decoded={{base64 'aGVsbG8=' decode=true}} escaped={{urlEncode 'a b/c'}} unescaped={{urlEncode 'a%20b%2Fc' decode=true}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Padding is the whole reason the two short inputs are here. One byte is the
+  # only remainder that produces "==" and two bytes the only one that produces
+  # a single "=", so between them an encoder built on the unpadded variant is
+  # caught: it renders a body right in every character that a Java or
+  # JavaScript decoder still rejects.
+  #
+  # `escaped` pins the query-string flavour of percent-encoding rather than
+  # the path flavour: a space becomes "+" and a slash becomes "%2F". An
+  # encoder that left "/" alone, as a path encoder does, produces a plausible
+  # string that breaks the moment it is used as a query parameter value.
+  #
+  # Both decode directions are asserted against the same round trip, so a
+  # decode option wired to the encoder — or ignored altogether — cannot pass.
+  - request: {method: GET, path: /e2e/templating-base64-urlencode-001/codecs}
+    expect:
+      status: 200
+      body: "encoded=bW9ja3VsdXM= pad1=YQ== pad2=YWI= decoded=hello escaped=a+b%2Fc unescaped=a b/c"

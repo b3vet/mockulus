@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-strings-aliases-001
+behaviors: [B-TPL-TRIM-LOWER-LOWERCASE-UPPER-UPPERCASE-SPLIT-JOIN-CONCAT-SUBST]
+# Five names in the §10.3 row have no counterpart in pinned WireMock, which
+# registers `lower`/`upper` but not their long spellings, and none of `split`,
+# `concat` or `default`. Replaying this case against the oracle would compare
+# our rendering against its "could not find helper" 500, so the shared half of
+# the row carries the differential verification (templating-strings-001) and
+# this half is pinned from the spec.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030009-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-strings-aliases-001/text"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "lowercase={{lowercase 'MiXeD'}} uppercase={{uppercase 'MiXeD'}} split={{join (split 'a,b,c' ',') '|'}} concat={{concat 'ab' 'cd' 12}} fallback=[{{default '' 'fallback'}}] kept={{default 'set' 'fallback'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The long spellings must agree with the short ones character for character,
+  # or a stub ported between the two names changes meaning silently.
+  #
+  # `split` is asserted through `join` with a different separator, so the
+  # assertion sees the list structure rather than a string that merely
+  # survived: a split that returned its input whole would render "a,b,c".
+  # `concat` is given a number among its strings, because a stub composing an
+  # id out of a prefix and a counter is the reason it exists. The two
+  # `default` renderings are the whole contract in one line — the empty string
+  # is falsy and takes the fallback, a set value keeps its own.
+  - request: {method: GET, path: /e2e/templating-strings-aliases-001/text}
+    expect:
+      status: 200
+      body: "lowercase=mixed uppercase=MIXED split=a|b|c concat=abcd12 fallback=[fallback] kept=set"

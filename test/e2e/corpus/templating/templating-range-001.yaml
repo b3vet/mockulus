@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-range-001
+behaviors: [B-TPL-RANGE]
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1003000a-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-range-001/counted"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "each=[{{#each (range 1 4)}}{{this}}{{#unless @last}},{{/unless}}{{/each}}] indexed=[{{#each (range 5 7)}}{{@index}}:{{this}} {{/each}}] single=[{{#each (range 0 0)}}{{this}}{{/each}}] size={{size (range 1 5)}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Both bounds are inclusive, which is the one thing about `range` a stub
+  # author gets wrong from memory. `each` renders four elements from `1 4` and
+  # `single` renders one from `0 0` — an exclusive upper bound produces three
+  # and none, and the empty list is the failure that silently drops a row from
+  # a generated collection.
+  #
+  # `indexed` separates the element from its position, because a range that
+  # yielded indices instead of values renders "0:0 1:1 2:2" and reads
+  # perfectly plausible until someone asks for a range that does not start at
+  # zero. `size` is the same list seen as a length, so a range built lazily
+  # and consumed twice cannot pass by producing its elements only once.
+  - request: {method: GET, path: /e2e/templating-range-001/counted}
+    expect:
+      status: 200
+      body: "each=[1,2,3,4] indexed=[0:5 1:6 2:7 ] single=[0] size=5"

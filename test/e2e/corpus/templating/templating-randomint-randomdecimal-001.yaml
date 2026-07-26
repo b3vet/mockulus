@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-randomint-randomdecimal-001
+behaviors: [B-TPL-RANDOMINT-RANDOMDECIMAL]
+# Random numbers have no differential oracle; what is pinned is that the
+# declared bounds hold and that successive draws differ.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030004-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-randomint-randomdecimal-001/numbers"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "bounded={{randomInt lower=100 upper=109}} spread=[{{#each (range 1 40)}}{{randomInt lower=0 upper=2}}{{/each}}] decimal={{randomDecimal lower=2.0 upper=3.0}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `bounded` is three characters wide only while the bounds are honoured. A
+  # helper that ignored them draws from the whole int range and renders a
+  # number of any length; one that read them as a count rather than as
+  # endpoints renders a small one. Both fail here, and neither would fail an
+  # assertion that only required digits.
+  #
+  # The narrow band 100..109 is deliberate: whether the upper bound is
+  # inclusive is a difference between implementations, and pinning a value at
+  # the boundary would assert the reading rather than the bound. Every value
+  # either reading can produce is three digits beginning "10".
+  #
+  # `spread` is what catches a generator seeded once and never advanced, or
+  # one memoised per compiled template: forty draws from a three-value band
+  # must change at least once, and the regex requires two adjacent draws to
+  # differ. A constant cannot produce that pair at all.
+  #
+  # `decimal` stays inside its own band, and stays a decimal: a helper that
+  # rounded to an integer, or that rendered the double in exponent form,
+  # fails a body anchored this way.
+  - request: {method: GET, path: /e2e/templating-randomint-randomdecimal-001/numbers}
+    expect:
+      status: 200
+      body_regex: '^bounded=10\d spread=\[[0-2]*(01|02|10|12|20|21)[0-2]*\] decimal=2\.\d+$'

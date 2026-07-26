@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+id: templating-randomvalue-001
+behaviors: [B-TPL-RANDOMVALUE]
+# A random value has no differential oracle; what is pinned is the shape each
+# type and length must produce, recorded from pinned WireMock 3.13.2.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "10030002-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/templating-randomvalue-001/values"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "uuid={{randomValue type='UUID'}} hex={{randomValue type='HEXADECIMAL' length=10}} digits={{randomValue type='NUMERIC' length=6}} letters={{randomValue type='ALPHABETIC' length=8}} shout={{randomValue type='ALPHABETIC' length=8 uppercase=true}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Five draws with five different contracts in one body, which is what makes
+  # a constant-returning "random" helper impossible to pass with: no single
+  # string is at once a UUID, ten hex characters, six digits and eight
+  # letters.
+  #
+  # Each length is pinned exactly rather than as a minimum, because a value
+  # whose length is nearly right is the failure that reaches production — a
+  # six-digit account number rendered with seven digits still looks like an
+  # account number. `digits` is the type check that bites: an alphanumeric
+  # generator answering a NUMERIC request passes any assertion looser than an
+  # alphabet. The UUID is asserted with its version and variant nibbles, so a
+  # random 32 hex characters with dashes in the right places is still a
+  # failure. `shout` is the same request as `letters` plus `uppercase`, so the
+  # option has to change the answer.
+  - request: {method: GET, path: /e2e/templating-randomvalue-001/values}
+    expect:
+      status: 200
+      body_regex: '^uuid=[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12} hex=[0-9a-f]{10} digits=[0-9]{6} letters=[A-Za-z]{8} shout=[A-Z]{8}$'

@@ -73,10 +73,18 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 			// WireMock renders the error text into the response body rather
 			// than failing the request, so a template bug is visible to
 			// whoever is looking at the response (SPEC §10.4).
+			//
+			// `text/plain` unadorned is WireMock 3.13.2's own spelling here,
+			// re-derived by probe — and not the `text/plain;charset=UTF-8` of
+			// the unmatched 404, which is a different response it spells
+			// differently. The message inside is ours (deviation #18's line:
+			// shape and Content-Type are compat surface, diagnostic text is
+			// not), and it says what failed rather than only that something
+			// did.
 			if opts.OnRenderError != nil {
 				opts.OnRenderError()
 			}
-			w.Header().Set("Content-Type", "text/plain;charset=UTF-8")
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte("Template render error: " + err.Error()))
 			return http.StatusInternalServerError
