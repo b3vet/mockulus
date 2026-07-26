@@ -33,6 +33,35 @@ func (e *Evaluator) Select(doc any) ([]any, bool) {
 	return result.Values(), result.Found
 }
 
+// MatchBytes and SelectBytes are the same two forms answered from the body as
+// it arrived, for the paths scan.go can walk. They are what a matcher reaches
+// for first: the decoded document costs a tree per request and these cost none
+// (D-OPEN-14). `handled` false means this path is not one of them and the
+// caller must decode after all.
+//
+// A body that is not JSON comes back handled and unmatched rather than
+// unhandled. That is the answer either way (SPEC §6.7), and handing it to the
+// decoder only to watch it fail again would be work for the same result.
+
+// MatchBytes implements the bare form over the raw document.
+func (e *Evaluator) MatchBytes(raw []byte) (matched, handled bool) {
+	if !e.path.Scannable() {
+		return false, false
+	}
+	matched, _ = e.path.MatchBytes(raw)
+	return matched, true
+}
+
+// SelectBytes implements the nested form over the raw document. A scanned path
+// is definite, so there is at most one node and no slice is needed to carry it.
+func (e *Evaluator) SelectBytes(raw []byte) (node any, found, handled bool) {
+	if !e.path.Scannable() {
+		return nil, false, false
+	}
+	result, _ := e.path.EvalBytes(raw)
+	return result.Node, result.Found, true
+}
+
 // Source returns the expression as written.
 func (e *Evaluator) Source() string { return e.path.Source }
 

@@ -204,6 +204,11 @@ func (b *Body) Values() []string {
 // Bytes implements Subject.
 func (b *Body) Bytes() []byte { return b.raw }
 
+// RawJSON implements the raw-document capability. A body's bytes ARE the
+// document, so a criterion that can read them — a definite JSONPath — never has
+// to have the tree below built for it (D-OPEN-14).
+func (b *Body) RawJSON() []byte { return b.raw }
+
 // JSON implements Subject, parsing at most once per request.
 func (b *Body) JSON() (any, bool) {
 	if b.state == jsonUnparsed {
@@ -266,4 +271,7 @@ var (
 
 	_ absenceStrict = (*KeyValues)(nil)
 	_ repeatable    = (*KeyValues)(nil)
+	// Only a body: a Document is parsed eagerly by whoever built it, so scanning
+	// its bytes again would be work for an answer it already holds.
+	_ rawJSON = (*Body)(nil)
 )

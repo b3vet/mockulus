@@ -4,6 +4,7 @@ package jsonpath
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -13,6 +14,12 @@ import (
 // document from whoever sent the request. So there are two targets. Neither
 // asserts what a path selects — the corpus and the differential suite pin that
 // — only that a hostile input cannot panic, hang, or allocate without bound.
+//
+// The third target is a different kind. Since D-OPEN-14 there are two
+// evaluators, and FuzzScanEquivalence drives both halves of the surface at once
+// to find a document they answer differently about. `go test -fuzz` has found
+// real bugs in this project before, and an equivalence is exactly the property
+// it is best at breaking.
 
 // evalBudget bounds one compile-plus-evaluate. Compilation happens on an admin
 // call and evaluation on the request path, where the budget matters most: a
@@ -170,6 +177,64 @@ func FuzzEval(f *testing.F) {
 				t.Fatalf("evaluating %q over %d bytes took %s, over the %s budget",
 					p.Source, len(body), took, evalBudget)
 			}
+		}
+	})
+}
+
+// FuzzScanEquivalence fuzzes the expression and the document together, and
+// asserts the property the scanning path exists under: for a path it takes, it
+// answers exactly what evaluating the decoded document answers — the same node,
+// of the same Go type, and the same verdict about whether the document is JSON
+// at all. A disagreement here is a wrong answer served to a client, not a
+// crash, which is why it is worth a target of its own.
+func FuzzScanEquivalence(f *testing.F) {
+	for _, expr := range pathSeeds {
+		for _, body := range scanBodies {
+			f.Add(expr, body)
+		}
+	}
+
+	f.Fuzz(func(t *testing.T, expr, body string) {
+		path, err := Compile(expr)
+		if err != nil {
+			return
+		}
+		raw := []byte(body)
+
+		start := time.Now()
+		scanned, ok := path.EvalBytes(raw)
+		if took := time.Since(start); took > evalBudget {
+			t.Fatalf("scanning %q over %d bytes took %s, over the %s budget",
+				expr, len(body), took, evalBudget)
+		}
+
+		if !path.Scannable() {
+			if ok {
+				t.Fatalf("%q is not scannable, but EvalBytes answered", expr)
+			}
+			return
+		}
+
+		var tree any
+		decoded := json.Unmarshal(raw, &tree) == nil
+		if ok != decoded {
+			t.Fatalf("%q over %q: the scan returned ok=%v, encoding/json decoded=%v",
+				expr, body, ok, decoded)
+		}
+		if !ok {
+			return
+		}
+
+		if want := path.Eval(tree); !reflect.DeepEqual(scanned, want) {
+			t.Fatalf("%q over %q: scanned %#v, the tree gives %#v", expr, body, scanned, want)
+		}
+
+		matched, mok := path.MatchBytes(raw)
+		if !mok {
+			t.Fatalf("%q over %q: EvalBytes answered but MatchBytes did not", expr, body)
+		}
+		if want := path.Eval(tree).Matches(); matched != want {
+			t.Fatalf("%q over %q: MatchBytes = %v, the tree matches %v", expr, body, matched, want)
 		}
 	})
 }
