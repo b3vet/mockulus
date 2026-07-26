@@ -205,3 +205,82 @@ it, and entering the hijack path for it costs a connection close.
 hijack path.
 
 **To settle:** probe pinned WireMock with `"statusMessage": ""` and match it.
+
+---
+
+## D-OPEN-10 — Cross-pod read consistency on the rebuild path
+
+**Status:** same-pod writes are consistent, peer writes are not · **Owner:** M6 ·
+**Reversible:** yes
+
+This one was measured, not reasoned about, and it is the most consequential
+entry in this file.
+
+A KV range scan answers from the vbucket's **persisted** view. A mapping the
+cluster has acknowledged from memory is therefore absent from the scan until the
+disk queue catches up — and the scan reports success, so `LoadAll` returns a
+short answer with no error and the builder installs it. Under eight-way write
+pressure, 27 of 40 scans missed a document that had just been written; in the
+shape a corpus case hit, 3 of 30 reloads returned **zero rows and no error**
+against a keyspace holding one stub, which installs an empty snapshot over a
+populated one.
+
+The driver now carries this pod's own mutation tokens into the read
+(`ConsistentWith`), which closes it for writes this pod made: 0 of 40 and 0 of
+30 on the same probes.
+
+**What is still open is the other pod's write.** `LoadAll` reads the epoch
+*before* the scan and stamps the snapshot with it, so a pod rebuilding because a
+peer bumped the epoch can install a view predating that peer's write, stamp it
+with the new epoch, and read as converged. The stub is then missing on that pod
+until `resync_interval` (5 min) rather than `sync_interval` (1 s). Measured on a
+second store handle: 2 misses in about 60 immediate reads, widest window 117 ms.
+This is a T3 (multi-pod) property; single-pod deployments are unaffected.
+
+It matters because §8's propagation bound is the thing the whole architecture is
+sold on, and 5 minutes is not 1 second.
+
+**Options:**
+
+- **(a) Accept and document.** State the real worst case in SPEC §8: a remote
+  write converges within `resync_interval`, not `sync_interval`. Costs nothing,
+  and makes the spec true — but it weakens the headline guarantee.
+- **(b) Publish the causing write's mutation token.** Have `BumpEpoch` record
+  the vbucket / partition-uuid / seqno in a meta document, so any pod folds it
+  into its own scan requirement. One extra KV upsert per admin write and one
+  extra KV get per reload; cross-pod reads become as strong as same-pod ones,
+  and the `sync_interval` bound holds as written. **Recommended.**
+- **(c) Always bulk-load through N1QL at `RequestPlus`.** Cross-pod consistent
+  by construction, but it costs the primary index and the scan throughput the
+  range-scan path exists for (§7.2).
+
+**To settle:** (b) is a contained change to `internal/store/couchbase` and the
+epoch document's shape. The probe that measures it is the second-handle
+immediate-read loop; whatever lands should be checked against it rather than
+argued.
+
+---
+
+## D-OPEN-11 — `deleteWhere` still backs scenarios and the journal
+
+**Status:** mappings fixed, two callers left · **Owner:** M4 / M5 ·
+**Reversible:** no reason not to
+
+The `DELETE FROM` statement behind bulk removal is planned as a KV sequential
+scan of the same persisted view as D-OPEN-10, so a document written milliseconds
+earlier is invisible to it and is **never deleted** — while the caller is told
+200. Measured 7 times in 20 against an idle single node. Unlike the read case
+this is permanent rather than transient: the document really exists, so every
+later reload keeps serving it.
+
+For mappings this is fixed: `DELETE /__admin/mappings` and
+`POST /__admin/mappings/reset` now select keys with the watermarked bulk read
+and remove by key, which also gives each removal a mutation token for the reload
+that follows. 7 in 20 became 0 in 20.
+
+`ClearJournal` and `DeleteAllScenarios` still call the old path, so
+`POST /__admin/scenarios/reset` can leave state behind. Neither collection is
+read by a bulk scan, so neither can resurrect a stub — the blast radius is a
+reset that silently does not reset.
+
+**To change:** the same `removeKeys` treatment, applied when M4 and M5 land.

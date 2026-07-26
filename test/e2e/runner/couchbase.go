@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -383,7 +384,12 @@ const laneWait = 5 * time.Minute
 
 // containerName ties a container to the run that owns it, which is what lets a
 // later run tell an abandoned container from a live one.
-func containerName(pid int) string { return fmt.Sprintf("mockulus-e2e-cb-%d", pid) }
+// containerPrefix names the run's Couchbase container. The owning process id is
+// the suffix, which is how a later run tells an abandoned container from one
+// still in use.
+const containerPrefix = "mockulus-e2e-cb-"
+
+func containerName(pid int) string { return containerPrefix + strconv.Itoa(pid) }
 
 // claimLane takes sole ownership of the Couchbase lane and starts the run's
 // container in it.
@@ -451,17 +457,31 @@ func laneHolder(ctx context.Context) string {
 }
 
 // runnerAlive reports whether the run that started a container still exists.
-// A recycled process id can only make this answer "yes" for a container nobody
-// owns, which costs a wait and the message that says how to clear it — the
-// error direction that does not destroy another run's work.
+//
+// Erring towards "yes" is the safe direction — it costs a wait and a message
+// saying how to clear the lane, rather than destroying another run's work. But
+// it is only safe while "yes" is *rare* when wrong, and one case makes it
+// permanent: a container named for a process id that will never exit holds the
+// lane for every future run on the machine. Process 1 is the standard way to
+// get there, since it is init, always exists, and always answers signal 0 — a
+// container someone names mockulus-e2e-cb-1 by hand, as a probe, blocks the
+// suite until a human finds it.
+//
+// So the id has to plausibly belong to a runner, not merely exist. Process 1
+// never is one; nor is anything whose command has nothing to do with Go.
 func runnerAlive(container string) bool {
-	pid, err := strconv.Atoi(strings.TrimPrefix(container, "mockulus-e2e-cb-"))
+	pid, err := strconv.Atoi(strings.TrimPrefix(container, containerPrefix))
 	if err != nil || pid <= 0 {
 		return true
 	}
 	if pid == os.Getpid() {
 		return true
 	}
+	// init adopts orphans and outlives everything; it is never the runner.
+	if pid == 1 {
+		return false
+	}
+
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return false
@@ -469,7 +489,31 @@ func runnerAlive(container string) bool {
 	// Signal 0 checks for existence without delivering anything: nil means the
 	// process is there, EPERM means it is there and owned by somebody else.
 	err = process.Signal(syscall.Signal(0))
-	return err == nil || errors.Is(err, os.ErrPermission)
+	if err != nil && !errors.Is(err, os.ErrPermission) {
+		return false
+	}
+	return looksLikeRunner(pid)
+}
+
+// looksLikeRunner reports whether a live process id plausibly belongs to an
+// E2E run. A recycled id usually lands on something unrelated, and that is the
+// case worth catching: the lane is held by a container whose owner is long gone
+// and whose number now belongs to a shell.
+//
+// Unrecognisable answers count as a runner, keeping the conservative direction
+// wherever this cannot tell.
+func looksLikeRunner(pid int) bool {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	if err != nil {
+		return true
+	}
+	comm := strings.TrimSpace(string(out))
+	if comm == "" {
+		return true
+	}
+	base := filepath.Base(comm)
+	return strings.Contains(base, "runner") || strings.HasPrefix(base, "go") ||
+		strings.Contains(base, "e2e") || strings.Contains(base, "exe")
 }
 
 // requireDocker reports whether a container lane can run at all.

@@ -133,7 +133,7 @@ func (s *Store) DeleteJournalEntry(ctx context.Context, id string) error {
 
 // ClearJournal removes every entry.
 func (s *Store) ClearJournal(ctx context.Context) error {
-	return s.deleteWhere(ctx, collJournal, "")
+	return s.deleteWhere(ctx, collJournal)
 }
 
 // decodeInto is a small helper so callers do not repeat the unmarshal dance.
