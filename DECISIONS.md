@@ -565,3 +565,34 @@ handler sees it, so the name reaching `RejectFileName` is already clean.
 Nothing escapes — `..` climbing is refused by the mux well before the handler,
 and no driver joins a name onto a filesystem path. The only cost is that the
 caller's spelling and the stored name differ for this one shape. Left as is.
+
+---
+
+## D-OPEN-16 — A local write requirement outlives the vbucket it names
+
+**Status:** open · **Owner:** post-v1 · **Reversible:** yes
+
+Pre-existing, and surfaced while verifying D-OPEN-10 rather than introduced by
+it. A pod's own mutation token is cleared only by a *successful* scan that
+observed it (`writes.observed`). If the vbucket it names fails over before the
+next reload, the requirement can never be satisfied on the surviving branch —
+and the pod will not stop asking for it until it happens to write to that
+vbucket again and replace the token.
+
+Every reload fails in the meantime. That is the loud direction, not the silent
+one: the previous snapshot keeps serving, the failures are counted and logged,
+and the poller retries (SPEC §4.6). But it is unbounded in time, and it clears
+itself by luck rather than by design.
+
+The published half already handles this — the fallback introduced with
+D-OPEN-10 recognises the server's `ErrMutationTokenOutdated` verdict and drops
+the impossible requirement. The local half has no equivalent because it never
+needed one before.
+
+**To change:** apply the same recognition to a scan that fails on a *local*
+requirement — a vb-uuid mismatch means that history is gone, so the token
+naming it is worthless and should be dropped rather than retried.
+
+**To settle:** it needs a failover to reproduce, which the single-node test lane
+cannot stage. A multi-node topology, or an injected `ErrMutationTokenOutdated`
+at the driver seam, would pin it.
