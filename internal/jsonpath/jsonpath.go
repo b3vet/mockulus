@@ -32,6 +32,10 @@ type Path struct {
 	// definite records that every step selects at most one node, which decides
 	// whether evaluation returns a node or a list of hits.
 	definite bool
+	// scannable records that the path can also be evaluated by scanning the
+	// undecoded document (scan.go), which is definite minus the one step shape
+	// a single forward pass cannot answer.
+	scannable bool
 }
 
 // Definite reports whether the path selects at most one node.
@@ -185,7 +189,20 @@ func Compile(expr string) (*Path, error) {
 			return nil, fmt.Errorf("unexpected %q in %q", rest, expr)
 		}
 	}
+
+	p.scannable = p.definite && !p.countsFromTheEnd()
 	return p, nil
+}
+
+// countsFromTheEnd reports a path with a negative index in it, which is the one
+// definite shape the byte scanner declines — see Path.Scannable.
+func (p *Path) countsFromTheEnd() bool {
+	for _, st := range p.steps {
+		if st.kind == stepIndex && st.index < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // readName reads a bare child name up to the next separator.

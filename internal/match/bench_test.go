@@ -260,6 +260,44 @@ func TestHotPathAllocBudget(t *testing.T) {
 	}
 }
 
+// TestJSONPathBodyAllocBudget holds the ceiling D-OPEN-14 bought. A
+// `matchesJsonPath` body criterion used to decode the whole body into a tree to
+// read one leaf — 29 allocations — and now scans the raw bytes instead. What is
+// left is the seam above the evaluation: materializing the selected node as an
+// `any`, and the subject its inner matcher reads.
+//
+// The number is here rather than only in BASELINE.md because losing it would
+// not fail anything else: the scanner is reached by two type assertions, so a
+// subject or an evaluator that stopped offering the capability would quietly go
+// back to decoding a tree per request and every test would still pass.
+func TestJSONPathBodyAllocBudget(t *testing.T) {
+	const budget = 4
+
+	result := testing.Benchmark(func(b *testing.B) {
+		snap := mixedSnapshot(b, 1000)
+		req := httptest.NewRequest("POST", jsonPath(509), nil)
+		body := []byte(benchJSONBody)
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			pr := AcquireRequest(req, body)
+			cs := snap.Match(pr, nil, nil)
+			ReleaseRequest(pr)
+			if cs == nil {
+				b.Fatal("expected a match")
+			}
+		}
+	})
+
+	if got := result.AllocsPerOp(); got > budget {
+		t.Errorf("a JSONPath body hit allocates %d times per request, budget is %d (D-OPEN-14); "+
+			"run `go test -run '^$' -bench Match/mixed/1000/jsonpath -benchmem ./internal/match` "+
+			"and check that MatchesJSONPath still reaches the byte scanner",
+			got, budget)
+	}
+}
+
 // BenchmarkServe measures the whole mock-port handler, net/http's own
 // per-request work included, which is what separates matcher cost from
 // everything the engine does around it.

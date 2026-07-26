@@ -47,6 +47,12 @@ type absenceStrict interface{ AbsenceFailsNegative() bool }
 // asked about without materializing a subject's text — see perValueScope.
 type repeatable interface{ RepeatedValues() ([]string, bool) }
 
+// rawJSON is the optional capability of a subject that already holds its
+// document as bytes, so a matcher can read it without asking for the decoded
+// tree. It is not Bytes(): a body's bytes are the ones it arrived in, while a
+// key's are a copy of a string, and this seam exists to avoid exactly that copy.
+type rawJSON interface{ RawJSON() []byte }
+
 // Matcher is one criterion.
 type Matcher interface {
 	// Match reports whether the subject satisfies the criterion.
@@ -544,6 +550,24 @@ type JSONPathEvaluator interface {
 	Source() string
 }
 
+// JSONPathScanner is the optional capability of an evaluator that can answer
+// from a document it has not decoded.
+//
+// Decoding is the expensive half: a body criterion reads one leaf, and building
+// the whole tree to reach it was the last allocation left on the request path
+// (D-OPEN-14). An engine that cannot do this for a given expression says so per
+// call rather than per evaluator, because whether it can depends on the shape of
+// the path and not on the engine.
+type JSONPathScanner interface {
+	// MatchBytes answers the bare form. handled is false when the evaluator
+	// will not take this path, and the caller must fall back to Match over the
+	// decoded document.
+	MatchBytes(raw []byte) (matched, handled bool)
+	// SelectBytes answers the nested form with the single node such a path
+	// selects, which is the value — and the Go type — Select would have yielded.
+	SelectBytes(raw []byte) (node any, found, handled bool)
+}
+
 // MatchesJSONPath applies a JSONPath expression to the subject's JSON.
 //
 // Two forms, and they mean different things. The BARE form asks whether the
@@ -585,6 +609,25 @@ func (m *MatchesJSONPath) evaluate(s Subject) bool {
 	if !s.Present() {
 		return false
 	}
+
+	// A subject that holds its document as bytes, met by an engine that can walk
+	// bytes, skips the decode entirely — which for a body is the whole cost of
+	// the criterion. Whatever either side declines falls through to the decoded
+	// document below, and the two answer alike; the jsonpath package holds them
+	// to that with a differential suite and a fuzz target.
+	if held, ok := s.(rawJSON); ok {
+		if scanner, ok := m.Path.(JSONPathScanner); ok {
+			raw := held.RawJSON()
+			if m.Inner == nil {
+				if matched, handled := scanner.MatchBytes(raw); handled {
+					return matched
+				}
+			} else if node, found, handled := scanner.SelectBytes(raw); handled {
+				return found && m.innerMatches(node)
+			}
+		}
+	}
+
 	doc, ok := s.JSON()
 	if !ok {
 		// A body that is not JSON is a plain non-match, never an error.
@@ -600,16 +643,21 @@ func (m *MatchesJSONPath) evaluate(s Subject) bool {
 		return false
 	}
 	for _, v := range values {
-		// A directly-selected null never satisfies an inner matcher, whatever
-		// the matcher says — absence is absence.
-		if v == nil {
-			continue
-		}
-		if m.Inner.Match(NewKeyValues(renderSelected(v))) {
+		if m.innerMatches(v) {
 			return true
 		}
 	}
 	return false
+}
+
+// innerMatches applies the nested form's inner matcher to one selected value.
+func (m *MatchesJSONPath) innerMatches(v any) bool {
+	// A directly-selected null never satisfies an inner matcher, whatever the
+	// matcher says — absence is absence.
+	if v == nil {
+		return false
+	}
+	return m.Inner.Match(NewKeyValues(renderSelected(v)))
 }
 
 // renderSelected converts a selected value to the text an inner matcher sees.

@@ -81,15 +81,15 @@ stubs evaluated per request, which is what explains the ns.
 
 | Benchmark | ns/op | cands/op | B/op | allocs/op |
 |---|---|---|---|---|
-| `Match/exact/1` | 59.6 | 1 | 0 | 0 |
-| `Match/exact/1000` | 65.4 | 1 | 0 | 0 |
-| `Match/exact/10000` | 66.3 | 1 | 0 | 0 |
-| `Match/mixed/1000/exact` | 993 | 101 | 0 | 0 |
-| `Match/mixed/1000/regex` | 1,048 | 100 | 0 | 0 |
-| `Match/mixed/1000/jsonpath` | 1,483 | 99 | 1,152 | 29 |
-| `Match/mixed/1000/unmatched` | 1,626 | 200 | 0 | 0 |
-| `Match/mixed/10000/unmatched` | 16,100 | 2,000 | 0 | 0 |
-| `MatchAndRender` (§16.3 rule 1) | 127 | — | 16 | **1** |
+| `Match/exact/1` | 58.3 | 1 | 0 | 0 |
+| `Match/exact/1000` | 65.8 | 1 | 0 | 0 |
+| `Match/exact/10000` | 65.8 | 1 | 0 | 0 |
+| `Match/mixed/1000/exact` | 1,080 | 101 | 0 | 0 |
+| `Match/mixed/1000/regex` | 1,057 | 100 | 0 | 0 |
+| `Match/mixed/1000/jsonpath` | 851 | 99 | 100 | 4 |
+| `Match/mixed/1000/unmatched` | 1,614 | 200 | 0 | 0 |
+| `Match/mixed/10000/unmatched` | 15,739 | 2,000 | 0 | 0 |
+| `MatchAndRender` (§16.3 rule 1) | 131 | — | 16 | **1** |
 
 The exact-URL indexes answer in one candidate at any stub count — the flat first
 three rows are the evidence. What the S2 mix costs beyond that is the pattern
@@ -103,14 +103,36 @@ over pattern stubs (ROADMAP "matcher index v2") is not what S2 needs; the
 enforced rather than asserted in a comment. The one remaining allocation is
 net/http's header map growing by a slot, which D8 puts outside our control.
 
+The JSONPath row was **1,488 ns / 1,152 B / 29 allocs** when this table was
+first recorded, and was the one shape on the request path that allocated at all.
+Closing D-OPEN-14 replaced the body decode with a scan over the raw bytes for
+definite paths, which is what the row above measures. The 100 bytes still there
+are the seam above the evaluation, not the evaluation: `internal/jsonpath`'s own
+`BenchmarkEvalDefiniteBytes` reports 0 B / 0 allocs for the bare form and 24 B /
+2 allocs for the nested one against 1,168 B / 27 allocs for the same path over a
+document it had to decode first. Read this row against those three: what a
+JSONPath criterion costs now is a pass over the body, and the body is scanned
+once however deep the path goes.
+
+One row moved that nothing was done to. `Match/mixed/1000/exact` read 993 before
+that change and 1,080 after, reproducibly, under runs alternated between the two
+builds to keep thermal drift off the comparison. It is not new work: that
+request is a GET with no body, so it never reaches the scanner, and a CPU
+profile of it is unchanged function for function either side. What moved is
+where the linker placed the hot loop, `internal/matchers` having grown — the
+same effect appears when the two halves of that change are measured separately
+and do not add up. It is inside §16.2's 15% band, and it is recorded here rather
+than smoothed away because the next person to see this row move deserves to know
+the number is that sensitive to code placement.
+
 **Serving** (`Engine.ServeHTTP`, response written to a writer that keeps its
 header map — net/http's own per-request allocations excluded):
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `Serve/exact/1` | 278 | 16 | 1 |
-| `Serve/mixed/1000` | 1,247 | 16 | 1 |
-| `Serve/unmatched/1000` | 1,809 | 40 | 2 |
+| `Serve/exact/1` | 280 | 16 | 1 |
+| `Serve/mixed/1000` | 1,325 | 16 | 1 |
+| `Serve/unmatched/1000` | 1,835 | 40 | 2 |
 
 **Snapshot build and RCU swap** (`internal/match`), at the 10k stub count of
 SPEC §16.1 S6/S7:
