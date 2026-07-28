@@ -56,6 +56,12 @@ jobs:
         with:
           cluster_name: mockulus-ci
 
+      # Three replicas need a shared store to be a working deployment, and the
+      # rollout check below needs one to mean anything at all — it replaces
+      # every pod under traffic and requires every response to be a 200.
+      - name: the shared store the topology needs
+        run: ./scripts/kind-couchbase.sh
+
       - name: load and install
         run: |
           kind load docker-image mockulus:ci --name mockulus-ci
@@ -64,7 +70,9 @@ jobs:
             --set image.tag=ci \
             --set image.pullPolicy=Never \
             --set replicaCount=3 \
-            --wait --timeout 180s
+            --set couchbase.connstr=couchbase://couchbase-0.couchbase.default.svc.cluster.local \
+            --set couchbase.existingSecret=mockulus-couchbase \
+            --wait --timeout 300s
 
       - name: probes, ports and serving across replicas
         run: ./scripts/kind-smoke.sh
@@ -79,9 +87,19 @@ jobs:
             --set image.pullPolicy=Never \
             --set adminAuth.existingSecret=mockulus-admin-token \
             --wait --timeout 180s
-          kubectl run hardened-check --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet -- \
-            sh -c 'curl -s -o /dev/null -w "%{http_code}" http://mockulus-hardened:8080/__admin/health' \
-            | grep -q 404
+          # Read the answer out of the pod's log rather than off an attached
+          # stdout. `kubectl run --rm -i` races its attach against the
+          # container, and a curl that has already exited by the time the
+          # attach lands delivers nothing down the pipe — so the grep sees an
+          # empty string and the step fails on a deployment that answered
+          # correctly. kind-rollout.sh reads logs for the same reason.
+          kubectl run hardened-check --image=curlimages/curl:8.11.1 --restart=Never --command -- \
+            sh -c 'curl -s -o /dev/null -w "%{http_code}" http://mockulus-hardened:8080/__admin/health'
+          kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/hardened-check --timeout=120s
+          code=$(kubectl logs hardened-check)
+          kubectl delete pod hardened-check --wait=false
+          echo "mock port answered /__admin/health with $code"
+          [ "$code" = "404" ]
 
       - name: no 5xx during a rolling restart
         run: ./scripts/kind-rollout.sh
@@ -92,6 +110,10 @@ jobs:
           kubectl get pods -o wide
           kubectl describe pods -l app.kubernetes.io/name=mockulus
           kubectl logs -l app.kubernetes.io/name=mockulus --tail=200 --all-containers
+          # The store is upstream of everything above, so its state is the
+          # first thing worth seeing when any of it fails.
+          kubectl describe statefulset/couchbase || true
+          kubectl logs couchbase-0 --tail=100 || true
 
   perf-smoke:
     name: perf liveness smoke (S1)
