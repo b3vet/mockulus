@@ -135,7 +135,10 @@ func (h *Handler) listMappings(w http.ResponseWriter, r *http.Request) {
 
 // getMapping returns one stub by id.
 func (h *Handler) getMapping(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id, ok := h.mappingID(w, r)
+	if !ok {
+		return
+	}
 	if cs, ok := h.engine.Snapshot().ByID(id); ok {
 		wmcompat.WriteJSON(w, http.StatusOK, cs.Raw)
 		return
@@ -157,7 +160,10 @@ func (h *Handler) getMapping(w http.ResponseWriter, r *http.Request) {
 
 // deleteMapping removes one stub.
 func (h *Handler) deleteMapping(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id, ok := h.mappingID(w, r)
+	if !ok {
+		return
+	}
 	ctx := r.Context()
 
 	if _, err := h.store.GetStub(ctx, id); err != nil {
@@ -232,6 +238,40 @@ func (h *Handler) storeError(w http.ResponseWriter, op string, err error) {
 	h.log.Error("store operation failed", "op", op, "error", err)
 	wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeStoreUnavailable,
 		"the stub store is unavailable; the admin write was not applied"))
+}
+
+// canonicalIDLen is the length of the 8-4-4-4-12 spelling, which is the only
+// form a stub can be registered under (SPEC §5.2).
+const canonicalIDLen = 36
+
+// mappingID resolves the stub a `/__admin/mappings/{id}` path names. It answers
+// the request itself and reports false when the segment names no stub, so the
+// three handlers that take an id share one rule about what an id is.
+//
+// That rule is SPEC §5.2's: the id is a UUID value, parsed case-insensitively
+// and canonicalised to lower case. Registration already applies it — a stub
+// submitted as `A1000008-…` is stored as `a1000008-…` — so comparing the path
+// segment as text made the read path disagree with the write path about the
+// identity of one stub: the spelling a client sent to POST resolved on a later
+// GET, PUT or DELETE only if it happened to be the lower-case one. A client
+// that keeps ids in upper case, or takes them from a system that does, then
+// gets 404 for stubs that are demonstrably there.
+//
+// The length check is what keeps one rule from becoming two. uuid.Parse also
+// accepts the 32-character dashless, `urn:uuid:`-prefixed and brace-wrapped
+// spellings, and registration refuses all three (SPEC §5.5 deviation 24), so
+// resolving them here would let the admin API address stubs by spellings it
+// will not store — an id a client could read a stub with, and never create one
+// with. A segment in any of those forms therefore names no stub, which is the
+// answer an id that was never registered already gets.
+func (h *Handler) mappingID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	segment := r.PathValue("id")
+	parsed, err := uuid.Parse(segment)
+	if err != nil || len(segment) != canonicalIDLen {
+		h.mappingNotFound(w)
+		return "", false
+	}
+	return parsed.String(), true
 }
 
 // mappingNotFound answers an unknown stub id the way WireMock does: a bare 404,

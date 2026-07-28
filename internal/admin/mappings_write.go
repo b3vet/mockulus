@@ -32,7 +32,10 @@ const (
 // promote the edited stub above its equal-priority peers, turning an edit into
 // a precedence change (SPEC §5.3, §7.3).
 func (h *Handler) updateMapping(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id, ok := h.mappingID(w, r)
+	if !ok {
+		return
+	}
 	ctx := r.Context()
 
 	existing, err := h.store.GetStub(ctx, id)
@@ -184,10 +187,15 @@ func (h *Handler) importMappings(w http.ResponseWriter, r *http.Request) {
 		id       string
 		doc      []byte
 		compiled *stub.CompiledStub
-		existing *store.StoredStub
 	}
 	items := make([]pending, 0, len(req.Mappings))
 	problems := &wmcompat.ErrorList{}
+	// What the deployment held before the batch, looked up once per id: an id
+	// may appear more than once in one payload, and every occurrence of it has
+	// to get the same answer to "was this stub already here". A nil entry
+	// records an id that was looked up and not found, so a repeated id costs one
+	// store round trip whether or not it resolves.
+	before := make(map[string]*store.StoredStub, len(req.Mappings))
 
 	for i, mapping := range req.Mappings {
 		compiled, errs := stub.Compile(mapping, 0, h.stubOpts)
@@ -202,16 +210,19 @@ func (h *Handler) importMappings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		id := compiled.ID
-		var existing *store.StoredStub
-		if id != "" {
-			if found, err := h.store.GetStub(ctx, id); err == nil {
-				existing = &found
-			} else if !errors.Is(err, store.ErrNotFound) {
+		if id == "" {
+			id = uuid.NewString()
+		} else if _, probed := before[id]; !probed {
+			stored, err := h.store.GetStub(ctx, id)
+			switch {
+			case err == nil:
+				before[id] = &stored
+			case errors.Is(err, store.ErrNotFound):
+				before[id] = nil
+			default:
 				h.storeError(w, "get_stub", err)
 				return
 			}
-		} else {
-			id = uuid.NewString()
 		}
 
 		doc, err := stub.WithIdentity(mapping, id)
@@ -219,7 +230,7 @@ func (h *Handler) importMappings(w http.ResponseWriter, r *http.Request) {
 			problems.Addf(wmcompat.CodeMalformed, fmt.Sprintf("/mappings/%d", i), err.Error())
 			continue
 		}
-		items = append(items, pending{id: id, doc: doc, compiled: compiled, existing: existing})
+		items = append(items, pending{id: id, doc: doc, compiled: compiled})
 	}
 
 	if !problems.Empty() {
@@ -229,11 +240,42 @@ func (h *Handler) importMappings(w http.ResponseWriter, r *http.Request) {
 
 	imported, ignored := 0, 0
 	keep := make(map[string]bool, len(items))
+	// applied carries what this batch has already written, so an id repeated
+	// inside one payload collides with its own earlier occurrence exactly as it
+	// would with a stub that was already in the store.
+	applied := make(map[string]store.StoredStub, len(items))
 
-	for _, item := range items {
+	// The batch is applied back to front, so that the FIRST element of the array
+	// wins a tie against the last. Selection breaks equal priority on insertion
+	// sequence (SPEC §5.3), which means the element written last is the one that
+	// serves; walking the array in order therefore hands that decision to
+	// whichever of two overlapping stubs a fixture file happens to list last.
+	// Nothing states which end should win, and a mappings file where two stubs
+	// can answer one request is the ordinary shape of one — so the end that wins
+	// has to be the end WireMock's importer picks, or the same file moved
+	// between the two servers quietly serves a different stub and reports
+	// nothing at all.
+	//
+	// Duplicate ids are resolved against the batch as it is applied rather than
+	// against a snapshot taken before it, and that pairing is not optional: an
+	// element can be the reason a later one is a duplicate. Reversing the walk
+	// while deciding duplicates up front would change what IGNORE does to a
+	// payload that repeats an id — the occurrence that survives there is the one
+	// with no predecessor to be ignored in favour of, which is the last, and
+	// deciding up front would make every occurrence look new and leave the
+	// first.
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
 		keep[item.id] = true
 
-		if item.existing != nil && policy == duplicateIgnore {
+		existing, found := applied[item.id]
+		if !found {
+			if prior := before[item.id]; prior != nil {
+				existing, found = *prior, true
+			}
+		}
+
+		if found && policy == duplicateIgnore {
 			ignored++
 			continue
 		}
@@ -241,8 +283,8 @@ func (h *Handler) importMappings(w http.ResponseWriter, r *http.Request) {
 		// An overwrite preserves the stub's precedence, exactly as PUT does.
 		var seq uint64
 		created := time.Now().UTC()
-		if item.existing != nil {
-			seq, created = item.existing.Seq, item.existing.CreatedAt
+		if found {
+			seq, created = existing.Seq, existing.CreatedAt
 		} else {
 			next, err := h.store.NextSeq(ctx)
 			if err != nil {
@@ -252,17 +294,19 @@ func (h *Handler) importMappings(w http.ResponseWriter, r *http.Request) {
 			seq = next
 		}
 
-		if err := h.store.PutStub(ctx, store.StoredStub{
+		stored := store.StoredStub{
 			ID:            item.id,
 			SchemaVersion: store.SchemaVersion,
 			Seq:           seq,
 			Persistent:    item.compiled.Persistent,
 			CreatedAt:     created,
 			Mapping:       item.doc,
-		}); err != nil {
+		}
+		if err := h.store.PutStub(ctx, stored); err != nil {
 			h.storeError(w, "put_stub", err)
 			return
 		}
+		applied[item.id] = stored
 		imported++
 	}
 
