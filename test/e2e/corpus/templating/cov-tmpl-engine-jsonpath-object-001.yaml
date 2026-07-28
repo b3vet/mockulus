@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-engine-jsonpath-object-001
+behaviors: [B-TPL-JSONPATH, B-RESP-TRANSFORMERS]
+# A path expression that selects an object renders as JSON here and as JSON
+# there, and the two documents are not the same bytes. WireMock 3.13.2 writes
+# the object with Jackson's indenting printer and in the order the request
+# wrote the keys:
+#
+#   {
+#     "name" : "ada",
+#     "city" : "london"
+#   }
+#
+# An encoder over a Go map cannot reproduce either half — the key order is gone
+# by the time the document is a map, and the indentation is a printer's
+# convention rather than a fact about the value. So this is not diffed. What is
+# pinned is that mockulus renders the selection as a JSON document at all: the
+# reading before this was Go's own `map[city:london name:ada]`, which is an
+# internal on the wire and which nothing that parses JSON can read. The array
+# selections, which do agree byte for byte, are diffed by
+# wmv-tmpl-engine-jsonpath-shape-001.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0036-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-tmpl-engine-jsonpath-object-001/echo"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "who=[{{jsonPath request.body '$.who'}}] deep=[{{jsonPath request.body '$.deep'}}] empty=[{{jsonPath request.body '$.eo'}}] markup=[{{jsonPath request.body '$.m'}}] with=[{{#with (jsonPath request.body '$.who')}}{{name}}/{{city}}{{/with}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `who` and `deep` are one level and three, so an encoder that stopped at the
+  # top of the tree renders a nested internal inside a valid document — the
+  # failure that reads as correct until somebody looks at the second level.
+  #
+  # `markup` is the sharp one. The document is written with escaping off, like
+  # every other value this engine interpolates: a body carrying an ampersand or
+  # an angle bracket must come back carrying them, not the six-byte escapes an
+  # encoder writes by default. Those escapes are valid JSON and are not the
+  # bytes the caller sent, which makes them the kind of corruption a client
+  # only notices when it compares.
+  #
+  # `with` is the control: the selection is still a document that the block
+  # helpers can push as a scope and read members out of. A selection turned
+  # into a string on its way out would render nothing here.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-tmpl-engine-jsonpath-object-001/echo
+      headers: {Content-Type: application/json}
+      body: '{"who": {"name": "ada", "city": "london"}, "deep": {"a": {"b": [1, 2]}}, "eo": {}, "m": {"n": "Ben & Jerry <fine>"}}'
+    expect:
+      status: 200
+      body: 'who=[{"city":"london","name":"ada"}] deep=[{"a":{"b":[1,2]}}] empty=[{}] markup=[{"n":"Ben & Jerry <fine>"}] with=[ada/london]'
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0036-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-tmpl-engine-jsonpath-object-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "who=[{{jsonPath request.body '$.who'}}]"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-tmpl-engine-jsonpath-object-001/literal
+      headers: {Content-Type: application/json}
+      body: '{"who": {"name": "ada"}}'
+    expect:
+      status: 200
+      body: "who=[{{jsonPath request.body '$.who'}}]"

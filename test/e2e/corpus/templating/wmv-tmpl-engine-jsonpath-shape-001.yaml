@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-engine-jsonpath-shape-001
+behaviors: [B-TPL-JSONPATH, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # Echoing part of the request back is the most common thing a templated stub
+  # does, and a path expression that lands on a list rather than a scalar is
+  # how a stub echoes a collection. What came back was Go's own spelling of the
+  # value — `[10 20 30]`, with the commas missing — which is not a
+  # serialisation of anything: the caller sent JSON and cannot parse that back
+  # into it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0034-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-engine-jsonpath-shape-001/echo"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "arr=[{{jsonPath request.body '$.xs'}}] strs=[{{jsonPath request.body '$.ss'}}] mixed=[{{jsonPath request.body '$.mix'}}] wild=[{{jsonPath request.body '$.items[*].sku'}}] objs=[{{jsonPath request.body '$.items'}}] empty=[{{jsonPath request.body '$.e'}}] scalar=[{{jsonPath request.body '$.n'}}] bool=[{{jsonPath request.body '$.b'}}] null=[{{jsonPath request.body '$.z'}}] idx=[{{jsonPath request.body '$.xs[1]'}}] each=[{{#each (jsonPath request.body '$.items[*].sku')}}{{@index}}:{{this}};{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Five shapes of list, each of which a different mistake gets wrong. Numbers
+  # must not pick up quotes and strings must keep theirs; a mixed list has to
+  # carry a JSON null through rather than an empty span; a wildcard collects
+  # one field out of every element and is a list even though no list node was
+  # selected; and a list of objects nests without the elements changing form.
+  # The empty list is the one that turns a rendered body into invalid JSON if
+  # it comes back as nothing at all.
+  #
+  # The scalars beside them are the control, and they are the overwhelmingly
+  # common selection: a number, a boolean, a null and an index all render as
+  # themselves. A rule that reached them would put brackets or quotes around
+  # every `{{jsonPath request.body '$.id'}}` in the corpus — which is what
+  # makes rendering the collection as JSON a claim about collections rather
+  # than about the helper.
+  #
+  # `each` is the other control: a selected list still composes with the block
+  # helpers, and its elements are still the values they were. The JSON is what
+  # an element falls back to when it is interpolated whole, not something the
+  # selection has turned into.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-engine-jsonpath-shape-001/echo
+      headers: {Content-Type: application/json}
+      body: '{"xs": [10, 20, 30], "ss": ["a", "b"], "mix": [1, "a", true, null], "items": [{"sku": "A1"}, {"sku": "B2"}], "e": [], "n": 7, "b": true, "z": null}'
+    expect:
+      status: 200
+      body: 'arr=[[10,20,30]] strs=[["a","b"]] mixed=[[1,"a",true,null]] wild=[["A1","B2"]] objs=[[{"sku":"A1"},{"sku":"B2"}]] empty=[[]] scalar=[7] bool=[true] null=[] idx=[20] each=[0:A1;1:B2;]'
+
+  # A second document through the same stub, so every list above is read from
+  # the request rather than kept from the last one. Two elements where there
+  # were three, three where there were two, and a list that is empty here and
+  # was not there — which is the set that separates a list that was rendered
+  # from a list that was remembered. `scalar` and `bool` move to the falsy
+  # values of their own types, where a helper that reported "found nothing"
+  # rather than "found a zero" renders an empty span.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-engine-jsonpath-shape-001/echo
+      headers: {Content-Type: application/json}
+      body: '{"xs": [40, 50], "ss": [], "mix": [false], "items": [{"sku": "C3"}, {"sku": "D4"}, {"sku": "E5"}], "e": [], "n": 0, "b": false, "z": null}'
+    expect:
+      status: 200
+      body: 'arr=[[40,50]] strs=[[]] mixed=[[false]] wild=[["C3","D4","E5"]] objs=[[{"sku":"C3"},{"sku":"D4"},{"sku":"E5"}]] empty=[[]] scalar=[0] bool=[false] null=[] idx=[50] each=[0:C3;1:D4;2:E5;]'
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0034-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-engine-jsonpath-shape-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "arr=[{{jsonPath request.body '$.xs'}}]"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-engine-jsonpath-shape-001/literal
+      headers: {Content-Type: application/json}
+      body: '{"xs": [10, 20, 30]}'
+    expect:
+      status: 200
+      body: "arr=[{{jsonPath request.body '$.xs'}}]"

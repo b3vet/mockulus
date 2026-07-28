@@ -32,8 +32,11 @@ steps:
 
   # The empty side. `num` is a subtraction that comes out at zero — the
   # arithmetic result a template most often branches on, and the one a rule
-  # without a number branch reports as present. `cnt` is a count of nothing.
-  # `lst` is a generated list with no elements.
+  # without a number branch reports as present. `cnt` is a count of nothing,
+  # which is why `s` is absent from this request rather than present and
+  # blank: `size` counts a parameter's values, so `?s=` is one value that
+  # happens to be empty and counts 1. `lst` is a generated list with no
+  # elements.
   #
   # `segs` has no empty form to offer — a request always has a path — so it is
   # here as the control that the list branch is not a blanket false: an
@@ -45,7 +48,7 @@ steps:
   # rendering the wrong branch of every guard written that way.
   - request:
       method: GET
-      path: /e2e/cov-tmpl-truthiness-001/kinds?n=1&s=&lo=2&hi=1
+      path: /e2e/cov-tmpl-truthiness-001/kinds?n=1&lo=2&hi=1
     expect:
       status: 200
       body: "num=[f] cnt=[f] lst=[f] segs=[t] lit=[ftt]"

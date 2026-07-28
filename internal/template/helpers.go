@@ -104,7 +104,7 @@ func nowHelper(args []any, hash map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		t = t.Add(offset)
+		t = offset.shift(t)
 	}
 
 	if raw, ok := hash["timezone"]; ok {
@@ -136,35 +136,91 @@ func nowHelper(args []any, hash map[string]any) (any, error) {
 	}
 }
 
+// dateOffset is a `now` offset held apart into the two kinds of quantity an
+// offset can name.
+//
+// Seconds through days are spans of elapsed time and add as one. Months and
+// years are not: how much time a month is depends on which month the instant
+// falls in, and WireMock resolves them on a calendar. Multiplying out a fixed
+// 30- or 365-day month is off by up to a day and a half per month and the
+// result is still a well-formed date, so nothing downstream can notice — an
+// expiry "one month out" from 2026-07-28 lands on the 27th here and the 28th
+// there, and both look like an answer somebody meant.
+type dateOffset struct {
+	months int
+	span   time.Duration
+}
+
+// shift resolves the offset against an instant. The calendar part goes first,
+// so a span of hours is measured from the day the calendar landed on rather
+// than displacing the day the months were counted from.
+func (o dateOffset) shift(t time.Time) time.Time {
+	if o.months != 0 {
+		t = addMonths(t, o.months)
+	}
+	return t.Add(o.span)
+}
+
 // parseOffset reads WireMock's offset syntax: a signed count and a unit, as in
 // "3 days" or "-1 hours".
-func parseOffset(spec string) (time.Duration, error) {
+func parseOffset(spec string) (dateOffset, error) {
 	fields := strings.Fields(spec)
 	if len(fields) != 2 {
-		return 0, fmt.Errorf("offset %q should look like \"3 days\"", spec)
+		return dateOffset{}, fmt.Errorf("offset %q should look like \"3 days\"", spec)
 	}
 	n, err := strconv.ParseInt(fields[0], 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("offset %q does not start with a number", spec)
+		return dateOffset{}, fmt.Errorf("offset %q does not start with a number", spec)
 	}
 
 	unit := strings.ToLower(strings.TrimSuffix(fields[1], "s"))
 	switch unit {
 	case "second":
-		return time.Duration(n) * time.Second, nil
+		return dateOffset{span: time.Duration(n) * time.Second}, nil
 	case "minute":
-		return time.Duration(n) * time.Minute, nil
+		return dateOffset{span: time.Duration(n) * time.Minute}, nil
 	case "hour":
-		return time.Duration(n) * time.Hour, nil
+		return dateOffset{span: time.Duration(n) * time.Hour}, nil
 	case "day":
-		return time.Duration(n) * 24 * time.Hour, nil
+		return dateOffset{span: time.Duration(n) * 24 * time.Hour}, nil
 	case "month":
-		return time.Duration(n) * 30 * 24 * time.Hour, nil
+		return dateOffset{months: int(n)}, nil
 	case "year":
-		return time.Duration(n) * 365 * 24 * time.Hour, nil
+		return dateOffset{months: int(n) * 12}, nil
 	default:
-		return 0, fmt.Errorf("unknown offset unit %q", fields[1])
+		return dateOffset{}, fmt.Errorf("unknown offset unit %q", fields[1])
 	}
+}
+
+// addMonths moves an instant by whole calendar months, keeping the time of day
+// and the day of the month wherever the month it lands on is long enough to
+// hold it.
+//
+// Where it is not, the day is pulled back to that month's last day. That is
+// Java's rule and so WireMock's: 2026-01-31 offset by one month is 2026-02-28
+// there, and 2024-02-29 offset by a year is 2025-02-28. Go's AddDate carries
+// the surplus into the following month instead and answers 2026-03-03 — a date
+// outside the month the template asked for, which is the one answer a caller
+// saying "next month" cannot use.
+func addMonths(t time.Time, months int) time.Time {
+	year, month, day := t.Date()
+	hour, minute, sec := t.Clock()
+
+	// Anchored on the first of the month, the month arithmetic has no day to
+	// overflow, so the month and year it lands on are exactly the ones asked
+	// for and the day is decided below rather than by normalisation.
+	target := time.Date(year, month, 1, hour, minute, sec, t.Nanosecond(), t.Location()).
+		AddDate(0, months, 0)
+	if last := daysInMonth(target.Year(), target.Month()); day > last {
+		day = last
+	}
+	return time.Date(target.Year(), target.Month(), day, hour, minute, sec, t.Nanosecond(), t.Location())
+}
+
+// daysInMonth reads a month's length off the calendar, by asking for the day
+// before the first of the next one.
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 // javaToGoLayout translates the Java date pattern WireMock templates are
@@ -516,6 +572,13 @@ func splitHelper(args []any, _ map[string]any) (any, error) {
 	return out, nil
 }
 
+// joinHelper puts a separator between a list's elements, and — given a name a
+// header or query parameter arrived under more than once — between all of its
+// values rather than around the first one. Reading such a node as a scalar
+// answers "crimson" for `?tag=crimson&tag=blue&tag=green` where WireMock
+// answers "crimson-blue-green", which is a response that has quietly dropped
+// what the caller sent. It is the node `size` counts, read the same way here:
+// the values, rather than the one of them that prints.
 func joinHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) < 2 {
 		return nil, errors.New("join takes a list and a separator")
@@ -524,6 +587,8 @@ func joinHelper(args []any, _ map[string]any) (any, error) {
 
 	var parts []string
 	switch list := args[0].(type) {
+	case multiValue:
+		parts = list
 	case []any:
 		for _, item := range list {
 			parts = append(parts, handlebars.Stringify(item))
@@ -580,6 +645,22 @@ func replaceHelper(args []any, _ map[string]any) (any, error) {
 		handlebars.Stringify(args[2])), nil
 }
 
+// sizeHelper counts a collection's elements and a scalar's characters, which is
+// the split WireMock's helper makes on the Java type it is handed.
+//
+// A query parameter and a header are collections on that side even when the
+// wire carried one value: they print as their first value and carry all of
+// them (§10.2). Measuring the text they print answers 5 for `?tier=go-ld`
+// where WireMock answers 1, and the length of "crimson" for a parameter sent
+// three times where WireMock answers 3 — a number that equals the count only
+// by coincidence, and a plausible one every time, so a stub paging or
+// branching on it is wrong quietly.
+//
+// `request.path` is dual-natured in the same way and is deliberately not
+// counted: it stays the text it prints, which is the reading
+// cov-tmpl-strings-shapes-001 records. WireMock counts its segments instead —
+// a real disagreement, wider than the repeated values here, and not one this
+// helper settles on its own.
 func sizeHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) == 0 {
 		return 0, nil
@@ -587,6 +668,8 @@ func sizeHelper(args []any, _ map[string]any) (any, error) {
 	switch v := args[0].(type) {
 	case string:
 		return len([]rune(v)), nil
+	case multiValue:
+		return len(v), nil
 	case []any:
 		return len(v), nil
 	case []string:

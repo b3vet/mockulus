@@ -46,9 +46,14 @@ steps:
   # which is a third container shape with a third branch behind it, and `oob`
   # asks it for an element it does not have — nothing, rather than a refusal,
   # because an index computed from a request is allowed to miss. `rawlist`
-  # interpolates the array whole: the elements have to come out, not a Go type
-  # name or a pointer. The exact spelling is this implementation's and is not
-  # a WireMock claim; what a bug would break here is the leak, not the commas.
+  # interpolates the array whole, and what comes out is the array as JSON —
+  # which is what a collection renders as everywhere in this engine, so a stub
+  # echoing a list serves something a client can parse rather than a Go value
+  # printed with spaces for commas. The exact spelling is not a WireMock claim:
+  # a list that came from the stub document rather than from a path expression
+  # renders there as Java's own `[bronze, silver]`, and reproducing another
+  # runtime's toString is not compatibility. What a bug would break here is the
+  # leak of an internal, not the punctuation.
   #
   # `absent` takes the else branch of a {{#with}} over a value that is not
   # there. Without an else branch that block would render its body against the
@@ -69,7 +74,7 @@ steps:
       headers: {Cookie: "beta=2; alpha=1"}
     expect:
       status: 200
-      body: "segs=[0^:e2e;1:cov-tmpl-block-scope-001;2!:scopes;] ck=[alpha=1;beta=2;] params=[a=1;b=2;] tier=[silver] oob=[] rawlist=[[bronze silver]] absent=[no] dot=[/e2e/cov-tmpl-block-scope-001/scopes|/e2e/cov-tmpl-block-scope-001/scopes] scalar=[]"
+      body: 'segs=[0^:e2e;1:cov-tmpl-block-scope-001;2!:scopes;] ck=[alpha=1;beta=2;] params=[a=1;b=2;] tier=[silver] oob=[] rawlist=[["bronze","silver"]] absent=[no] dot=[/e2e/cov-tmpl-block-scope-001/scopes|/e2e/cov-tmpl-block-scope-001/scopes] scalar=[]'
 
   # The same stub with no cookies at all. An empty map takes the else branch
   # rather than emitting one blank iteration, which is the difference between
@@ -78,4 +83,4 @@ steps:
   - request: {method: GET, path: /e2e/cov-tmpl-block-scope-001/scopes}
     expect:
       status: 200
-      body: "segs=[0^:e2e;1:cov-tmpl-block-scope-001;2!:scopes;] ck=[no-cookies] params=[a=1;b=2;] tier=[silver] oob=[] rawlist=[[bronze silver]] absent=[no] dot=[/e2e/cov-tmpl-block-scope-001/scopes|/e2e/cov-tmpl-block-scope-001/scopes] scalar=[]"
+      body: 'segs=[0^:e2e;1:cov-tmpl-block-scope-001;2!:scopes;] ck=[no-cookies] params=[a=1;b=2;] tier=[silver] oob=[] rawlist=[["bronze","silver"]] absent=[no] dot=[/e2e/cov-tmpl-block-scope-001/scopes|/e2e/cov-tmpl-block-scope-001/scopes] scalar=[]'

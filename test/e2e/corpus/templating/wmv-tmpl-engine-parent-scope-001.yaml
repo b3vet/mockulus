@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-engine-parent-scope-001
+behaviors: [B-TPL-IF-UNLESS-EACH-WITH-LOOKUP, B-TPL-JSONPATH, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # Reaching the request from inside a repeated block is the ordinary way to
+  # write one, and `../` is how it is spelled. A path that read the slash as an
+  # ordinary character looked for a member called "/request", which no model
+  # has: the expression rendered as nothing, and the same path handed to a
+  # helper handed it nothing to work with — a serve-time failure of the whole
+  # response rather than one empty span.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0032-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-engine-parent-scope-001/lines"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "each=[{{#each (jsonPath request.body '$.xs')}}{{../request.method}}{{/each}}] nested=[{{#each (jsonPath request.body '$.xs')}}{{#each (jsonPath ../request.body '$.ys')}}{{../this}}{{this}};{{/each}}{{/each}}] two=[{{#each (jsonPath request.body '$.xs')}}{{#each (jsonPath request.body '$.ys')}}{{../../request.method}}{{/each}}{{/each}}] deep=[{{#each (jsonPath request.body '$.xs')}}{{#each (jsonPath request.body '$.ys')}}{{../request.method}}{{/each}}{{/each}}] shadow=[{{#with (jsonPath request.body '$.o')}}{{#with (jsonPath request.body '$.o2')}}{{city}}/{{../city}}/{{../../request.method}}{{/with}}{{/with}}] top=[{{../request.method}}] past=[{{#each (jsonPath request.body '$.xs')}}{{../../../../request.method}}{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `each` is the plain form: one step out of an iteration, once per element.
+  #
+  # `nested` is the form that used to be worse than empty. The climb happens
+  # inside a subexpression, so the value it resolves to is what `jsonPath` is
+  # handed — nothing, and a helper given no document fails the render and takes
+  # the response with it. `{{../this}}` in the same block reaches the enclosing
+  # element rather than a member of it, which is what pairs each inner value
+  # with the outer one it belongs to.
+  #
+  # `shadow` is the case the syntax exists for and the one that decides between
+  # the two ways of implementing it. Both scopes carry `city`, so an
+  # implementation that stripped the `../` and let the ordinary innermost-first
+  # fall-through find the name answers "york" twice — a plausible value, and
+  # silently wrong in the only situation anybody writes `../` for. The third
+  # segment climbs past both scopes to the request, so one expression covers
+  # the shadowed name and the one that is not shadowed at all.
+  #
+  # `two` and `deep` are the counts either side of that. Two steps from two
+  # frames deep lands on the root; one step from two frames deep lands on a
+  # scope that has no `request`, and the walk carries on outward from there —
+  # so the ordinary spelling keeps working at any nesting, and the count is not
+  # a fall-through in disguise.
+  #
+  # `top` and `past` are the control on the climb itself. A step out of the
+  # outermost scope, and four steps out of a block one deep, name scopes that
+  # do not exist: both render nothing. Clamping at the root instead would hand
+  # them the request model and print a value the template never asked for,
+  # which reads as a successful lookup to whatever parses the response.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-engine-parent-scope-001/lines
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["p", "q"], "ys": [1, 2], "o": {"city": "london"}, "o2": {"city": "york"}}'
+    expect:
+      status: 200
+      body: "each=[POSTPOST] nested=[p1;p2;q1;q2;] two=[POSTPOSTPOSTPOST] deep=[POSTPOSTPOSTPOST] shadow=[york/london/POST] top=[] past=[]"
+
+  # The same stub over a document of different lengths, so every count above is
+  # a claim about this request rather than a constant the template could have
+  # produced without reading it. One outer element and three inner ones move
+  # `nested`, `two` and `deep` in three different ways.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-engine-parent-scope-001/lines
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["z"], "ys": [7, 8, 9], "o": {"city": "york"}, "o2": {"city": "london"}}'
+    expect:
+      status: 200
+      body: "each=[POST] nested=[z7;z8;z9;] two=[POSTPOSTPOST] deep=[POSTPOSTPOST] shadow=[london/york/POST] top=[] past=[]"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0032-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-engine-parent-scope-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "each=[{{#each (jsonPath request.body '$.xs')}}{{../request.method}}{{/each}}]"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-engine-parent-scope-001/literal
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["p"]}'
+    expect:
+      status: 200
+      body: "each=[{{#each (jsonPath request.body '$.xs')}}{{../request.method}}{{/each}}]"

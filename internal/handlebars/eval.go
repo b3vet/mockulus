@@ -3,6 +3,7 @@
 package handlebars
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -83,13 +84,6 @@ type renderer struct {
 
 func (r *renderer) push(ctx any) { r.stack = append(r.stack, ctx) }
 func (r *renderer) pop()         { r.stack = r.stack[:len(r.stack)-1] }
-
-func (r *renderer) current() any {
-	if len(r.stack) == 0 {
-		return nil
-	}
-	return r.stack[len(r.stack)-1]
-}
 
 func (r *renderer) write(s string) error {
 	if r.max > 0 && r.out.Len()+len(s) > r.max {
@@ -201,18 +195,7 @@ func (r *renderer) block(n *Node) error {
 func (r *renderer) each(n *Node, value any) error {
 	switch items := value.(type) {
 	case []any:
-		if len(items) == 0 {
-			return r.nodes(n.Else)
-		}
-		for i, item := range items {
-			r.push(eachScope(item, i, len(items)))
-			err := r.nodes(n.Body)
-			r.pop()
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		return r.eachValue(n, items)
 
 	case []string:
 		if len(items) == 0 {
@@ -250,8 +233,33 @@ func (r *renderer) each(n *Node, value any) error {
 		return nil
 
 	default:
+		// A value that is a scalar and a list at once — the shape a header or
+		// query parameter that arrived more than once takes — iterates as its
+		// values. Everything else has nothing to walk, and an {{#each}} over it
+		// takes the else branch.
+		if list, ok := value.(Lister); ok {
+			return r.eachValue(n, list.List())
+		}
 		return r.nodes(n.Else)
 	}
+}
+
+// eachValue iterates a list of values. Both the plain list and the multi-valued
+// scalar arrive here, so the two cannot drift apart in how they number their
+// iterations or where they leave @first and @last.
+func (r *renderer) eachValue(n *Node, items []any) error {
+	if len(items) == 0 {
+		return r.nodes(n.Else)
+	}
+	for i, item := range items {
+		r.push(eachScope(item, i, len(items)))
+		err := r.nodes(n.Body)
+		r.pop()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // eachScope wraps an iteration item with the @-variables Handlebars exposes.
@@ -313,15 +321,38 @@ func (r *renderer) call(e *Expression) (any, error) {
 
 // lookup walks a dotted path through the scope stack, innermost first, so an
 // {{#each}} body can still reach the enclosing context.
+//
+// A path may open with any number of `..` segments, each of which starts the
+// walk one frame further out. That is the only way a template can name the
+// enclosing scope when the inner one carries the same key: two nested {{#with}}
+// blocks over objects that both have a `city` want `{{city}}` and
+// `{{../city}}` to answer differently, and a reading that dropped the `..` and
+// let the ordinary fall-through find the name would answer both with the inner
+// value — plausibly, and wrongly, in the one case the syntax exists for.
+//
+// A climb that outruns the stack resolves to nothing rather than stopping at
+// the outermost frame. Clamping would hand `{{../request.method}}` written at
+// the top level the root context and render a value there, where the template
+// asked for a scope that does not exist; WireMock 3.13.2 renders nothing for
+// both that and `{{../../../../x}}` one frame deep, and nothing is also the
+// answer that cannot be mistaken for a successful lookup.
 func (r *renderer) lookup(path []string) any {
-	if len(path) == 0 {
-		return r.current()
+	up := 0
+	for up < len(path) && path[up] == ParentSegment {
+		up++
 	}
-	if len(path) == 1 && (path[0] == "this" || path[0] == ".") {
-		return unwrapScope(r.current())
+	path = path[up:]
+
+	frame := len(r.stack) - 1 - up
+	if frame < 0 {
+		return nil
 	}
 
-	for i := len(r.stack) - 1; i >= 0; i-- {
+	if len(path) == 0 || (len(path) == 1 && (path[0] == "this" || path[0] == ".")) {
+		return unwrapScope(r.stack[frame])
+	}
+
+	for i := frame; i >= 0; i-- {
 		if value, ok := resolvePath(r.stack[i], path); ok {
 			return value
 		}
@@ -344,6 +375,19 @@ func unwrapScope(scope any) any {
 // than in the template package so the evaluator does not depend on it.
 type Lookuper interface {
 	Lookup(key string) (any, bool)
+}
+
+// Lister is a value that is both a scalar and a list — a query parameter or a
+// header that arrived more than once, which renders as its first value and
+// indexes to any of them.
+//
+// It is a third nature on the value rather than a plain list because the two it
+// already has are load-bearing: a list would stringify as a list, and every
+// stub reading a single-valued parameter would start serving "[gold]" where it
+// used to serve "gold". Only {{#each}} asks for this one, and only a value that
+// answers it can be walked.
+type Lister interface {
+	List() []any
 }
 
 // resolvePath walks one context. Reporting whether it resolved, rather than
@@ -430,6 +474,14 @@ func Truthy(v any) bool {
 // Numbers matter here: a JSON body carrying {{someCount}} must not produce
 // "3e+06", and an integral float must render without a trailing ".0" or a stub
 // author cannot write a JSON integer at all.
+//
+// A list or an object renders as JSON, because the only way one reaches this
+// function is a path expression that selected a subtree of the request body,
+// and a stub echoing a subtree wants the document back. Go's own spelling of a
+// map — `map[city:london name:ada]` — is not a serialisation of anything; it is
+// an internal spelled onto the wire, and no client parsing the response can
+// read it. WireMock renders the same selection as JSON, so this is the answer
+// the oracle gives as well as the one a caller can use.
 func Stringify(v any) string {
 	switch t := v.(type) {
 	case nil:
@@ -447,12 +499,84 @@ func Stringify(v any) string {
 		return strconv.Itoa(t)
 	case int64:
 		return strconv.FormatInt(t, 10)
+	case []any:
+		return stringifyJSON(t)
+	case map[string]any:
+		return stringifyJSON(t)
 	case []string:
+		// The model's own segment list, which is the one collection here that
+		// did not come out of a document — nothing that decodes a body produces
+		// this type — and whose joined spelling cov-tmpl-request-model-001
+		// records. WireMock renders `{{request.pathSegments}}` as the path
+		// rather than as either spelling of a list, which is a disagreement
+		// about what that node is and is not settled by how a list prints.
 		return strings.Join(t, ", ")
 	case fmt.Stringer:
 		return t.String()
 	default:
 		return fmt.Sprint(t)
+	}
+}
+
+// stringifyJSON encodes a selected subtree.
+//
+// Escaping is off for the same reason it is off everywhere else in this file: a
+// body carrying `Ben & Jerry <fine>` must arrive as it was sent, and unless it
+// is told otherwise the encoder writes those two characters as the six-byte
+// escapes for them — valid JSON, and not the bytes WireMock writes or the ones
+// the stub author put into the request.
+//
+// A value that will not encode falls back rather than failing the render.
+// Nothing a decoded request body holds can reach that branch, and a helper that
+// returned something exotic is not a reason to refuse the whole response.
+func stringifyJSON(v any) string {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return fmt.Sprint(v)
+	}
+	// Encode terminates the document with a newline that no interpolation wants.
+	return strings.TrimSuffix(buf.String(), "\n")
+}
+
+// BindBareHelpers rewrites a lone path that names a registered helper into a
+// call of it, which is what `{{now}}` and `{{randomValue}}` are.
+//
+// One token inside a mustache has two readings — a member of the context called
+// `now`, or the `now` helper invoked with no arguments — and the parser cannot
+// choose between them, because the registry that settles it lives a package
+// away. Handlebars settles it by asking whether a helper of that name exists,
+// and so does WireMock 3.13.2: inside a scope carrying its own `now`, the
+// helper's timestamp is what renders, not the member. Left as a path, the most
+// commonly written expression in any WireMock template renders as nothing at
+// all — no registration error and no serve-time error, just an empty span where
+// a timestamp should be.
+//
+// It happens once, here, rather than on the render path, because the answer
+// cannot change between requests: which names are helpers is fixed when the
+// engine is built. Asking per interpolation would put a map lookup in front of
+// every variable in every templated response for a question already answered
+// (§16.3 rule 2).
+//
+// Only the mustache position is rewritten. An argument is a path in Handlebars
+// even where a helper shares its name — `{{concat now '!'}}` passes the member,
+// not the timestamp — so the walk deliberately does not descend into Args or
+// Hash. A subexpression is the other spelling of a call and the parser has
+// already resolved that one.
+func (t *Template) BindBareHelpers(known func(name string) bool) {
+	bindBareHelpers(t.nodes, known)
+}
+
+func bindBareHelpers(nodes []Node, known func(name string) bool) {
+	for i := range nodes {
+		n := &nodes[i]
+		if n.Kind == NodeVar && n.Expr != nil && n.Expr.Helper == "" && !n.Expr.IsLiteral &&
+			len(n.Expr.Path) == 1 && known(n.Expr.Path[0]) {
+			n.Expr = &Expression{Helper: n.Expr.Path[0]}
+		}
+		bindBareHelpers(n.Body, known)
+		bindBareHelpers(n.Else, known)
 	}
 }
 

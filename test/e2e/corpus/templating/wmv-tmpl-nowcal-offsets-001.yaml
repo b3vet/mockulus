@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-nowcal-offsets-001
+behaviors: [B-TPL-NOW]
+wm: verified
+steps:
+  # wmv-tmpl-now-tokens-001 diffs how an instant is spelled. This case diffs
+  # where the instant lands when the offset names a month or a year, which is
+  # the one part of `now` that cannot be done with arithmetic on a span of
+  # time: how long a month is depends on which month it is, and WireMock
+  # counts them on a calendar.
+  #
+  # Nothing finer than a day appears here, for the reason that case gives —
+  # two servers answering microseconds apart agree on the date and cannot be
+  # relied on to agree on the second. Every offset below is a whole number of
+  # days or larger.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0027-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-nowcal-offsets-001/expiry"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "day={{now format='yyyy-MM-dd'}} m1={{now offset='1 months' format='yyyy-MM-dd'}} m7={{now offset='7 months' format='yyyy-MM-dd'}} m13={{now offset='-13 months' format='yyyy-MM-dd'}} y2={{now offset='2 years' format='yyyy-MM-dd'}} y4={{now offset='-4 years' format='yyyy-MM-dd'}} cent={{now offset='-1200 months' format='yyyy-MM-dd'}} far={{now offset='82200 months' format='yyyy-MM-dd'}} d3={{now offset='3 days' format='yyyy-MM-dd'}} h48={{now offset='-48 hours' format='yyyy-MM-dd'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The diff against the oracle is the whole assertion for the short offsets:
+  # a month is 30 or 31 days depending on where it falls, a year is 365 or
+  # 366, and both wrong answers are dates that read perfectly well. `m1` on a
+  # 31-day month lands a day early under a fixed 30, `y2` and `y4` land a day
+  # early on either side of a leap day under a fixed 365, and `m7` and `m13`
+  # accumulate the same error across a year boundary in both directions.
+  #
+  # The regex below is what remains assertable without an oracle, because
+  # "one month from today" has a different answer every day. Two fields carry
+  # more than shape.
+  #
+  # `cent` is a hundred years of months. It is the arrangement cov-tmpl-now-
+  # offsets-001 uses for the units that have fixed lengths — a count large
+  # enough that a conversion off by a factor lands in the wrong century — and
+  # here it also holds the negative direction at a scale where the drift is
+  # over a year.
+  #
+  # `far` is the field a single server can be wrong about visibly. 82200
+  # months is 6850 years to the calendar and 6752 to a fixed 30-day month, so
+  # the two readings differ in the leading digits and only the calendar one
+  # matches `88`. It is also past the point where a month expressed as a
+  # duration of nanoseconds overflows the count it is held in at all, which is
+  # a ceiling around 292 years that a date this far out is the only way to
+  # notice.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-nowcal-offsets-001/expiry
+    expect:
+      status: 200
+      body_regex: '^day=20\d\d-\d\d-\d\d m1=20\d\d-\d\d-\d\d m7=20\d\d-\d\d-\d\d m13=20\d\d-\d\d-\d\d y2=20\d\d-\d\d-\d\d y4=20\d\d-\d\d-\d\d cent=19\d\d-\d\d-\d\d far=88\d\d-\d\d-\d\d d3=20\d\d-\d\d-\d\d h48=20\d\d-\d\d-\d\d$'
+
+  # The control on the same body, and the reason the calendar change stops
+  # where it does. `d3` and `h48` above are spans of elapsed time and were
+  # already agreeing with the oracle; a fix that read every unit as a calendar
+  # quantity would move them. Here they are again over a month boundary, where
+  # a day offset that had learned about months would land on the last day of
+  # the shorter one instead of crossing into the next.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0027-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-nowcal-offsets-001/span"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "d30={{now offset='30 days' format='yyyy-MM-dd'}} d365={{now offset='-365 days' format='yyyy-MM-dd'}} h={{now offset='24 hours' format='yyyy-MM-dd'}} m={{now offset='-1440 minutes' format='yyyy-MM-dd'}} s={{now offset='0 seconds' format='yyyy-MM-dd'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-nowcal-offsets-001/span
+    expect:
+      status: 200
+      body_regex: '^d30=20\d\d-\d\d-\d\d d365=20\d\d-\d\d-\d\d h=20\d\d-\d\d-\d\d m=20\d\d-\d\d-\d\d s=20\d\d-\d\d-\d\d$'
+
+  # The other control. A body carrying these patterns and no transformer is
+  # served as written — the fixture that documents an offset rather than
+  # asking for one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0027-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-nowcal-offsets-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "m1={{now offset='1 months' format='yyyy-MM-dd'}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-nowcal-offsets-001/literal
+    expect:
+      status: 200
+      body: "m1={{now offset='1 months' format='yyyy-MM-dd'}}"
