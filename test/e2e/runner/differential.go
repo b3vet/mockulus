@@ -127,8 +127,28 @@ func (w *WireMock) waitReady(ctx context.Context) error {
 // Reset clears every stub between cases. Unlike the mockulus instances, which
 // cases share, the oracle is reset per case: WireMock has no namespacing of its
 // own, and a leftover stub from one case silently changes another's answer.
+// Reset returns the oracle to an empty deployment between cases.
+//
+// It takes two calls, because WireMock's own reset does not mean what the name
+// suggests: `POST /__admin/reset` restores the *baseline*, and a stub
+// registered with `"persistent": true` is part of that baseline — it is written
+// to the mappings directory and reloaded by the very call meant to clear it.
+// One case exercising the persistent flag would therefore leave its stub in the
+// oracle for the rest of the run, and every later case comparing a listing
+// would be diffed against a WireMock carrying a stub mockulus has no reason to
+// have. That failure names the innocent case rather than the one that caused
+// it, which is the expensive kind to debug. `DELETE /__admin/mappings` is the
+// call that removes persistent stubs, so the reset is both: the POST clears the
+// journal and scenario state, the DELETE clears the mappings for real.
 func (w *WireMock) Reset(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.Addr+"/__admin/reset", nil)
+	if err := w.do(ctx, http.MethodPost, "/__admin/reset"); err != nil {
+		return err
+	}
+	return w.do(ctx, http.MethodDelete, "/__admin/mappings")
+}
+
+func (w *WireMock) do(ctx context.Context, method, path string) error {
+	req, err := http.NewRequestWithContext(ctx, method, w.Addr+path, nil)
 	if err != nil {
 		return err
 	}
