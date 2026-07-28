@@ -290,7 +290,13 @@ func (m *Absent) Describe() string { return "absent" }
 // compile time into nodes that match by rule rather than by value, which is
 // what WireMock does by default.
 type EqualToJSON struct {
-	Expected            any
+	Expected any
+	// Exact is the same expected document with every number carried as an exact
+	// decimal, which is what confirms a match float64 precision accepted.
+	Exact any
+	// Numbers records whether that confirmation can change the answer at all, so
+	// the documents it cannot change never pay for it.
+	Numbers             numberWidth
 	IgnoreArrayOrder    bool
 	IgnoreExtraElements bool
 	// HasPlaceholders records that the expected document carries json-unit
@@ -323,7 +329,12 @@ func (m *EqualToJSON) matchOne(s Subject) bool {
 	if !ok {
 		return false
 	}
-	return jsonEqual(m.Expected, actual, m.IgnoreArrayOrder, m.IgnoreExtraElements)
+	if !jsonEqual(m.Expected, actual, m.IgnoreArrayOrder, m.IgnoreExtraElements) {
+		return false
+	}
+	// float64 cannot separate every pair of decimals, so a match it accepted is
+	// confirmed against the bytes whenever the digits could have rounded together.
+	return m.confirmNumbers(s)
 }
 
 // Describe implements Matcher.

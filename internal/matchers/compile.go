@@ -315,8 +315,17 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		if len(problems) > 0 {
 			return nil, problems
 		}
+		// The exact-decimal reading of the same document is built now too, so a
+		// match is confirmed at the precision WireMock compares at without the
+		// request path ever parsing the operand again.
+		exact, numbers, err := resolveExactExpected(resolved, source)
+		if err != nil {
+			return fail("equalToJson operand is not valid JSON: " + err.Error())
+		}
 		return &EqualToJSON{
 			Expected:            resolved,
+			Exact:               exact,
+			Numbers:             numbers,
 			Source:              source,
 			HasPlaceholders:     hasPlaceholders,
 			IgnoreArrayOrder:    boolField(doc, "ignoreArrayOrder"),

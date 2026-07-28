@@ -636,7 +636,10 @@ func sortedKeys(m map[string]json.RawMessage) []string {
 
 // WithIdentity returns the mapping document with its `id` and `uuid` fields set
 // to the given identifier, which is what a GET must return once the server has
-// assigned one. The rest of the document is preserved as registered.
+// assigned one. The rest of the document is preserved as registered, with the
+// one exception foldResponseHeaders describes: two spellings of one response
+// header name are one header, and the stored document has to say so or it stops
+// describing the response the server will serve.
 func WithIdentity(raw []byte, id string) ([]byte, error) {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -656,5 +659,6 @@ func WithIdentity(raw []byte, id string) ([]byte, error) {
 	}
 	doc["id"] = encoded
 	doc["uuid"] = encoded
+	foldResponseHeaders(doc)
 	return json.Marshal(doc)
 }

@@ -135,45 +135,280 @@ func parseResponseHeaders(errs *wmcompat.ErrorList, doc map[string]json.RawMessa
 	if !ok {
 		return
 	}
-	var entries map[string]json.RawMessage
-	if err := json.Unmarshal(v, &entries); err != nil {
+	entries, ok := headerEntries(v)
+	if !ok {
 		errs.Addf(wmcompat.CodeMalformed, "/response/headers", "headers must be a JSON object")
 		return
 	}
 
-	for _, name := range sortedKeys(entries) {
-		value := entries[name]
-
-		var single string
-		if err := json.Unmarshal(value, &single); err == nil {
-			resp.Headers = append(resp.Headers, Header{Name: name, Value: single})
-			continue
-		}
-		// A header may carry several values, which WireMock states as an array.
-		var multi []string
-		if err := json.Unmarshal(value, &multi); err == nil {
-			if len(multi) == 0 {
-				// An empty array names a header and then gives it nothing to
-				// say. Read literally the loop below runs zero times, which
-				// registers the stub and serves no such header — the stub the
-				// author wrote and the stub the server holds differ, and they
-				// only find out from the client that was waiting for the header.
-				// This is the one place in the response surface where mockulus
-				// itself was accept-and-ignore, which P3 forbids. WireMock
-				// refuses it too ("No value for X-A"), so no mappings file that
-				// registers there stops registering here.
-				errs.Addf(wmcompat.CodeMalformed, "/response/headers/"+name,
-					"a response header value array must not be empty")
+	for _, header := range foldHeaderSpellings(entries) {
+		// The pointer of any complaint names the spelling the author used, not
+		// the one the fold kept, so the message points at a line of their
+		// document rather than at a name that appears elsewhere in it.
+		for _, source := range header.sources {
+			var single string
+			if err := json.Unmarshal(source.value, &single); err == nil {
+				resp.Headers = append(resp.Headers, Header{Name: header.name, Value: single})
 				continue
 			}
-			for _, v := range multi {
-				resp.Headers = append(resp.Headers, Header{Name: name, Value: v})
+			// A header may carry several values, which WireMock states as an array.
+			var multi []string
+			if err := json.Unmarshal(source.value, &multi); err == nil {
+				if len(multi) == 0 {
+					// An empty array names a header and then gives it nothing to
+					// say. Read literally the loop below runs zero times, which
+					// registers the stub and serves no such header — the stub the
+					// author wrote and the stub the server holds differ, and they
+					// only find out from the client that was waiting for the header.
+					// This is the one place in the response surface where mockulus
+					// itself was accept-and-ignore, which P3 forbids. WireMock
+					// refuses it too ("No value for X-A"), so no mappings file that
+					// registers there stops registering here.
+					errs.Addf(wmcompat.CodeMalformed, "/response/headers/"+source.name,
+						"a response header value array must not be empty")
+					continue
+				}
+				for _, value := range multi {
+					resp.Headers = append(resp.Headers, Header{Name: header.name, Value: value})
+				}
+				continue
 			}
+			errs.Addf(wmcompat.CodeMalformed, "/response/headers/"+source.name,
+				"a response header value must be a string or an array of strings")
+		}
+	}
+}
+
+// headerEntry is one member of a response's `headers` object, kept in the order
+// the document wrote it.
+type headerEntry struct {
+	name  string
+	value json.RawMessage
+}
+
+// foldedHeader is one response header and every value the document gave it.
+type foldedHeader struct {
+	// name is the first spelling the document used for this header, which is
+	// the spelling that goes on the wire and into the stored document.
+	name string
+	// sources are the entries that named it, in the order they were written.
+	sources []headerEntry
+}
+
+// headerEntries reads a `headers` object as a token stream rather than into a
+// map, because a map cannot answer either of the questions this object asks.
+//
+// The order the author wrote is part of what the object means: the values of a
+// repeated header are a sequence, and `{"x-dup": "first", "X-DUP": "second"}`
+// asks for first and then second. Decoding into a map loses that order, and the
+// sorted walk that stood in for it reversed the pair whenever the second
+// spelling sorted ahead of the first — a stub whose two Set-Cookie lines then
+// arrived the wrong way round, with nothing in the document to explain it.
+//
+// A name written twice is the other question. JSON does not say what that
+// means, so it is worth stating what both deserializers do rather than
+// inheriting it: the last value wins, and it wins in the position the first one
+// claimed. Reporting false means the value was not an object at all.
+func headerEntries(raw json.RawMessage) ([]headerEntry, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, false
+	}
+	if delim, isDelim := tok.(json.Delim); !isDelim || delim != '{' {
+		return nil, false
+	}
+
+	var entries []headerEntry
+	at := make(map[string]int)
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		name, isName := key.(string)
+		if !isName {
+			return nil, false
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, false
+		}
+		if i, written := at[name]; written {
+			entries[i].value = value
 			continue
 		}
-		errs.Addf(wmcompat.CodeMalformed, "/response/headers/"+name,
-			"a response header value must be a string or an array of strings")
+		at[name] = len(entries)
+		entries = append(entries, headerEntry{name: name, value: value})
 	}
+	if _, err := dec.Token(); err != nil {
+		return nil, false
+	}
+	return entries, true
+}
+
+// foldHeaderSpellings groups the entries that name one header.
+//
+// Header names are case-insensitive on the wire, so `X-DUP` and `x-dup` are one
+// header carrying two values and not two headers carrying one each. WireMock
+// resolves them the same way and keeps the first spelling the document used,
+// for the served field lines as well as for the document it echoes back.
+//
+// The fold is over ASCII only. A field name is an RFC 9110 token, so a name
+// that folds anywhere else is a name that cannot be written to the wire, and
+// folding beyond ASCII would merge two headers on the strength of a rule
+// neither server will ever get to apply.
+func foldHeaderSpellings(entries []headerEntry) []foldedHeader {
+	folded := make([]foldedHeader, 0, len(entries))
+	at := make(map[string]int, len(entries))
+	for _, entry := range entries {
+		key := asciiLower(entry.name)
+		if i, seen := at[key]; seen {
+			folded[i].sources = append(folded[i].sources, entry)
+			continue
+		}
+		at[key] = len(folded)
+		folded = append(folded, foldedHeader{name: entry.name, sources: []headerEntry{entry}})
+	}
+	return folded
+}
+
+func asciiLower(s string) string {
+	lowered := []byte(s)
+	changed := false
+	for i, c := range lowered {
+		if c >= 'A' && c <= 'Z' {
+			lowered[i] = c + ('a' - 'A')
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	return string(lowered)
+}
+
+// foldResponseHeaders rewrites a mapping document's response headers so that the
+// document the server stores says what the response it will serve says.
+//
+// Two spellings of one name are one header, and the document has to spell that
+// out or it is not a description of the response any more: a client that reads
+// its mapping back sees two headers where the server holds one, and a client
+// that diffs the document it sent against the document WireMock stored sees a
+// difference that is not there. WireMock folds them into the first spelling
+// with the values in an array, and this is that document.
+//
+// It rewrites only when there is something to fold, so every mapping that names
+// each of its headers once is stored exactly as it was registered — including
+// the single-element array, which WireMock collapses to a string and this
+// deliberately does not, because that is a change to a document with no
+// behaviour behind it.
+//
+// Anything it does not fully understand it leaves alone. It runs on the way
+// into the store, ahead of the compile step on the paths that have one, so it
+// cannot be the thing that decides whether a document is well formed.
+func foldResponseHeaders(doc map[string]json.RawMessage) {
+	rawResponse, ok := doc["response"]
+	if !ok {
+		return
+	}
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(rawResponse, &response); err != nil || response == nil {
+		return
+	}
+	rawHeaders, ok := response["headers"]
+	if !ok {
+		return
+	}
+	entries, ok := headerEntries(rawHeaders)
+	if !ok {
+		return
+	}
+	headers, folded := foldedHeadersJSON(foldHeaderSpellings(entries))
+	if !folded {
+		return
+	}
+	response["headers"] = headers
+	rewritten, err := json.Marshal(response)
+	if err != nil {
+		return
+	}
+	doc["response"] = rewritten
+}
+
+// foldedHeadersJSON renders the folded headers back into a `headers` object,
+// reporting false when nothing needed folding or a value was not one this
+// package would have accepted anyway.
+//
+// The object is assembled by hand rather than marshalled from a map, because
+// the order of the names is the order they will be sent in and a map has none.
+// A header with one source keeps the exact bytes it was written with, so the
+// only values that change form are the ones that had to.
+func foldedHeadersJSON(headers []foldedHeader) (json.RawMessage, bool) {
+	folded := false
+	var out bytes.Buffer
+	out.WriteByte('{')
+	for i, header := range headers {
+		if i > 0 {
+			out.WriteByte(',')
+		}
+		name, err := json.Marshal(header.name)
+		if err != nil {
+			return nil, false
+		}
+		out.Write(name)
+		out.WriteByte(':')
+
+		if len(header.sources) == 1 {
+			out.Write(header.sources[0].value)
+			continue
+		}
+		folded = true
+
+		out.WriteByte('[')
+		values := 0
+		for _, source := range header.sources {
+			parts, ok := headerValues(source.value)
+			if !ok {
+				return nil, false
+			}
+			for _, part := range parts {
+				if values > 0 {
+					out.WriteByte(',')
+				}
+				out.Write(part)
+				values++
+			}
+		}
+		out.WriteByte(']')
+	}
+	out.WriteByte('}')
+	if !folded {
+		return nil, false
+	}
+	return out.Bytes(), true
+}
+
+// headerValues splits one entry's value into the values it contributes. A
+// string contributes itself and an array contributes its elements, both
+// verbatim, so a value survives the rewrite with the escapes it was written
+// with. Anything else reports false and stops the rewrite.
+func headerValues(raw json.RawMessage) ([]json.RawMessage, bool) {
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		return []json.RawMessage{raw}, true
+	}
+	var multi []json.RawMessage
+	if err := json.Unmarshal(raw, &multi); err != nil {
+		return nil, false
+	}
+	for _, value := range multi {
+		var s string
+		if err := json.Unmarshal(value, &s); err != nil {
+			return nil, false
+		}
+	}
+	return multi, true
 }
 
 func parseBody(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp *CompiledResponse) {

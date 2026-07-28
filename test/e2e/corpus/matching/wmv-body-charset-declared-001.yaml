@@ -1,0 +1,215 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-charset-declared-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-BINARYEQUALTO, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+#
+# Non-ASCII characters are written as escapes throughout, so the case says which
+# code points it means rather than trusting a font and an editor to agree.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A body is bytes and a matcher compares text, and the only thing on the wire
+  # that says how the two are related is the charset parameter of the request's
+  # own Content-Type. Every request below sends the SAME five bytes — the UTF-8
+  # spelling of "café" — and changes only what it says those bytes mean.
+  # The answers have to move with the declaration, or a stub written for an
+  # accented word answers one client and not another for reasons neither of them
+  # can see.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0001-4000-8000-000000000001",
+         "name": "equalTo an accented word",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-declared-001/accent",
+                     "bodyPatterns": [{"equalTo": "caf\u00e9"}]},
+         "response": {"status": 200, "body": "accent",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The same five bytes read one byte at a time spell this, which is the
+  # mojibake every ISO-8859-1 reader produces from UTF-8 input. A stub written
+  # for it is how the case asserts what the decoding IS, rather than only
+  # asserting that the accented spelling stops matching.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0001-4000-8000-000000000002",
+         "name": "equalTo the ISO-8859-1 reading of those bytes",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-declared-001/mojibake",
+                     "bodyPatterns": [{"equalTo": "caf\u00c3\u00a9"}]},
+         "response": {"status": 200, "body": "mojibake",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0001-4000-8000-000000000003",
+         "name": "equalTo an ASCII word",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-declared-001/ascii",
+                     "bodyPatterns": [{"equalTo": "cafe"}]},
+         "response": {"status": 200, "body": "ascii",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # binaryEqualTo over the same five bytes, base64-encoded. This is the control
+  # on the whole case: it compares the payload rather than the text the payload
+  # spells, so no declaration may move it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0001-4000-8000-000000000004",
+         "name": "binaryEqualTo those bytes",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-declared-001/bytes",
+                     "bodyPatterns": [{"binaryEqualTo": "Y2Fmw6k="}]},
+         "response": {"status": 200, "body": "bytes",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Declared UTF-8, which is what the bytes are.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/accent
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "accent"}
+
+  # Declaring nothing is declaring UTF-8: the default is not "the platform's
+  # encoding" and not "guess from the bytes".
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/accent
+      headers: {Content-Type: "text/plain"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "accent"}
+
+  # The same bytes declared ISO-8859-1 are a different string, and the stub
+  # written for the accented word stops answering them.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/accent
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body: "caf\u00e9"
+    expect: {status: 404}
+
+  # ...because they are these five characters instead. Together with the step
+  # above this is the whole claim: not "the charset makes matching stricter" but
+  # "the charset decides which text the bytes are".
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "mojibake"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "caf\u00e9"
+    expect: {status: 404}
+
+  # The spellings a client may write the parameter in. Case, spacing, the quoted
+  # form and the aliases all resolve the same way, and the last two rows are the
+  # controls that stop the parameter being found by substring: a parameter whose
+  # name merely ends in "charset" is not the charset parameter, and neither is
+  # one with no value.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: "text/plain;charset=iso-8859-1"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "mojibake"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: 'text/plain; charset="ISO-8859-1"'}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "mojibake"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: "text/plain; charset=latin1"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "mojibake"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1; boundary=xyz"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "mojibake"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: "text/plain; x-charset=ISO-8859-1"}
+      body: "caf\u00e9"
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/mojibake
+      headers: {Content-Type: "text/plain; charset"}
+      body: "caf\u00e9"
+    expect: {status: 404}
+
+  # ASCII is the same text under every charset here, so a declaration must not
+  # move an ASCII stub at all. This is what would fail if the decoding were ever
+  # a transliteration, a normalization, or applied to the operand as well.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/ascii
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body: "cafe"
+    expect: {status: 200, body: "ascii"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/ascii
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "cafe"
+    expect: {status: 200, body: "ascii"}
+
+  # And the byte comparison, which sees the same five bytes whatever the request
+  # says they mean. A charset that reached binaryEqualTo would make a stub keyed
+  # on an exact octet string depend on the sender's opinion of those octets.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/bytes
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "bytes"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-declared-001/bytes
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "caf\u00e9"
+    expect: {status: 200, body: "bytes"}
