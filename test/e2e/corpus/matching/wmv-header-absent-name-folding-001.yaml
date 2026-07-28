@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-absent-name-folding-001
+behaviors: [B-MATCH-ABSENT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Absence is decided by the same name lookup that decides everything else, so
+  # a criterion spelled in a case the wire never uses must still find the header
+  # and refuse. This is the failure mode that hides: a case-sensitive map lookup
+  # returns "not there", `absent` is satisfied, and the stub answers 200 to
+  # precisely the requests it was written to exclude. Nothing about that looks
+  # like an error from the outside.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0010-4000-8000-000000000001",
+         "name": "absence asked in lower case",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-absent-name-folding-001/lower",
+                     "headers": {"x-trace-id": {"absent": true}}},
+         "response": {"status": 200, "body": "lower",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0010-4000-8000-000000000002",
+         "name": "absence asked in upper case",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-absent-name-folding-001/upper",
+                     "headers": {"X-TRACE-ID": {"absent": true}}},
+         "response": {"status": 200, "body": "upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/wmv-header-absent-name-folding-001/lower}
+    expect: {status: 200, body: "lower"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-absent-name-folding-001/lower
+      headers: {X-Trace-Id: t1}
+    expect: {status: 404}
+
+  # The same header refuses the criterion whichever case the criterion was
+  # written in, which is what makes the two stubs one assertion rather than two.
+  - request: {method: GET, path: /e2e/wmv-header-absent-name-folding-001/upper}
+    expect: {status: 200, body: "upper"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-absent-name-folding-001/upper
+      headers: {X-Trace-Id: t1}
+    expect: {status: 404}
+
+  # The control that the lookup is a name comparison and not a fuzzy one: a
+  # header whose name merely resembles the criterion leaves it absent.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-absent-name-folding-001/lower
+      headers: {X-Trace-Identity: t1}
+    expect: {status: 200, body: "lower"}

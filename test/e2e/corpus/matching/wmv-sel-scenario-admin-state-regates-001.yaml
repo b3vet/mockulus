@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-admin-state-regates-001
+behaviors:
+  - B-ADMIN-SCENARIOS-NAME-STATE-PUT
+  - B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# Setting a scenario's state through the admin API is how a suite starts a test
+# from the middle of a flow instead of replaying every call that leads there, and
+# the only thing that makes it useful is that the state it writes is the state
+# the request path gates on. This case therefore asserts the write through the
+# serving path rather than through the scenarios listing: a listing that agreed
+# while the gate did not would be the more expensive bug of the two, and it is
+# the one an implementation keeping an admin-visible copy of the state would
+# have.
+#
+# The state is driven forwards, backwards, and back to the initial name, because
+# each is a different kind of write: forwards is the one a walk could also
+# produce, backwards runs against an edge no stub declares, and `Started` is the
+# name an untouched scenario already reads as.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0021-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-admin-state-regates-001",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "packed",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-admin-state-regates-001/parcel"},
+         "response": {"status": 200, "body": "waiting to be packed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        scenarioName: "wmv-sel-scenario-admin-state-regates-001"
+        requiredScenarioState: "Started"
+        newScenarioState: "packed"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0021-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-admin-state-regates-001",
+         "requiredScenarioState": "packed",
+         "newScenarioState": "shipped",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-admin-state-regates-001/parcel"},
+         "response": {"status": 200, "body": "now packed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The terminal stub sets no new state, which is what lets the case read the
+  # same state twice without the read changing it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0021-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-admin-state-regates-001",
+         "requiredScenarioState": "shipped",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-admin-state-regates-001/parcel"},
+         "response": {"status": 200, "body": "already shipped",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The baseline: nothing has written the state, so the flow is at the start.
+  # This request moves it on to `packed`.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-admin-state-regates-001/parcel}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "waiting to be packed"
+
+  # One state forward from where the request left it, skipping the call that
+  # would have taken the flow through it.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/wmv-sel-scenario-admin-state-regates-001/state
+      body: '{"state":"shipped"}'
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-admin-state-regates-001/parcel}
+    expect: {status: 200, body: "already shipped"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-admin-state-regates-001/parcel}
+    expect: {status: 200, body: "already shipped"}
+
+  # Backwards, along an edge no stub declares. The admin write sets the state; it
+  # does not walk the machine, so reachability is not a condition on it — and the
+  # stub it re-arms transitions from there exactly as it always did.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/wmv-sel-scenario-admin-state-regates-001/state
+      body: '{"state":"packed"}'
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-admin-state-regates-001/parcel}
+    expect: {status: 200, body: "now packed"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-admin-state-regates-001/parcel}
+    expect: {status: 200, body: "already shipped"}
+
+  # And back to the initial name, which has to behave like the state an untouched
+  # scenario is in rather than like a fourth state that merely shares its
+  # spelling.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/wmv-sel-scenario-admin-state-regates-001/state
+      body: '{"state":"Started"}'
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-admin-state-regates-001/parcel}
+    expect: {status: 200, body: "waiting to be packed"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-admin-state-regates-001/parcel}
+    expect: {status: 200, body: "now packed"}

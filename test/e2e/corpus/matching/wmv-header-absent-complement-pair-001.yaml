@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-absent-complement-pair-001
+behaviors: [B-MATCH-ABSENT, B-MATCH-AND-OR-NOT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `{"absent": true}` and `{"not": {"absent": true}}` are the two halves of one
+  # question, and over a header key they have to partition every request between
+  # them: exactly one of these two stubs answers each of the four requests
+  # below, whatever the header says. The partition is the assertion — either
+  # matcher tested on its own would still look right if both were quietly true
+  # for a missing header, or both false for a present one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0011-4000-8000-000000000001",
+         "name": "the header must not be there",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-absent-complement-pair-001/missing",
+                     "headers": {"X-Flag": {"absent": true}}},
+         "response": {"status": 200, "body": "missing",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0011-4000-8000-000000000002",
+         "name": "the header must be there, whatever it says",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-absent-complement-pair-001/present",
+                     "headers": {"X-Flag": {"not": {"absent": true}}}},
+         "response": {"status": 200, "body": "present",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/wmv-header-absent-complement-pair-001/missing}
+    expect: {status: 200, body: "missing"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-absent-complement-pair-001/missing
+      headers: {X-Flag: "1"}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/wmv-header-absent-complement-pair-001/present}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-absent-complement-pair-001/present
+      headers: {X-Flag: "1"}
+    expect: {status: 200, body: "present"}
+
+  # Presence is presence whatever the value is, so the second stub cannot have
+  # been satisfied by anything about the value itself.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-absent-complement-pair-001/present
+      headers: {X-Flag: "anything at all"}
+    expect: {status: 200, body: "present"}

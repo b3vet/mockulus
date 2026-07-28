@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-name-underscore-distinct-001
+behaviors: [B-REQ-HEADERS, B-MATCH-ABSENT]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Header names are compared case-insensitively and in no other way. The
+  # underscore spelling is the interesting counter-example because so much
+  # infrastructure conflates the two — CGI and its descendants map `X-Tag` onto
+  # the variable `HTTP_X_TAG`, and a name comparison written in that spirit
+  # would treat these two stubs as one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0002-4000-8000-000000000001",
+         "name": "hyphenated header criterion",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-name-underscore-distinct-001/hyphen",
+                     "headers": {"X-Tag": {"equalTo": "v"}}},
+         "response": {"status": 200, "body": "hyphen",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The absence form asks the same question from the other side: it can only be
+  # satisfied while the underscored name is genuinely not there.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0002-4000-8000-000000000002",
+         "name": "underscored header absent",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-name-underscore-distinct-001/underscore",
+                     "headers": {"X_Tag": {"absent": true}}},
+         "response": {"status": 200, "body": "underscore",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-underscore-distinct-001/hyphen
+      headers: {X-Tag: v}
+    expect: {status: 200, body: "hyphen"}
+
+  # The value is right and only the punctuation of the name differs, so this is
+  # the step that fails on a normaliser rather than on anything else.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-underscore-distinct-001/hyphen
+      headers: {X_Tag: v}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-underscore-distinct-001/underscore
+      headers: {X-Tag: v}
+    expect: {status: 200, body: "underscore"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-underscore-distinct-001/underscore
+      headers: {X_Tag: v}
+    expect: {status: 404}

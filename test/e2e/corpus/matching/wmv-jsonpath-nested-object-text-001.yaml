@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-nested-object-text-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Selecting an object rather than a leaf is legal, and what the inner matcher
+  # then sees is that object written back out as JSON. The stub below asks for a
+  # substring so the assertion is about the value having been carried into the
+  # text at all, rather than about the exact spacing of a re-serialised
+  # document, which is not part of the contract.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0018-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nested-object-text-001/customer",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.customer",
+                                                           "contains": "C-42"}}]},
+         "response": {"status": 200, "body": "customer",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-object-text-001/customer
+      body: '{"customer":{"id":"C-42"}}'
+    expect: {status: 200, body: "customer"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-object-text-001/customer
+      body: '{"customer":{"id":"C-99"}}'
+    expect: {status: 404}
+
+  # A string selected directly passes through as itself, so the same stub covers
+  # both shapes a client might send — which is the point of rendering rather
+  # than of requiring the selected node to be a scalar.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-object-text-001/customer
+      body: '{"customer":"C-42"}'
+    expect: {status: 200, body: "customer"}
+
+  # The rendering covers the whole selected subtree, not just its first level.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-object-text-001/customer
+      body: '{"customer":{"billing":{"ref":"C-42"}}}'
+    expect: {status: 200, body: "customer"}
+
+  # The value living outside the selected node is not in the text the matcher
+  # sees, which is what keeps this an assertion about the expression rather than
+  # about the body.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-object-text-001/customer
+      body: '{"customer":{"id":"C-99"},"note":"C-42"}'
+    expect: {status: 404}
+
+  # An empty object renders to text that contains nothing, and a missing key
+  # renders to nothing at all; both refuse.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-object-text-001/customer
+      body: '{"customer":{}}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-object-text-001/customer
+      body: '{"other":{"id":"C-42"}}'
+    expect: {status: 404}

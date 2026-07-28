@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-root-null-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A null operand is the one document that looks like a missing operand, so it
+  # is the one an implementation is most likely to lose on the way in: a decoder
+  # that lands it in a nullable field cannot tell "expected null" from "no
+  # equalToJson given", and the stub then either matches everything or nothing.
+  # It is kept on its own path so the answer is unambiguous.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0012-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-root-null-001/nul",
+                     "bodyPatterns": [{"equalToJson": "null"}]},
+         "response": {"status": 200, "body": "nul",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-null-001/nul
+      body: 'null'
+    expect: {status: 200, body: "nul"}
+
+  # Matching everything is the failure mode on one side: an empty object, a
+  # scalar and the string spelling all have to be refused.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-null-001/nul
+      body: '{}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-null-001/nul
+      body: '0'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-null-001/nul
+      body: '"null"'
+    expect: {status: 404}
+
+  # And an empty body is not a null document, which is the failure mode on the
+  # other side.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-null-001/nul
+      body: ''
+    expect: {status: 404}

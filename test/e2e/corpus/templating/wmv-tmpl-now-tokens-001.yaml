@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-now-tokens-001
+behaviors: [B-TPL-NOW]
+wm: verified
+steps:
+  # `now` is written with Java date patterns, and translating them is where a
+  # Go implementation quietly goes wrong: the two libraries agree on nothing
+  # about how a pattern is spelled, so every token is a separate mapping that
+  # either exists or silently passes through as literal text.
+  #
+  # Nothing finer than a day appears here, and that is deliberate rather than
+  # timid. This case is diffed against the oracle, and two servers answering
+  # the same request microseconds apart agree on the date and cannot be relied
+  # on to agree on the second. The seconds-level tokens are asserted by
+  # templating-now-001, which pins them as shape against a single server.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0014-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-now-tokens-001/calendar"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "day={{now format='yyyy-MM-dd'}} year={{now format='yyyy'}} yy={{now format='yy'}} month={{now format='MMMM'}} mon={{now format='MMM'}} dow={{now format='EEEE'}} dow3={{now format='EEE'}} dnum={{now format='d'}} plus={{now offset='3 days' format='yyyy-MM-dd'}} minus={{now offset='-7 days' format='yyyy-MM-dd'}} zz={{now format='ZZ'}} syd={{now timezone='Australia/Sydney' format='XXX'}} quoted={{now format=\"'day' yyyy\"}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Each token is asserted at the width and alphabet only that token produces.
+  # `yy` is two digits where `yyyy` is four, and `mon` is three letters where
+  # `month` is a word — so a translation table that mapped a long pattern onto
+  # its short counterpart, which is what a naive longest-match-last replacement
+  # does, fails on the pair rather than on neither.
+  #
+  # `quoted` is the escape rule: a run in single quotes is literal text, which
+  # is how an ISO-8601 pattern writes its own T and Z. A translator that
+  # substituted inside the quotes renders the day name where the word "day"
+  # should be.
+  #
+  # `zz` and `syd` are the same instant's offset at UTC and in a zone that is
+  # never at UTC, so a `timezone` option that was parsed and dropped renders
+  # "+0000" twice and fails.
+  - request: {port: mock, method: GET, path: /e2e/wmv-tmpl-now-tokens-001/calendar}
+    expect:
+      status: 200
+      body_regex: '^day=20\d\d-\d\d-\d\d year=20\d\d yy=\d\d month=(January|February|March|April|May|June|July|August|September|October|November|December) mon=[A-Z][a-z]{2} dow=(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) dow3=(Mon|Tue|Wed|Thu|Fri|Sat|Sun) dnum=\d{1,2} plus=20\d\d-\d\d-\d\d minus=20\d\d-\d\d-\d\d zz=\+0000 syd=\+1[01]:00 quoted=day 20\d\d$'
+
+  # The control. A body carrying date patterns is exactly the mock data that
+  # must survive untouched — a fixture recording somebody else's template, or a
+  # payload documenting the format a client should send.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0014-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-now-tokens-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "day={{now format='yyyy-MM-dd'}} dow={{now format='EEEE'}}"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-tmpl-now-tokens-001/literal}
+    expect:
+      status: 200
+      body: "day={{now format='yyyy-MM-dd'}} dow={{now format='EEEE'}}"

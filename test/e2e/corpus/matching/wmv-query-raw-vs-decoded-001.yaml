@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-raw-vs-decoded-001
+behaviors: [B-REQ-URL, B-REQ-URLPATH, B-REQ-QUERYPARAMETERS]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+#
+# Two criteria that both look like they are about the query, over two different
+# representations of it. `url` is a byte comparison against the request target
+# as received, so it sees the escapes; `queryParameters` is a comparison against
+# the parsed parameter, so it sees what the escapes stand for. A stub author
+# picking the wrong one gets a mock that works until a client changes its URL
+# encoder, and the pair of requests below is the cheapest way to tell them
+# apart.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000013",
+         "request": {"method": "GET", "url": "/e2e/wmv-query-raw-vs-decoded-001/raw?q=a%20b"},
+         "response": {"status": 200, "body": "raw", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-query-raw-vs-decoded-001/raw?q=a%20b"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000014",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-raw-vs-decoded-001/decoded",
+                     "queryParameters": {"q": {"equalTo": "a b"}}},
+         "response": {"status": 200, "body": "decoded", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-raw-vs-decoded-001/raw?q=a%20b"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "raw"
+
+  # The load-bearing step. `+` and `%20` are the same space to anything that
+  # parses the query, and a different byte to anything that compares it, so a
+  # `url` criterion refuses the spelling it was not written with.
+  - request: {method: GET, path: "/e2e/wmv-query-raw-vs-decoded-001/raw?q=a+b"}
+    expect: {status: 404}
+
+  # `url` covers the whole target, so a parameter it never mentioned breaks it
+  # as surely as a changed one would.
+  - request: {method: GET, path: "/e2e/wmv-query-raw-vs-decoded-001/raw?q=a%20b&extra=1"}
+    expect: {status: 404}
+
+  # The same two spellings against the parsed criterion, which is indifferent to
+  # them because it never sees them.
+  - request: {method: GET, path: "/e2e/wmv-query-raw-vs-decoded-001/decoded?q=a%20b"}
+    expect: {status: 200, body: "decoded"}
+  - request: {method: GET, path: "/e2e/wmv-query-raw-vs-decoded-001/decoded?q=a+b"}
+    expect: {status: 200, body: "decoded"}
+
+  # And a parameter the criterion set never names is ignored rather than
+  # refused, the opposite of what `url` did with the same addition.
+  - request: {method: GET, path: "/e2e/wmv-query-raw-vs-decoded-001/decoded?q=a%20b&extra=1"}
+    expect: {status: 200, body: "decoded"}

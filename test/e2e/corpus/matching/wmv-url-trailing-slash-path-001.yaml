@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-trailing-slash-path-001
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# The non-matching steps land on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2/#18). Status is the whole observable of a URL criterion, and it
+# is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Two stubs one trailing slash apart. Registering both is what turns this case
+  # into a claim: a server that folded the slash away would have to answer both
+  # requests with the same body, and whichever body it picked, one of the two
+  # assertions below would fail. A case with only the 404 half could be passed
+  # by a server that had stopped matching anything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0001-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-trailing-slash-path-001/bare"},
+         "response": {"status": 200, "body": "bare", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-trailing-slash-path-001/bare"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0001-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-trailing-slash-path-001/slash/"},
+         "response": {"status": 200, "body": "slash", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-path-001/bare}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "bare"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-path-001/slash/}
+    expect: {status: 200, body: "slash"}
+
+  # The slash is part of the path, not decoration on it. Neither criterion
+  # reaches the other's request, in either direction — the symmetry is what
+  # rules out a one-sided normalization, which is the shape this bug usually
+  # takes (strip a trailing slash on the way in, and every stub written with one
+  # stops matching).
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-path-001/bare/}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-path-001/slash}
+    expect: {status: 404}
+
+  # urlPath drops the query before comparing, so the query cannot rescue a path
+  # that already disagrees: the slash is still there once the `?a=1` is gone.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-trailing-slash-path-001/bare/?a=1"}
+    expect: {status: 404}
+
+  # And the same request without the slash matches, which is what proves the
+  # step above failed on the slash rather than on the query.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-trailing-slash-path-001/bare?a=1"}
+    expect: {status: 200, body: "bare"}

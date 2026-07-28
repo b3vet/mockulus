@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-delete-keeps-order-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-DELETE
+wm: verified
+# The closing step, after the last stub on the path is gone, is an unmatched
+# request — the one body WireMock fills with a near-miss table and mockulus does
+# not (deviation #2/#18).
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Four stubs on one path at equal priority, registered oldest to newest.
+  # Deleting from the middle of that order is the interesting operation: the
+  # survivors have to keep their relative places, and a store that renumbered
+  # them on removal — or that rebuilt the snapshot in whatever order the
+  # remaining documents came back from the index — would reshuffle a selection
+  # nobody asked it to touch.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0013-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-delete-keeps-order-001/lane"},
+         "response": {"status": 200, "body": "A"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0013-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-delete-keeps-order-001/lane"},
+         "response": {"status": 200, "body": "B"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0013-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-delete-keeps-order-001/lane"},
+         "response": {"status": 200, "body": "C"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0013-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-delete-keeps-order-001/lane"},
+         "response": {"status": 200, "body": "D"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-delete-keeps-order-001/lane}
+    expect: {status: 200, body: "D"}
+
+  # Removing a stub that was not serving changes nothing observable, which is
+  # the least a delete can be asked to do and the easiest thing to get wrong
+  # once removal touches a shared ordering.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0013-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-delete-keeps-order-001/lane}
+    expect: {status: 200, body: "D"}
+
+  # Removing the one that was serving hands the path to the next in line — C,
+  # the stub registered immediately before it, and not to A or to the one that
+  # was deleted first.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0013-4000-8000-000000000004}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-delete-keeps-order-001/lane}
+    expect: {status: 200, body: "C"}
+
+  # And underneath C sits A, the oldest, which is the survivor a renumbering
+  # would most likely have promoted out of turn.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0013-4000-8000-000000000003}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-delete-keeps-order-001/lane}
+    expect: {status: 200, body: "A"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0013-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-delete-keeps-order-001/lane}
+    expect: {status: 404}

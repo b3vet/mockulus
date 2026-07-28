@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-or-with-absent-branch-001
+behaviors: [B-MATCH-AND-OR-NOT, B-MATCH-ABSENT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # "Send this header with one of these values, or leave it off entirely" is how
+  # a stub describes an optional header, and `or` with an `absent` branch is the
+  # only spelling of it. It only works if the combinator composes the key-level
+  # matcher as well as the value-level ones — the branch that decides has
+  # nothing to look at.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0017-4000-8000-000000000001",
+         "name": "optional header, one accepted value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-or-with-absent-branch-001/optional",
+                     "headers": {"X-Api-Version": {"or": [{"absent": true},
+                                                          {"equalTo": "2"}]}}},
+         "response": {"status": 200, "body": "optional",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control differs from it in one branch only. Both stubs admit "2" and
+  # refuse "1", so any difference in how they answer a missing header is
+  # attributable to the `absent` branch and to nothing else about `or`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0017-4000-8000-000000000002",
+         "name": "two accepted values, no optional branch",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-or-with-absent-branch-001/required",
+                     "headers": {"X-Api-Version": {"or": [{"equalTo": "1"},
+                                                          {"equalTo": "2"}]}}},
+         "response": {"status": 200, "body": "required",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-or-with-absent-branch-001/optional
+      headers: {X-Api-Version: "2"}
+    expect: {status: 200, body: "optional"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-or-with-absent-branch-001/optional
+      headers: {X-Api-Version: "1"}
+    expect: {status: 404}
+
+  # The branch that makes it optional.
+  - request: {method: GET, path: /e2e/wmv-header-or-with-absent-branch-001/optional}
+    expect: {status: 200, body: "optional"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-or-with-absent-branch-001/required
+      headers: {X-Api-Version: "1"}
+    expect: {status: 200, body: "required"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-or-with-absent-branch-001/required
+      headers: {X-Api-Version: "3"}
+    expect: {status: 404}
+
+  # Without that branch the header is required, so `or` is not admitting the
+  # missing header on its own account.
+  - request: {method: GET, path: /e2e/wmv-header-or-with-absent-branch-001/required}
+    expect: {status: 404}

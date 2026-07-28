@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-slice-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A slice is indefinite: it returns however many elements fall inside it, so
+  # the bare form over a slice is really a question about the array's length.
+  # The two stubs are the two ends of the range notation, and the second one —
+  # open at the top — is the one that turns into an empty result on a short
+  # array rather than into a miss on a missing key.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000a-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-slice-001/head",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[0:2]"}]},
+         "response": {"status": 200, "body": "head",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000a-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-slice-001/tail",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[2:]"}]},
+         "response": {"status": 200, "body": "tail",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/head
+      body: '{"items":["a","b","c"]}'
+    expect: {status: 200, body: "head"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/tail
+      body: '{"items":["a","b","c"]}'
+    expect: {status: 200, body: "tail"}
+
+  # Two elements: the head slice is satisfied exactly, and the tail slice starts
+  # past the end and comes back empty. A slice clamped to the last element
+  # instead of to an empty range would match here.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/head
+      body: '{"items":["a","b"]}'
+    expect: {status: 200, body: "head"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/tail
+      body: '{"items":["a","b"]}'
+    expect: {status: 404}
+
+  # An array shorter than the slice's upper bound yields what there is, rather
+  # than nothing: the bound is a limit, not a requirement.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/head
+      body: '{"items":["a"]}'
+    expect: {status: 200, body: "head"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/head
+      body: '{"items":[]}'
+    expect: {status: 404}
+
+  # The nested form over a slice is any-of across the elements the slice
+  # selected, and the discriminator is a document holding the wanted value just
+  # outside the range: reading the whole array would answer 200.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000a-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-slice-001/within",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[0:2]",
+                                                           "equalTo": "b"}}]},
+         "response": {"status": 200, "body": "within",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/within
+      body: '{"items":["a","b","c"]}'
+    expect: {status: 200, body: "within"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-slice-001/within
+      body: '{"items":["x","y","b"]}'
+    expect: {status: 404}

@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-nonjson-body-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A body that is not JSON is a plain non-match and never an error, in both
+  # forms of the matcher (SPEC §6.7). The two stubs are here together because
+  # the forms take different routes through the evaluator — one asks whether
+  # anything was selected, the other hands what was selected to an inner matcher
+  # — and a 5xx escaping from either would be a compatibility break a client
+  # sees as an outage rather than as a miss.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0004-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nonjson-body-001/bare",
+                     "bodyPatterns": [{"matchesJsonPath": "$.a"}]},
+         "response": {"status": 200, "body": "bare",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0004-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nonjson-body-001/nested",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.a",
+                                                           "equalTo": "1"}}]},
+         "response": {"status": 200, "body": "nested",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control: a well-formed document both stubs accept.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/bare
+      body: '{"a":1}'
+    expect: {status: 200, body: "bare"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/nested
+      body: '{"a":1}'
+    expect: {status: 200, body: "nested"}
+
+  # Text that was never JSON.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/bare
+      body: 'not json at all'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/nested
+      body: 'not json at all'
+    expect: {status: 404}
+
+  # A document truncated after the value the path names. The prefix is enough to
+  # answer the expression, which is why this step exists: an evaluator that
+  # stopped reading once it had found its node would match here, and would then
+  # disagree with a parser on every partial upload a client ever sends.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/bare
+      body: '{"a":1'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/nested
+      body: '{"a":1'
+    expect: {status: 404}
+
+  # The same for a document whose tail is malformed well past the selected node.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/bare
+      body: '{"a":1,"b":}'
+    expect: {status: 404}
+
+  # An empty body has no document to walk, and that is a miss rather than a
+  # crash — the first thing a matcher gets wrong when it assumes a body is there.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/bare
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/nested
+    expect: {status: 404}
+
+  # Valid JSON of the wrong shape is a miss too, and by the ordinary rules
+  # rather than by the parse failing.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nonjson-body-001/bare
+      body: '[1,2]'
+    expect: {status: 404}

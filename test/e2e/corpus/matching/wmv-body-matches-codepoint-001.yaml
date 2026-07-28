@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-matches-codepoint-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+#
+# Non-ASCII characters are written as escapes so the case says which code points
+# it means rather than trusting a font and an editor to agree.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A body arrives as bytes, and the unit `.` counts is the code point. The two
+  # stubs below differ only in how many characters they demand, and each body is
+  # sent to both — so every subject produces a matched/unmatched pair rather
+  # than a single answer that could be explained by the pattern being broken.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000b-4000-8000-000000000001",
+         "name": "exactly one character",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-matches-codepoint-001/one",
+                     "bodyPatterns": [{"matches": "."}]},
+         "response": {"status": 200, "body": "one",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000b-4000-8000-000000000002",
+         "name": "exactly two characters",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-matches-codepoint-001/two",
+                     "bodyPatterns": [{"matches": ".."}]},
+         "response": {"status": 200, "body": "two",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The ASCII baseline, where bytes and characters coincide.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-codepoint-001/one, body: "a"}
+    expect: {status: 200, body: "one"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-codepoint-001/two, body: "a"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-codepoint-001/two, body: "ab"}
+    expect: {status: 200, body: "two"}
+
+  # U+00E9 occupies two bytes. It is one character, so it matches the
+  # single-dot pattern and not the double-dot one. An engine handed the body as
+  # raw bytes rather than as decoded text answers both of these backwards.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-codepoint-001/one, body: "\u00e9"}
+    expect: {status: 200, body: "one"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-codepoint-001/two, body: "\u00e9"}
+    expect: {status: 404}
+
+  # U+1F600 is four bytes in UTF-8 and a surrogate pair in UTF-16, so it is the
+  # subject that separates "one code point" from "one storage unit" as well as
+  # from "one byte". It is still one character, on both counts.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-codepoint-001/one, body: "\U0001f600"}
+    expect: {status: 200, body: "one"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-codepoint-001/two, body: "\U0001f600"}
+    expect: {status: 404}

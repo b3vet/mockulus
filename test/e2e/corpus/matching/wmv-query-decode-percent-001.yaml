@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-decode-percent-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-MATCH-EQUALTO-CASEINSENSITIVE, B-STUB-REQUEST]
+wm: verified
+# A non-matching step lands on a 404 whose body differs by design: WireMock
+# renders a near-miss diff table there and mockulus deliberately does not
+# (deviation #2). Only that body is given up; every other body, status and
+# header is still diffed against the oracle.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A criterion operand is written the way a person would say the value out
+  # loud, not the way it travels on the wire, so the parameter has to be
+  # percent-decoded before the comparison happens.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-percent-001/space",
+                     "queryParameters": {"q": {"equalTo": "a b"}}},
+         "response": {"status": 200, "body": "space", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            q: {equalTo: "a b"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-percent-001/slash",
+                     "queryParameters": {"q": {"equalTo": "a/b"}}},
+         "response": {"status": 200, "body": "slash", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control stub, whose operand is the percent-encoded text itself. It only
+  # matches a request that arrives doubly encoded, which is what proves the
+  # decoding happens exactly once rather than not at all or twice.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-percent-001/literal",
+                     "queryParameters": {"q": {"equalTo": "a%20b"}}},
+         "response": {"status": 200, "body": "literal", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-decode-percent-001/space?q=a%20b"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "space"
+
+  # Decoding does not make the comparison loose: a trailing space is still a
+  # different value, and equalTo still refuses it.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-percent-001/space?q=a%20b%20"}
+    expect: {status: 404}
+
+  # Three spellings of one value. A server comparing the raw query text would
+  # match the first and refuse the other two, so this trio is what separates
+  # "decoded then compared" from "compared as received".
+  - request: {method: GET, path: "/e2e/wmv-query-decode-percent-001/slash?q=a%2Fb"}
+    expect: {status: 200, body: "slash"}
+  - request: {method: GET, path: "/e2e/wmv-query-decode-percent-001/slash?q=a%2fb"}
+    expect: {status: 200, body: "slash"}
+  - request: {method: GET, path: "/e2e/wmv-query-decode-percent-001/slash?q=a/b"}
+    expect: {status: 200, body: "slash"}
+
+  # The other half of the control: an operand that looks encoded is compared as
+  # the literal text it is, so the encoded request does not satisfy it...
+  - request: {method: GET, path: "/e2e/wmv-query-decode-percent-001/literal?q=a%20b"}
+    expect: {status: 404}
+
+  # ...and the request that does satisfy it is the one carrying the encoding of
+  # that literal text. A second round of decoding would swap these two answers.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-percent-001/literal?q=a%2520b"}
+    expect: {status: 200, body: "literal"}

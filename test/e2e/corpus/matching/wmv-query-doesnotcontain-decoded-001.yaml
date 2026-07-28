@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-doesnotcontain-decoded-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A negative matcher over a query parameter has both of the properties its
+# positive twin has, and they pull in opposite directions: it reads the decoded
+# value, so a wire spelling that hides the forbidden character does not save the
+# request; and it takes any-of over a repeated parameter, so one value without
+# the forbidden character is enough even when another has it. An implementation
+# that inverted the positive result over the whole parameter would get the
+# second of those exactly backwards.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000042",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-doesnotcontain-decoded-001/nospace",
+                     "queryParameters": {"q": {"doesNotContain": " "}}},
+         "response": {"status": 200, "body": "nospace", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            q: {doesNotContain: " "}
+
+  - request: {method: GET, path: "/e2e/wmv-query-doesnotcontain-decoded-001/nospace?q=ab"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "nospace"
+
+  # Neither wire spelling of a space gets past the criterion, because neither is
+  # what the criterion is shown.
+  - request: {method: GET, path: "/e2e/wmv-query-doesnotcontain-decoded-001/nospace?q=a+b"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-doesnotcontain-decoded-001/nospace?q=a%20b"}
+    expect: {status: 404}
+
+  # An escaped plus is not a space, so this value is admitted — and it is the
+  # step that distinguishes decoding from stripping every `+` and `%NN`.
+  - request: {method: GET, path: "/e2e/wmv-query-doesnotcontain-decoded-001/nospace?q=a%2Bb"}
+    expect: {status: 200, body: "nospace"}
+
+  # Any-of over a repeated parameter, on a negative matcher: one value clear of
+  # the operand carries the criterion even though another is not, so this
+  # request matches while the second step's — the same offending value on its
+  # own — did not.
+  - request: {method: GET, path: "/e2e/wmv-query-doesnotcontain-decoded-001/nospace?q=a+b&q=ab"}
+    expect: {status: 200, body: "nospace"}
+
+  # With every value carrying a space there is nothing to hold on.
+  - request: {method: GET, path: "/e2e/wmv-query-doesnotcontain-decoded-001/nospace?q=a+b&q=c%20d"}
+    expect: {status: 404}
+
+  # And an absent parameter satisfies the negative form, as an absent header
+  # does — the parameter has no value that contains the operand because it has
+  # no value at all.
+  - request: {method: GET, path: /e2e/wmv-query-doesnotcontain-decoded-001/nospace}
+    expect: {status: 200, body: "nospace"}

@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-overwrite-full-replace-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-STUB-NAME
+  - B-STUB-METADATA
+  - B-STUB-PRIORITY
+wm: verified
+steps:
+  # A stub carrying every optional top-level field, registered through the
+  # create endpoint so the import below is unambiguously an edit of an existing
+  # document rather than the thing that put it there.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0016-4000-8000-000000000001",
+         "name": "the seeded document",
+         "priority": 2,
+         "metadata": {"suite": "wmv-admin-import-overwrite-full-replace-001"},
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-full-replace-001/doc"},
+         "response": {"status": 200, "body": "before", "headers": {"X-Mark": "one"}}}
+    expect: {status: 201}
+
+  # OVERWRITE is a replace and not a merge, and the replacement mentions none of
+  # those fields. The exact-document assertion is the assertion: under a merge
+  # the stub would keep a name, a priority and a metadata block the fixture file
+  # no longer contains, and the drift between the file and the deployment would
+  # only ever show up as a stub winning a selection it should have lost.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0016-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-full-replace-001/doc"},
+            "response": {"status": 200, "body": "after"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0016-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0016-4000-8000-000000000001"
+        uuid: "a1000008-0016-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-overwrite-full-replace-001/doc}
+        response: {status: 200, body: "after"}
+
+  # The replacement reached the serving snapshot too, and the header the old
+  # response set is gone from the wire. That is where a merge survives longest:
+  # a document can look clean while the compiled stub still carries the field.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-full-replace-001/doc}
+    expect:
+      status: 200
+      header_absent: [X-Mark]
+      body: "after"

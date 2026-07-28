@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-null-value-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # JSON null is a value, and the cheap way to get it wrong is to lower it onto
+  # whatever the comparison's host language calls empty — a nil interface, the
+  # zero of a number, a missing key. The expected document pairs a null with an
+  # ordinary member so every step below moves only the null and leaves a
+  # satisfied sibling behind it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0001-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-value-001/nullable",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":null,\"b\":1}"}]},
+         "response": {"status": 200, "body": "nullable",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/nullable
+      body: '{"a":null,"b":1}'
+    expect: {status: 200, body: "nullable"}
+
+  # An expected null still names a member that has to be there. A comparison
+  # that reads a missing key as a null value would accept this, and a stub
+  # written to require an explicitly-nulled field would stop saying anything.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/nullable
+      body: '{"b":1}'
+    expect: {status: 404}
+
+  # The four values most often confused with null, one per step: the string that
+  # spells it, the number that is falsy, the boolean that is falsy, and the
+  # empty container.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/nullable
+      body: '{"a":"null","b":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/nullable
+      body: '{"a":0,"b":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/nullable
+      body: '{"a":false,"b":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/nullable
+      body: '{"a":{},"b":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/nullable
+      body: '{"a":[],"b":1}'
+    expect: {status: 404}
+
+  # The other direction, which a one-sided implementation gets wrong on its own:
+  # an actual null where a value is expected is a mismatch, not a wildcard.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0001-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-value-001/valued",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}"}]},
+         "response": {"status": 200, "body": "valued",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/valued
+      body: '{"a":1}'
+    expect: {status: 200, body: "valued"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-value-001/valued
+      body: '{"a":null}'
+    expect: {status: 404}

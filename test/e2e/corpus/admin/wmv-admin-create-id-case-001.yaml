@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-create-id-case-001
+behaviors:
+  - B-STUB-ID-UUID
+  - B-ADMIN-MAPPINGS-POST
+  - B-ERR-109
+wm: verified
+steps:
+  # An id given in upper case is accepted and canonicalised to lower case on the
+  # way in, so the document that comes back is not the one that was sent. That
+  # is deliberate: the id is a UUID value, and its canonical spelling is the one
+  # every later comparison — the duplicate guard below, the listing, the path of
+  # a subsequent PUT — is made against.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "A1000008-0010-4000-8000-00000000000A",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-id-case-001/x"},
+         "response": {"status": 200, "body": "canonical"}}
+    expect:
+      status: 201
+      body_json:
+        id: "a1000008-0010-4000-8000-00000000000a"
+        uuid: "a1000008-0010-4000-8000-00000000000a"
+        request: {method: GET, urlPath: /e2e/wmv-admin-create-id-case-001/x}
+        response: {status: 200, body: "canonical"}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0010-4000-8000-00000000000a}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0010-4000-8000-00000000000a"
+        uuid: "a1000008-0010-4000-8000-00000000000a"
+        request: {method: GET, urlPath: /e2e/wmv-admin-create-id-case-001/x}
+        response: {status: 200, body: "canonical"}
+
+  # The half that makes the canonicalisation more than cosmetic. A third
+  # spelling of the same UUID is the same identity, so it collides — and the
+  # error names the canonical form rather than the text that was sent. Comparing
+  # ids as strings would accept this and leave two stubs sharing an identity
+  # that only differs by the shift key.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "A1000008-0010-4000-8000-00000000000a",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-id-case-001/y"},
+         "response": {"status": 200, "body": "second"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 109
+            title: "Duplicate stub mapping ID"
+            detail: "ID of the provided stub mapping 'a1000008-0010-4000-8000-00000000000a' is already taken by another stub mapping"
+
+  # The refused create left nothing behind, so the collision was decided before
+  # anything was written.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-id-case-001/x}
+    expect: {status: 200, body: "canonical"}

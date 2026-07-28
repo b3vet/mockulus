@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-status-message-splitting-001
+behaviors:
+  - B-RESP-STATUSMESSAGE
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2, and the differential is the point
+# rather than a formality: what has to agree is the header set. If either server
+# let the phrase terminate the status line, the injected name would appear in
+# its headers and only in its headers, and the replay would report it. Both send
+# the same three headers and the same body, so neither did.
+wm: verified
+steps:
+  # The status line ends at a CRLF, so a phrase carrying one is a header of the
+  # attacker's choosing appended to somebody else's response. Registration
+  # accepts the stub, because WireMock accepts it, and the phrase is neutralised
+  # instead — CR and LF each become '?', which is what the pinned WireMock puts
+  # on the wire for the same document.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0005-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-splitting-001/split"},
+         "response": {"status": 200, "statusMessage": "cr\rlf\nend",
+                      "body": "not split",
+                      "headers": {"Content-Type": "text/plain", "X-Declared": "one"}}}
+    expect:
+      status: 201
+      # Stored verbatim. The encoding is a property of what goes on the wire, so
+      # a client that reads the mapping back gets its own text returned rather
+      # than a rewritten one it never wrote.
+      body_json_subset:
+        response: {statusMessage: "cr\rlf\nend"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-splitting-001/split}
+    expect:
+      status: 200
+      status_message: "cr?lf?end"
+      # The headers are exactly the two the stub declared. A phrase that escaped
+      # the status line would put a third one here, and the differential would
+      # see it as a header WireMock never sent.
+      headers: {Content-Type: text/plain, X-Declared: "one"}
+      header_absent: [X-Injected, lf, end]
+      body: "not split"
+
+  # The complement: a phrase may legitimately contain characters that are not
+  # CR or LF, and those are not touched. Neutralising more than the two bytes
+  # that can split a response would be a silent rewrite of a phrase the author
+  # is entitled to choose.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0005-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-splitting-001/punctuated"},
+         "response": {"status": 200, "statusMessage": "Yes: it's fine - really (100%)",
+                      "body": "kept", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-splitting-001/punctuated}
+    expect:
+      status: 200
+      status_message: "Yes: it's fine - really (100%)"
+      headers: {Content-Type: text/plain}
+      body: "kept"
+
+  # A tab is the interesting middle case: it is a control character, it is legal
+  # inside a reason phrase, and it cannot end the status line. It survives, on
+  # both servers — so the rule is "the two bytes that split a response", not
+  # "anything below a space".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0005-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-splitting-001/tabbed"},
+         "response": {"status": 200, "statusMessage": "Tab\there",
+                      "body": "tabbed", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-splitting-001/tabbed}
+    expect:
+      status: 200
+      status_message: "Tab\there"
+      body: "tabbed"

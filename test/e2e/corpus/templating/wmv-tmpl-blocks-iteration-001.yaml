@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-blocks-iteration-001
+behaviors: [B-TPL-IF-UNLESS-EACH-WITH-LOOKUP, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # `#each` is only useful for building a response if the loop knows where it
+  # is, so the iteration variables are the contract rather than the block. This
+  # template uses all three at once: `@index` to number, `@first` to open and
+  # `@last` to decide whether a separator follows — which is the pattern that
+  # turns a list into valid JSON and the one that produces a trailing comma
+  # when it is wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0018-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-blocks-iteration-001/lines"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "marked=[{{#each (jsonPath request.body '$.xs')}}{{#if @first}}head:{{/if}}{{@index}}={{this}}{{#unless @last}};{{else}}:tail{{/unless}}{{/each}}] empty=[{{#each (jsonPath request.body '$.none')}}{{this}}{{/each}}] single=[{{#each (jsonPath request.body '$.one')}}{{@index}}:{{this}}{{#if @first}}F{{/if}}{{#if @last}}L{{/if}}{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `single` is the assertion the others cannot make: a one-element list is
+  # both the first and the last iteration, so the two flags have to be true
+  # together. An implementation that made them exclusive — first, then middle,
+  # then last — renders one of the two letters here and reads perfectly
+  # sensible on the three-element list above.
+  #
+  # `marked` places the separator between elements and the tail marker after
+  # the final one, so a `@last` that fired one iteration early moves both.
+  # `empty` is the collection that must produce nothing at all rather than one
+  # blank pass, which is the difference between a rendered array that parses
+  # and one carrying a stray separator.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-blocks-iteration-001/lines
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["a", "b", "c"], "none": [], "one": ["z"]}'
+    expect:
+      status: 200
+      body: "marked=[head:0=a;1=b;2=c:tail] empty=[] single=[0:zFL]"
+
+  # A second document, so the indices are counted rather than remembered: two
+  # elements here where there were three, and the tail marker moves with them.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-blocks-iteration-001/lines
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["p", "q"], "none": [], "one": ["y"]}'
+    expect:
+      status: 200
+      body: "marked=[head:0=p;1=q:tail] empty=[] single=[0:yFL]"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0018-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-blocks-iteration-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "marked=[{{#each (jsonPath request.body '$.xs')}}{{@index}}={{this}};{{/each}}]"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-blocks-iteration-001/literal
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["a", "b", "c"]}'
+    expect:
+      status: 200
+      body: "marked=[{{#each (jsonPath request.body '$.xs')}}{{@index}}={{this}};{{/each}}]"

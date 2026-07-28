@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-status-message-delay-001
+behaviors:
+  - B-RESP-STATUSMESSAGE
+  - B-RESP-FIXEDDELAYMILLISECONDS
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2: both servers serve the delayed,
+# phrased response with the same status, headers and body.
+wm: verified
+steps:
+  # Two response features that each take the response off the ordinary path:
+  # fixedDelayMilliseconds holds the write back on a timer, and statusMessage
+  # writes it by hand (deviation #7). A stub is entitled to both at once, and
+  # the combination is where an implementation is likeliest to have picked one
+  # path and quietly dropped the other feature.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0006-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-delay-001/slow-phrased"},
+         "response": {"status": 418, "statusMessage": "Slow Teapot",
+                      "body": "steeping", "fixedDelayMilliseconds": 80,
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {statusMessage: "Slow Teapot", fixedDelayMilliseconds: 80}
+
+  # What is asserted is the response, not the elapsed time: the E2E gate never
+  # asserts latency, which belongs to the perf suite on the reference rig
+  # (§19.3). What a delay can still break is the response itself, and on the
+  # hand-written path it can break it in a way the ordinary path cannot — a
+  # write deadline computed without the delay would cut this response off.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-delay-001/slow-phrased}
+    expect:
+      status: 418
+      status_message: "Slow Teapot"
+      headers: {Content-Type: text/plain}
+      body: "steeping"
+
+  # The two controls that isolate the pair. Delay without a phrase...
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0006-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-delay-001/slow-plain"},
+         "response": {"status": 418, "body": "steeping",
+                      "fixedDelayMilliseconds": 80,
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-delay-001/slow-plain}
+    expect:
+      status: 418
+      status_message: "I'm a teapot"
+      body: "steeping"
+
+  # ...and a phrase without a delay, so the answer above cannot be explained by
+  # either feature alone.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0006-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-delay-001/fast-phrased"},
+         "response": {"status": 418, "statusMessage": "Slow Teapot",
+                      "body": "steeping",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-delay-001/fast-phrased}
+    expect:
+      status: 418
+      status_message: "Slow Teapot"
+      body: "steeping"

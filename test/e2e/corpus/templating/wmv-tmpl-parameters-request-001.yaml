@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-parameters-request-001
+behaviors: [B-RESP-TRANSFORMERPARAMETERS, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # `parameters` and `request` are two roots in one context, and what makes
+  # them useful together is that one is fixed per stub and the other moves per
+  # request: the stub says what the deployment's limits are, the caller says
+  # which of them to quote.
+  #
+  # The parameters here are nested rather than flat, because a stub carrying
+  # configuration carries structure, and a transformer that flattened the map
+  # on the way in would answer the flat lookups and lose this one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0022-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-parameters-request-001/account"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "tier={{parameters.tier}} max={{parameters.limits.max}} picked={{lookup parameters request.query.key}} scaled={{math parameters.limits.max 'x' request.query.n}} method={{request.method}} absent=[{{parameters.nothing}}]",
+                      "transformers": ["response-template"],
+                      "transformerParameters": {"tier": "gold",
+                                                "limits": {"max": 9},
+                                                "alpha": "A",
+                                                "beta": "B"}}}
+    expect: {status: 201}
+
+  # `picked` is the join between the two roots: the key comes from the request
+  # and the value from the stub, so neither side alone produces this letter.
+  # `scaled` does the same in the other direction — a stub-side number and a
+  # request-side one in one expression, which is what a quota response looks
+  # like.
+  #
+  # `method` is here to prove the parameters did not shadow the request model:
+  # a transformer that merged its parameters into the root context would answer
+  # every request the same way until a parameter happened to be called
+  # `request`, and then answer nothing at all (SPEC §10.2).
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-parameters-request-001/account?key=beta&n=3
+    expect:
+      status: 200
+      body: "tier=gold max=9 picked=B scaled=27 method=GET absent=[]"
+
+  # The same stub, a different key and a different multiplier. Everything that
+  # came from the stub is unchanged and everything that came from the request
+  # has moved, which is the split the case exists to pin.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-parameters-request-001/account?key=alpha&n=2
+    expect:
+      status: 200
+      body: "tier=gold max=9 picked=A scaled=18 method=GET absent=[]"
+
+  # The control. `transformerParameters` without `transformers` is a stub
+  # carrying configuration for a transformer it never asked for, and the body
+  # is served as it stands rather than half-resolved.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0022-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-parameters-request-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "tier={{parameters.tier}} max={{parameters.limits.max}}",
+                      "transformerParameters": {"tier": "gold", "limits": {"max": 9}}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-parameters-request-001/literal?key=beta&n=3
+    expect:
+      status: 200
+      body: "tier={{parameters.tier}} max={{parameters.limits.max}}"

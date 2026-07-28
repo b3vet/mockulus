@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-empty-query-marker-path-001
+behaviors: [B-REQ-URLPATH, B-REQ-URLPATHPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A target ending in a bare `?` carries a query marker and no query, and it is
+  # the degenerate input for anything that strips the query by looking for that
+  # character. Both path criteria have to land on the same path they would have
+  # landed on without it — the marker belongs to the query, so removing the
+  # query removes it too. An implementation that only stripped a *non-empty*
+  # query would leave a trailing `?` glued to the path and refuse both stubs.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0026-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-empty-query-marker-path-001/p"},
+         "response": {"status": 200, "body": "path-only", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-empty-query-marker-path-001/p"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0026-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/wmv-url-empty-query-marker-path-001/r/[0-9]+"},
+         "response": {"status": 200, "body": "path-pattern", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The ordinary case first, so the marker steps are read against a control.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-empty-query-marker-path-001/p}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "path-only"
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-empty-query-marker-path-001/p?a=1"}
+    expect: {status: 200, body: "path-only"}
+
+  # The marker with nothing behind it.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-empty-query-marker-path-001/p?"}
+    expect: {status: 200, body: "path-only"}
+
+  # The same for the pattern field, where the stripped subject is then handed to
+  # an anchored regex: a stray `?` on the end would fail the `\z` anchor and the
+  # stub would look like a regex bug rather than a parsing one.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-empty-query-marker-path-001/r/12?"}
+    expect: {status: 200, body: "path-pattern"}
+
+  # And the anchor is genuinely still there, so the step above is not passing
+  # because the pattern had become a prefix rule.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-empty-query-marker-path-001/r/12x?"}
+    expect: {status: 404}

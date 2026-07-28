@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-discriminator-priority-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-STUB-PRIORITY, B-REQ-URLPATH]
+wm: verified
+# Every step here is answered by a stub, so there is no unmatched 404 and
+# nothing to exclude from the diff: bodies are compared throughout, which is
+# what makes the case an assertion about *which* stub answered.
+#
+# Three stubs on one path, told apart only by what they say about the query.
+# This is how a suite mocks one endpoint's several answers, and it only works if
+# the query criteria really do narrow the candidate set: a stub with no query
+# criteria matches every request the path matches, so it has to be the one that
+# loses whenever a narrower stub also matches. Explicit priorities decide that
+# here rather than registration order, so the case says what it means.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000026",
+         "priority": 1,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-discriminator-priority-001/orders",
+                     "queryParameters": {"status": {"equalTo": "open"}}},
+         "response": {"status": 200, "body": "open", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        priority: 1
+        request:
+          queryParameters:
+            status: {equalTo: "open"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000027",
+         "priority": 2,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-discriminator-priority-001/orders",
+                     "queryParameters": {"status": {"equalTo": "closed"}}},
+         "response": {"status": 200, "body": "closed", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The catch-all. It names no query criterion at all, which makes it a match
+  # for every request the other two match as well.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000028",
+         "priority": 9,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-discriminator-priority-001/orders"},
+         "response": {"status": 200, "body": "any", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-discriminator-priority-001/orders?status=open"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "open"
+
+  - request: {method: GET, path: "/e2e/wmv-query-discriminator-priority-001/orders?status=closed"}
+    expect: {status: 200, body: "closed"}
+
+  # A value neither narrow stub claims falls through to the catch-all rather
+  # than to a 404, so the query criteria are selecting among candidates rather
+  # than gating the path.
+  - request: {method: GET, path: "/e2e/wmv-query-discriminator-priority-001/orders?status=archived"}
+    expect: {status: 200, body: "any"}
+
+  # And the path on its own still reaches the stub that asks nothing of the
+  # query, which is what makes the two answers above attributable to the query.
+  - request: {method: GET, path: /e2e/wmv-query-discriminator-priority-001/orders}
+    expect: {status: 200, body: "any"}
+
+  # The consequence of any-of that a suite author trips over: a repeated
+  # parameter carrying both values satisfies both narrow stubs at once, so the
+  # request is not "the open one" — it is genuinely ambiguous, and priority is
+  # what resolves it. A server picking the first criterion to be satisfied, or
+  # the last, would answer these two steps differently from each other.
+  - request: {method: GET, path: "/e2e/wmv-query-discriminator-priority-001/orders?status=open&status=closed"}
+    expect: {status: 200, body: "open"}
+  - request: {method: GET, path: "/e2e/wmv-query-discriminator-priority-001/orders?status=closed&status=open"}
+    expect: {status: 200, body: "open"}

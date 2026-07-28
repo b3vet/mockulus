@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-caseinsensitive-false-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `caseInsensitive` is a modifier read by value. Reading it by presence
+  # instead is not hypothetical here: it is exactly what WireMock does to
+  # `absent`, where `{"absent": false}` deserializes to a presence flag and
+  # silently means its own opposite — the reason deviation #23 rejects that
+  # spelling rather than coercing it. This case pins that the sibling flag on
+  # equalTo does not have the same defect, on either server.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0007-4000-8000-000000000001",
+         "name": "caseInsensitive spelled out as false",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-caseinsensitive-false-001/explicit",
+                     "headers": {"X-Token": {"equalTo": "SeCrEt", "caseInsensitive": false}}},
+         "response": {"status": 200, "body": "explicit",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0007-4000-8000-000000000002",
+         "name": "caseInsensitive true, for the contrast",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-caseinsensitive-false-001/relaxed",
+                     "headers": {"X-Token": {"equalTo": "SeCrEt", "caseInsensitive": true}}},
+         "response": {"status": 200, "body": "relaxed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-false-001/explicit
+      headers: {X-Token: SeCrEt}
+    expect: {status: 200, body: "explicit"}
+
+  # The assertion: writing the flag out as false leaves the strict comparison
+  # in place. A server that switched on the field being mentioned answers 200.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-false-001/explicit
+      headers: {X-Token: secret}
+    expect: {status: 404}
+
+  # …and the control, which is what makes the step above an assertion about the
+  # value of the flag rather than about the flag being ignored altogether.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-false-001/relaxed
+      headers: {X-Token: secret}
+    expect: {status: 200, body: "relaxed"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-false-001/relaxed
+      headers: {X-Token: other}
+    expect: {status: 404}

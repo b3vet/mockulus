@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-criteria-echo-001
+behaviors:
+  - B-REQ-QUERYPARAMETERS
+  - B-MATCH-EQUALTO-CASEINSENSITIVE
+  - B-MATCH-CONTAINS-DOESNOTCONTAIN
+  - B-MATCH-MATCHES-DOESNOTMATCH
+  - B-MATCH-ABSENT
+wm: verified
+# The non-matching step lands on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A criterion set is a document a client wrote and expects to read back. The
+# things at risk on that round trip are the ones a server is tempted to
+# normalise: an operand that is the empty string, an operand that looks
+# percent-encoded, a modifier that could be folded into the operand, and a
+# key-level matcher that could be turned into a flag on the parameter. This case
+# registers all of them at once, reads the stub back, and then proves the
+# criteria still select — a document that survives the round trip but no longer
+# matches would be the worse failure of the two.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000039",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-criteria-echo-001/all",
+                     "queryParameters": {"plain": {"equalTo": "value"},
+                                         "ci": {"equalTo": "MiXeD", "caseInsensitive": true},
+                                         "sub": {"contains": "part"},
+                                         "re": {"matches": "[0-9]+"},
+                                         "blank": {"equalTo": ""},
+                                         "encoded": {"equalTo": "50%20off"},
+                                         "gone": {"absent": true},
+                                         "here": {"not": {"absent": true}}}},
+         "response": {"status": 200, "body": "all", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            plain: {equalTo: "value"}
+            ci: {equalTo: "MiXeD", caseInsensitive: true}
+            sub: {contains: "part"}
+            re: {matches: "[0-9]+"}
+            blank: {equalTo: ""}
+            encoded: {equalTo: "50%20off"}
+            gone: {absent: true}
+            here: {not: {absent: true}}
+
+  # Read back by id, the document is the one that was written: no operand was
+  # decoded on the way in, no empty operand was dropped as if it had not been
+  # given, and the modifier is still a field of its matcher.
+  - admin: {method: GET, path: /__admin/mappings/a1000003-0000-4000-8000-000000000039}
+    expect:
+      status: 200
+      body_json_subset:
+        request:
+          queryParameters:
+            plain: {equalTo: "value"}
+            ci: {equalTo: "MiXeD", caseInsensitive: true}
+            sub: {contains: "part"}
+            re: {matches: "[0-9]+"}
+            blank: {equalTo: ""}
+            encoded: {equalTo: "50%20off"}
+            gone: {absent: true}
+            here: {not: {absent: true}}
+
+  # And every one of the eight criteria holds for this request: `ci` in the
+  # wrong case, `encoded` sent doubly escaped because its operand is the text
+  # `50%20off`, `blank` present and empty, `gone` missing, `here` present.
+  - request:
+      method: GET
+      path: "/e2e/wmv-query-criteria-echo-001/all?plain=value&ci=MIXED&sub=xpartx&re=123&blank=&encoded=50%2520off&here=1"
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "all"
+
+  # The same request with `encoded` sent singly escaped, which decodes to
+  # `50 off` and not to the operand. A server that decoded the operand at
+  # registration would answer this one 200 and the one above 404.
+  - request:
+      method: GET
+      path: "/e2e/wmv-query-criteria-echo-001/all?plain=value&ci=MIXED&sub=xpartx&re=123&blank=&encoded=50%20off&here=1"
+    expect: {status: 404}

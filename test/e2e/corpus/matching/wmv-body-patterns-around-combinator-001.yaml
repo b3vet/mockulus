@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-patterns-around-combinator-001
+behaviors: [B-REQ-BODYPATTERNS, B-MATCH-AND-OR-NOT, B-MATCH-CONTAINS-DOESNOTCONTAIN]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # bodyPatterns is a conjunction of its entries, and one of the entries here is
+  # itself a disjunction. The two levels are easy to confuse once they are
+  # nested: an implementation that let the inner `or` decide the list would
+  # answer the third step 200, and one that let the list's AND reach inside the
+  # `or` would answer the first two 404. The four bodies pick those two mistakes
+  # apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0016-4000-8000-000000000001",
+         "name": "a combinator entry alongside a plain one",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-patterns-around-combinator-001/mixed",
+                     "bodyPatterns": [{"or": [{"contains": "a"}, {"contains": "b"}]},
+                                      {"doesNotContain": "z"}]},
+         "response": {"status": 200, "body": "mixed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Either branch of the disjunction satisfies the first entry, and the second
+  # entry holds for both bodies.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-around-combinator-001/mixed, body: "a"}
+    expect: {status: 200, body: "mixed"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-around-combinator-001/mixed, body: "b"}
+    expect: {status: 200, body: "mixed"}
+
+  # The disjunction is satisfied and the list still rejects, because the second
+  # entry is not inside it. This is the step that pins the outer AND.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-around-combinator-001/mixed, body: "az"}
+    expect: {status: 404}
+
+  # And the mirror image: the second entry is satisfied and neither branch of
+  # the first is, so the list rejects for the other reason.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-around-combinator-001/mixed, body: "c"}
+    expect: {status: 404}

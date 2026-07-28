@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-number-pairing-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Under ignoreArrayOrder the elements have to be paired rather than lined up,
+  # and the fast way to pair them is to key on something cheap — the raw token,
+  # a rendered string. That works until the two sides spell the same number
+  # differently, which is exactly what the requests below do.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0007-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-number-pairing-001/xs",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,2.5]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "paired",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-pairing-001/xs
+      body: '{"xs":[2.5,1]}'
+    expect: {status: 200, body: "paired"}
+
+  # Reordered and respelled at the same time, so the pairing has to be done on
+  # the numbers' values.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-pairing-001/xs
+      body: '{"xs":[2.50,1.0]}'
+    expect: {status: 200, body: "paired"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-pairing-001/xs
+      body: '{"xs":[25e-1,1e0]}'
+    expect: {status: 200, body: "paired"}
+
+  # The string spellings of the same two numbers pair with nothing: giving up
+  # the order does not give up the types.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-pairing-001/xs
+      body: '{"xs":["1","2.5"]}'
+    expect: {status: 404}
+
+  # Each expected element still needs its own partner, so a repeated 1 cannot
+  # answer both.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-pairing-001/xs
+      body: '{"xs":[1,1]}'
+    expect: {status: 404}
+
+  # And with only this flag the count is still exact.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-pairing-001/xs
+      body: '{"xs":[1,2.5,2.5]}'
+    expect: {status: 404}

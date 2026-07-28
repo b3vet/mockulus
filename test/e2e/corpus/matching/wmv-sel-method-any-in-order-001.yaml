@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-method-any-in-order-001
+behaviors: [B-REQ-METHOD, B-STUB-PRIORITY]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# `ANY` is a wildcard over the method (§5.3), and a wildcard invites the same
+# mistake a broad URL does: treating it as a fallback consulted only when no
+# stub names the method exactly. §5.3 has no such rung. An ANY stub is an
+# ordinary candidate and takes its place in the ordering by priority and
+# sequence like every other, which means a GET stub can lose its own method to
+# an ANY stub registered afterwards.
+#
+# The three lanes vary one thing each: registration order (A and B) and the
+# priority numbers (C). The wildcard wins in two of them and loses in one, so no
+# blanket rule about wildcards can produce this transcript.
+steps:
+  # Lane A: the wildcard first, the specific method second.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0005-4000-8000-000000000001",
+         "priority": 5,
+         "request": {"method": "ANY", "urlPath": "/e2e/wmv-sel-method-any-in-order-001/a"},
+         "response": {"status": 200, "body": "any",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {method: "ANY"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0005-4000-8000-000000000002",
+         "priority": 5,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-method-any-in-order-001/a"},
+         "response": {"status": 200, "body": "get",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-method-any-in-order-001/a}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "get"
+
+  # The wildcard is doing real work rather than being shadowed: it is the only
+  # stub that answers these, and it answers both a method with a body and one
+  # without.
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-method-any-in-order-001/a}
+    expect: {status: 200, body: "any"}
+
+  - request: {port: mock, method: DELETE, path: /e2e/wmv-sel-method-any-in-order-001/a}
+    expect: {status: 200, body: "any"}
+
+  # Lane B: the same pair, registered the other way round. The wildcard now
+  # answers the GET too — the request the other stub was written for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0005-4000-8000-000000000003",
+         "priority": 5,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-method-any-in-order-001/b"},
+         "response": {"status": 200, "body": "get",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0005-4000-8000-000000000004",
+         "priority": 5,
+         "request": {"method": "ANY", "urlPath": "/e2e/wmv-sel-method-any-in-order-001/b"},
+         "response": {"status": 200, "body": "any",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-method-any-in-order-001/b}
+    expect: {status: 200, body: "any"}
+
+  # And the GET stub was never excluded, only outranked.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0005-4000-8000-000000000004}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-method-any-in-order-001/b}
+    expect: {status: 200, body: "get"}
+
+  # Lane C: the wildcard is registered first — so it is the older — and given the
+  # stronger number. Priority decides, exactly as it would between two stubs
+  # naming the same method.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0005-4000-8000-000000000005",
+         "priority": 1,
+         "request": {"method": "ANY", "urlPath": "/e2e/wmv-sel-method-any-in-order-001/c"},
+         "response": {"status": 200, "body": "any",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0005-4000-8000-000000000006",
+         "priority": 2,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-method-any-in-order-001/c"},
+         "response": {"status": 200, "body": "get",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-method-any-in-order-001/c}
+    expect: {status: 200, body: "any"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0005-4000-8000-000000000005}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-method-any-in-order-001/c}
+    expect: {status: 200, body: "get"}

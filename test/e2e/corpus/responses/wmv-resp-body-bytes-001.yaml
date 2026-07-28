@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-body-bytes-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # `body` and `base64Body` are two spellings of one thing — a sequence of bytes
+  # — and the pair below says the same five bytes each way: NUL, 'A', DEL, and
+  # the two bytes of a UTF-8 e-acute. A NUL is where a body handled as a C
+  # string stops; DEL and the accented letter are where one handled as text gets
+  # re-encoded on the way out.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0012-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-bytes-001/literal"},
+         "response": {"status": 200, "body": "\u0000A\u007f\u00e9"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0012-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-bytes-001/encoded"},
+         "response": {"status": 200, "base64Body": "AEF/w6k="}}
+    expect: {status: 201}
+
+  # Both answers are the same five bytes. A server that truncated at the NUL
+  # would answer nothing at all; one that dropped the top-bit-set bytes would
+  # answer three; one that served the base64 operand verbatim would answer
+  # eight.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-bytes-001/literal}
+    expect:
+      status: 200
+      body: "\0A\x7fé"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-bytes-001/encoded}
+    expect:
+      status: 200
+      body: "\0A\x7fé"
+
+  # The control that keeps the equality above from being trivial: the operand of
+  # base64Body is not the body. This stub's operand is itself readable ASCII, so
+  # a server that skipped the decode would answer "aGVsbG8=" and would still
+  # satisfy any assertion that merely said some bytes came back.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0012-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-bytes-001/decoded"},
+         "response": {"status": 200, "base64Body": "aGVsbG8="}}
+    expect:
+      status: 201
+      # The operand is stored as it was written — base64 in, base64 back out —
+      # so what is decoded is the response, not the mapping.
+      body_json_subset:
+        response: {base64Body: "aGVsbG8="}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-bytes-001/decoded}
+    expect:
+      status: 200
+      body: "hello"

@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-not-combinator-001
+behaviors: [B-MATCH-MATCHESJSONPATH, B-MATCH-AND-OR-NOT]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # matchesJsonPath under `not` is how a stub says "documents that do not carry
+  # this", which is a criterion the matcher has no spelling of its own for. The
+  # combinator has to invert the whole criterion, including its treatment of a
+  # null and of a body that is not JSON — and those two are where an inversion
+  # applied further down, at the value rather than at the criterion, would give
+  # a different answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0022-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-not-combinator-001/public",
+                     "bodyPatterns": [{"not": {"matchesJsonPath": "$.admin"}}]},
+         "response": {"status": 200, "body": "public",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The key is there, so the inner criterion holds and the stub refuses.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-not-combinator-001/public
+      body: '{"admin":true}'
+    expect: {status: 404}
+
+  # The key is absent, so the inner criterion fails and the stub matches.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-not-combinator-001/public
+      body: '{"user":"ada"}'
+    expect: {status: 200, body: "public"}
+
+  # A null under the key is not a match for the bare form, so its negation is —
+  # which is the step that shows the inversion is over the criterion's answer
+  # rather than over the presence of the key.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-not-combinator-001/public
+      body: '{"admin":null}'
+    expect: {status: 200, body: "public"}
+
+  # An empty collection is the same argument, reached through the emptiness rule
+  # instead of through the null rule.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-not-combinator-001/public
+      body: '{"admin":[]}'
+    expect: {status: 200, body: "public"}
+
+  # A false is a present value, so the inner criterion holds and the negation
+  # refuses — the pair with the two steps above is what makes this an assertion
+  # about the criterion rather than about truthiness.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-not-combinator-001/public
+      body: '{"admin":false}'
+    expect: {status: 404}
+
+  # A body that is not JSON never matches the inner criterion, so it matches the
+  # negation. A stub written this way accepts everything it cannot read, which
+  # is worth pinning precisely because it surprises people.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-not-combinator-001/public
+      body: 'plain text'
+    expect: {status: 200, body: "public"}

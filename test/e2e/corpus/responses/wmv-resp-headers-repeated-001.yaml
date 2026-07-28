@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-headers-repeated-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2. The differential is what carries this
+# case: the runner reads a header through Header.Get, which returns only the
+# first value of a repeated one, while the diff normalizer joins every value it
+# received. A second value dropped, invented or reordered therefore shows up as
+# a header mismatch against the oracle even though the direct assertion below
+# would still pass.
+wm: verified
+steps:
+  # The array form is how WireMock states a header that legitimately repeats.
+  # Set-Cookie is the case with no alternative spelling at all: two cookies are
+  # two header lines, because folding them into one comma-joined value produces
+  # a header no client will parse back into two cookies.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0007-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-repeated-001/cookies"},
+         "response": {"status": 200, "body": "two cookies",
+                      "headers": {"Content-Type": "text/plain",
+                                  "Set-Cookie": ["session=abc; Path=/; HttpOnly",
+                                                 "theme=dark; Path=/"],
+                                  "X-Three": ["one", "two", "three"]}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers:
+            Set-Cookie: ["session=abc; Path=/; HttpOnly", "theme=dark; Path=/"]
+            X-Three: ["one", "two", "three"]
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-repeated-001/cookies}
+    expect:
+      status: 200
+      headers:
+        Content-Type: text/plain
+        # The first of the repeated values, which is all Header.Get exposes.
+        Set-Cookie: "session=abc; Path=/; HttpOnly"
+        X-Three: "one"
+      body: "two cookies"
+
+  # The control that gives the assertion above its teeth. This stub declares the
+  # same two values as ONE comma-joined string rather than as an array, and the
+  # wire is different: a single header line whose value contains a comma is not
+  # the same message as two header lines, and the normalizer's join tells them
+  # apart — "a,b" against "a, b". An implementation that flattened arrays into
+  # one value would make these two stubs indistinguishable, and this is the step
+  # that would report it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0007-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-repeated-001/joined"},
+         "response": {"status": 200, "body": "one line",
+                      "headers": {"Content-Type": "text/plain", "X-List": "a,b"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-repeated-001/joined}
+    expect:
+      status: 200
+      headers: {X-List: "a,b"}
+      body: "one line"
+
+  # And its twin, the same two values as an array. Header.Get sees only "a"
+  # here where it saw "a,b" above, so the two spellings are distinguishable from
+  # the case as well as from the diff.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0007-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-repeated-001/split"},
+         "response": {"status": 200, "body": "two lines",
+                      "headers": {"Content-Type": "text/plain", "X-List": ["a", "b"]}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-repeated-001/split}
+    expect:
+      status: 200
+      headers: {X-List: "a"}
+      body: "two lines"
+
+  # The last control: neither spelling leaks onto a stub that declared no such
+  # header, so what these responses carry is what their own mapping asked for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0007-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-repeated-001/bare"},
+         "response": {"status": 200, "body": "no lists here",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-repeated-001/bare}
+    expect:
+      status: 200
+      header_absent: [X-List, X-Three, Set-Cookie]
+      body: "no lists here"

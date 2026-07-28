@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-vs-formparameters-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-REQ-FORMPARAMETERS, B-REQ-METHOD]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A urlencoded form body is a query string that happens to live in the body, and
+# the two criterion sets that read them are spelled almost identically. Every
+# request below carries the same parameter name in both places with different
+# values, so a stub that read the wrong half would still find a value and still
+# answer — which is why the mistake survives a test that only ever puts the
+# value in one place.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000029",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-query-vs-formparameters-001/submit",
+                     "queryParameters": {"x": {"equalTo": "from-url"}}},
+         "response": {"status": 200, "body": "query", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000030",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-query-vs-formparameters-001/form",
+                     "formParameters": {"x": {"equalTo": "from-body"}}},
+         "response": {"status": 200, "body": "form", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: "/e2e/wmv-query-vs-formparameters-001/submit?x=from-url"
+      headers: {Content-Type: application/x-www-form-urlencoded}
+      body: "x=from-body"
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "query"
+
+  # The same two values, swapped. The body now carries exactly what the query
+  # criterion asks for and the criterion still refuses, so it is reading the URL
+  # and only the URL.
+  - request:
+      method: POST
+      path: "/e2e/wmv-query-vs-formparameters-001/submit?x=from-body"
+      headers: {Content-Type: application/x-www-form-urlencoded}
+      body: "x=from-url"
+    expect: {status: 404}
+
+  # The mirror image on the form side, with the same pair of requests.
+  - request:
+      method: POST
+      path: "/e2e/wmv-query-vs-formparameters-001/form?x=from-url"
+      headers: {Content-Type: application/x-www-form-urlencoded}
+      body: "x=from-body"
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "form"
+
+  - request:
+      method: POST
+      path: "/e2e/wmv-query-vs-formparameters-001/form?x=from-body"
+      headers: {Content-Type: application/x-www-form-urlencoded}
+      body: "x=from-url"
+    expect: {status: 404}
+
+  # A query criterion needs no body at all, which the form criterion cannot say.
+  - request: {method: POST, path: "/e2e/wmv-query-vs-formparameters-001/submit?x=from-url"}
+    expect: {status: 200, body: "query"}

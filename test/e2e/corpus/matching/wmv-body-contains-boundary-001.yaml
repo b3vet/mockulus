@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-contains-boundary-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # "aba" is chosen because it overlaps itself: in "ababa" the operand occurs
+  # twice, sharing their middle character. A substring search that consumed the
+  # text it had already scanned, or that stepped forward by the operand's length
+  # after a partial match, gets one of the bodies below wrong — and which one it
+  # gets wrong is the tell.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0005-4000-8000-000000000001",
+         "name": "contains a self-overlapping operand",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-contains-boundary-001/aba",
+                     "bodyPatterns": [{"contains": "aba"}]},
+         "response": {"status": 200, "body": "aba",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The operand as the whole body: "contains" includes the improper case, so
+  # equality is a match.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "aba"}
+    expect: {status: 200, body: "aba"}
+
+  # At the very start of the body, and at the very end. Both boundaries are
+  # pinned, because an off-by-one in either direction of the scan window would
+  # miss exactly one of them.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "abax"}
+    expect: {status: 200, body: "aba"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "xaba"}
+    expect: {status: 200, body: "aba"}
+
+  # "abab" contains the operand once and then starts it again without
+  # finishing; "ababa" finishes the second occurrence out of characters the
+  # first one already used. Both are matches, and a scanner that restarts past
+  # the failed tail rather than at the next position reports the second one as
+  # a miss.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "abab"}
+    expect: {status: 200, body: "aba"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "ababa"}
+    expect: {status: 200, body: "aba"}
+
+  # A body shorter than the operand cannot contain it, however much of it is
+  # there. This is the prefix that the two matching bodies above both begin
+  # with, so it separates "found a prefix" from "found the operand".
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "ab"}
+    expect: {status: 404}
+
+  # Every character of the operand is present and in order, but not adjacent.
+  # contains is a substring test, not a subsequence test.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "ab a"}
+    expect: {status: 404}
+
+  # The same three characters in a different order.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-boundary-001/aba, body: "baa"}
+    expect: {status: 404}

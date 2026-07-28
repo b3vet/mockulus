@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-cookies-001
+behaviors: [B-RESP-TRANSFORMERS, B-REQ-COOKIES]
+wm: verified
+steps:
+  # Cookies arrive packed into one header and reach the template as separate
+  # names, so the model has to split them. Two of them in a single `Cookie`
+  # header is the shape every browser sends and the one a naive split on the
+  # header value gets wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0007-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-cookies-001/session"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "first={{request.cookies.first}} second={{request.cookies.second}} absent=[{{request.cookies.gone}}] shout={{upper request.cookies.first}} present={{#if request.cookies.first}}yes{{else}}no{{/if}} missing={{#if request.cookies.gone}}yes{{else}}no{{/if}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `second` is the assertion the split has to earn: a model that took the
+  # whole header as one cookie renders the first name with a value carrying the
+  # rest of the header, and nothing under the second name at all.
+  #
+  # `shout` puts the cookie through a helper rather than straight into the
+  # body, because the value has to be a string a helper can take — a cookie
+  # modelled as its own object renders fine on its own and breaks the moment a
+  # stub composes with it.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-cookies-001/session
+      headers: {Cookie: "first=f1; second=s2"}
+    expect:
+      status: 200
+      body: "first=f1 second=s2 absent=[] shout=F1 present=yes missing=no"
+
+  # The same stub with no cookies at all. Every name renders as nothing and the
+  # `#if` takes the other branch, which is what lets one stub serve the
+  # authenticated and anonymous shapes of a response without a second mapping.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-cookies-001/session
+    expect:
+      status: 200
+      body: "first= second= absent=[] shout= present=no missing=no"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0007-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-cookies-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "first={{request.cookies.first}} second={{request.cookies.second}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-cookies-001/literal
+      headers: {Cookie: "first=f1; second=s2"}
+    expect:
+      status: 200
+      body: "first={{request.cookies.first}} second={{request.cookies.second}}"

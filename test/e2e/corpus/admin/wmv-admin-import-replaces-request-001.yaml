@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-replaces-request-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-REQ-URLPATH
+wm: verified
+# The step showing the retired path no longer matches is an unmatched request,
+# whose body is the near-miss table WireMock renders and mockulus does not
+# (deviation #2/#18).
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0019-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-replaces-request-001/old"},
+         "response": {"status": 200, "body": "old"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-replaces-request-001/old}
+    expect: {status: 200, body: "old"}
+
+  # Re-importing the same id under a different URL is how a fixture file records
+  # that an endpoint moved. Since the id is the identity, the stub moves with
+  # it: this is one stub changing address, not two stubs at two addresses.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0019-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-replaces-request-001/new"},
+            "response": {"status": 200, "body": "new"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-replaces-request-001/new}
+    expect: {status: 200, body: "new"}
+
+  # The old address is gone. An overwrite that replaced only the response — the
+  # half most edits actually touch — would leave the stub answering here too,
+  # and the author would be looking at a deployment that serves a URL their
+  # fixture file no longer contains.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-replaces-request-001/old}
+    expect: {status: 404}
+
+  # It is still the same stub, under the same id, rather than a fresh one that
+  # happens to have replaced it — which is what makes the previous step a move
+  # and not a coincidence of two independent writes.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0019-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0019-4000-8000-000000000001"
+        uuid: "a1000008-0019-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-replaces-request-001/new}
+        response: {status: 200, body: "new"}

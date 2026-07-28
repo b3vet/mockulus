@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-criteria-roundtrip-001
+behaviors: [B-REQ-HEADERS, B-STUB-REQUEST, B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-ABSENT, B-MATCH-AND-OR-NOT]
+wm: verified
+# The non-matching step lands on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and the matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A matcher is compiled once at registration and evaluated from the compiled
+  # form afterwards, so the document a client reads back is rendered from
+  # something other than the bytes it sent. Anything the compiler does not need
+  # can be dropped there without a single request ever noticing: the flag on an
+  # equalTo, the shape of a combinator, the exact spelling of a pattern. That
+  # matters because the stored document is what a person debugging a suite reads
+  # to decide what the stub was supposed to do, and because it is what an export
+  # re-imports. This stub carries one criterion of every header-matching kind at
+  # once and both reads have to return all of them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0024-4000-8000-000000000001",
+         "name": "one criterion of every kind",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-criteria-roundtrip-001/all",
+                     "headers": {"X-Token": {"equalTo": "Ab", "caseInsensitive": true},
+                                 "X-Env": {"contains": "prod"},
+                                 "X-Ver": {"matches": "v[0-9]+"},
+                                 "X-Trace": {"doesNotMatch": "t[0-9]+"},
+                                 "X-Debug": {"absent": true},
+                                 "X-Region": {"or": [{"equalTo": "us"},
+                                                     {"equalTo": "eu"}]}}},
+         "response": {"status": 200, "body": "roundtrip",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "a1000002-0024-4000-8000-000000000001"
+        request:
+          headers:
+            X-Token: {equalTo: "Ab", caseInsensitive: true}
+            X-Env: {contains: "prod"}
+            X-Ver: {matches: "v[0-9]+"}
+            X-Trace: {doesNotMatch: "t[0-9]+"}
+            X-Debug: {absent: true}
+            X-Region:
+              or:
+                - {equalTo: "us"}
+                - {equalTo: "eu"}
+
+  # The echo on the write is the cheaper read and could be served straight from
+  # the request body without the stored form ever being consulted. Reading the
+  # stub back by id is the one that goes through storage.
+  - admin: {method: GET, path: /__admin/mappings/a1000002-0024-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "a1000002-0024-4000-8000-000000000001"
+        request:
+          method: GET
+          urlPath: /e2e/wmv-header-criteria-roundtrip-001/all
+          headers:
+            X-Token: {equalTo: "Ab", caseInsensitive: true}
+            X-Env: {contains: "prod"}
+            X-Ver: {matches: "v[0-9]+"}
+            X-Trace: {doesNotMatch: "t[0-9]+"}
+            X-Debug: {absent: true}
+            X-Region:
+              or:
+                - {equalTo: "us"}
+                - {equalTo: "eu"}
+
+  # And the document that came back describes a stub that actually behaves that
+  # way, which is what keeps the two reads above from being assertions about a
+  # field nothing consults.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-criteria-roundtrip-001/all
+      headers: {X-Token: "AB", X-Env: "prod-1", X-Ver: "v9", X-Trace: "boot", X-Region: "eu"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "roundtrip"
+
+  # The `or` is the criterion most likely to have survived the round trip as a
+  # shape and not as a decision, so the request that breaks is the one it names.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-criteria-roundtrip-001/all
+      headers: {X-Token: "AB", X-Env: "prod-1", X-Ver: "v9", X-Trace: "boot", X-Region: "ap"}
+    expect: {status: 404}

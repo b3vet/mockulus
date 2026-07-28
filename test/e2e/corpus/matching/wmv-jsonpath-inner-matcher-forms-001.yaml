@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-inner-matcher-forms-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Three stubs over one expression, differing only in the inner matcher. The
+  # documents below are chosen so that no two of the three answer alike: an
+  # implementation that ignored the inner matcher and fell back to presence
+  # would answer 200 to all nine steps, and one that treated every inner matcher
+  # as a substring test would answer 200 where `equalTo` and `matches` refuse.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0015-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-inner-matcher-forms-001/exact",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.customer.id",
+                                                           "equalTo": "AB1"}}]},
+         "response": {"status": 200, "body": "exact",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0015-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-inner-matcher-forms-001/substring",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.customer.id",
+                                                           "contains": "B1"}}]},
+         "response": {"status": 200, "body": "substring",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0015-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-inner-matcher-forms-001/pattern",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.customer.id",
+                                                           "matches": "[A-Z]{2}[0-9]"}}]},
+         "response": {"status": 200, "body": "pattern",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The value all three accept.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/exact
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "exact"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/substring
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "substring"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/pattern
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "pattern"}
+
+  # One character longer. `contains` still holds; `equalTo` does not, and
+  # neither does `matches` — the pattern is required to cover the whole value
+  # rather than to be found inside it, which is the anchoring rule the regex
+  # matchers carry everywhere else in this corpus.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/exact
+      body: '{"customer":{"id":"AB10"}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/substring
+      body: '{"customer":{"id":"AB10"}}'
+    expect: {status: 200, body: "substring"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/pattern
+      body: '{"customer":{"id":"AB10"}}'
+    expect: {status: 404}
+
+  # A value shaped like the pattern but not carrying the substring, which is the
+  # third corner: only `matches` accepts it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/exact
+      body: '{"customer":{"id":"XY9"}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/substring
+      body: '{"customer":{"id":"XY9"}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/pattern
+      body: '{"customer":{"id":"XY9"}}'
+    expect: {status: 200, body: "pattern"}
+
+  # The expression selecting nothing refuses in all three, so an inner matcher
+  # is never consulted about a value that is not there.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/exact
+      body: '{"customer":{}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/substring
+      body: '{"customer":{}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-inner-matcher-forms-001/pattern
+      body: '{"customer":{}}'
+    expect: {status: 404}

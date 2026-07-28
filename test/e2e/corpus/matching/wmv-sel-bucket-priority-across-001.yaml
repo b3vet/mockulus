@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-bucket-priority-across-001
+behaviors: [B-STUB-PRIORITY, B-REQ-URL, B-REQ-URLPATH, B-REQ-URLPATTERN]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# wmv-sel-bucket-tiebreak-recency-001 holds priority constant and shows the
+# sequence tie-break reaching across the three URL index buckets. This case is
+# the rung above it: the priority comparison has to reach across them too. The
+# three stubs here are separated by their numbers, and the numbers are arranged
+# so that the winner is the stub an index-first lookup would consider last —
+# the pattern, which is also the oldest — and so that the exact-URL stub, which
+# such a lookup would answer with immediately, is the weakest of the three.
+#
+# The lanes are a control pair: the same three shapes, the same registration
+# order, only the numbers permuted. The winner follows the numbers.
+steps:
+  # Lane A: pattern strongest, path in the middle, exact URL weakest, registered
+  # from strongest to weakest so that recency argues against the winner at every
+  # step of the unwind below.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0010-4000-8000-000000000001",
+         "priority": 1,
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/wmv-sel-bucket-priority-across-001/a/lane\\?v=[0-9]+"},
+         "response": {"status": 200, "body": "pattern",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 1}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0010-4000-8000-000000000002",
+         "priority": 5,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-bucket-priority-across-001/a/lane"},
+         "response": {"status": 200, "body": "path",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0010-4000-8000-000000000003",
+         "priority": 9,
+         "request": {"method": "GET",
+                     "url": "/e2e/wmv-sel-bucket-priority-across-001/a/lane?v=1"},
+         "response": {"status": 200, "body": "url",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 9}
+
+  # The oldest, most expensive candidate answers, because 1 is the lowest number
+  # on the table. The exact-URL stub is a full match for this request and is
+  # skipped.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-sel-bucket-priority-across-001/a/lane?v=1"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "pattern"
+
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0010-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-sel-bucket-priority-across-001/a/lane?v=1"}
+    expect: {status: 200, body: "path"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0010-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-sel-bucket-priority-across-001/a/lane?v=1"}
+    expect: {status: 200, body: "url"}
+
+  # Lane B: same shapes, same order of registration, numbers reversed. The
+  # exact-URL stub now wins — and this is the step that stops lane A being read
+  # as "patterns are consulted first", because the pattern is registered first
+  # here too and loses.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0010-4000-8000-000000000004",
+         "priority": 9,
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/wmv-sel-bucket-priority-across-001/b/lane\\?v=[0-9]+"},
+         "response": {"status": 200, "body": "pattern",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0010-4000-8000-000000000005",
+         "priority": 5,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-bucket-priority-across-001/b/lane"},
+         "response": {"status": 200, "body": "path",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0010-4000-8000-000000000006",
+         "priority": 1,
+         "request": {"method": "GET",
+                     "url": "/e2e/wmv-sel-bucket-priority-across-001/b/lane?v=1"},
+         "response": {"status": 200, "body": "url",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-sel-bucket-priority-across-001/b/lane?v=1"}
+    expect: {status: 200, body: "url"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0010-4000-8000-000000000006}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-sel-bucket-priority-across-001/b/lane?v=1"}
+    expect: {status: 200, body: "path"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0010-4000-8000-000000000005}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-sel-bucket-priority-across-001/b/lane?v=1"}
+    expect: {status: 200, body: "pattern"}

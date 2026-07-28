@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-multivalue-anyof-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-STUB-REQUEST]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A repeated parameter is any-of at the parameter, and the parameters are a
+# conjunction with each other. Both halves have to be pinned together, because
+# the plausible wrong implementation — pooling every value in the query into one
+# bag and asking whether some member satisfies each criterion — gets the first
+# half right and the second half wrong, and only a request whose values are
+# right but attached to the wrong names can tell.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000015",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-multivalue-anyof-001/pick",
+                     "queryParameters": {"tag": {"equalTo": "gold"}}},
+         "response": {"status": 200, "body": "pick", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000016",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-multivalue-anyof-001/pair",
+                     "queryParameters": {"a": {"equalTo": "1"}, "b": {"equalTo": "2"}}},
+         "response": {"status": 200, "body": "pair", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pick?tag=gold"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "pick"
+
+  # The satisfying value at each of the three positions. An implementation that
+  # read the first value, or the last, would pass exactly one of these and fail
+  # the other two, and reading the first is the one a map-of-string API makes
+  # easiest to write by accident.
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pick?tag=gold&tag=silver&tag=bronze"}
+    expect: {status: 200, body: "pick"}
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pick?tag=silver&tag=gold&tag=bronze"}
+    expect: {status: 200, body: "pick"}
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pick?tag=silver&tag=bronze&tag=gold"}
+    expect: {status: 200, body: "pick"}
+
+  # Any-of is not all-of, but it is still of: with no satisfying value among the
+  # three there is nothing to hold on.
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pick?tag=silver&tag=bronze"}
+    expect: {status: 404}
+
+  # Repeating the satisfying value neither strengthens nor breaks the criterion.
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pick?tag=gold&tag=gold"}
+    expect: {status: 200, body: "pick"}
+
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pair?a=1&b=2"}
+    expect: {status: 200, body: "pair"}
+
+  # The criteria are keyed by name, so the order the client wrote them in is not
+  # part of the claim — unlike a `url` criterion, which compares the target as a
+  # string and does depend on it.
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pair?b=2&a=1"}
+    expect: {status: 200, body: "pair"}
+
+  # Any-of applies within `a` while `b` is judged on its own values.
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pair?a=9&a=1&b=2"}
+    expect: {status: 200, body: "pair"}
+
+  # `b` carries two values and neither satisfies it, which `a` being satisfied
+  # cannot make up for: the parameters are a conjunction.
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pair?a=1&b=9&b=3"}
+    expect: {status: 404}
+
+  # The step that separates the rule from a bag of values: both operands are
+  # present in this query, each attached to the other's name. A search over the
+  # whole query would answer 200 here.
+  - request: {method: GET, path: "/e2e/wmv-query-multivalue-anyof-001/pair?a=2&b=1"}
+    expect: {status: 404}

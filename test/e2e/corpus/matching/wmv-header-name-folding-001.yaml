@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-name-folding-001
+behaviors: [B-REQ-HEADERS, B-MATCH-EQUALTO-CASEINSENSITIVE]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design: WireMock
+# renders near-miss detail there and mockulus deliberately does not
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # url-criteria-headers-001 pins one direction of the name comparison, a
+  # lower-case criterion against a capitalised header. The rule is symmetric, so
+  # this criterion is spelled in the case a wire header practically never
+  # arrives in: an implementation that folds the request's names into an index
+  # but compares the criterion as written answers 404 here and passes the other
+  # case.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0001-4000-8000-000000000001",
+         "name": "upper-case header criterion",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-name-folding-001/upper",
+                     "headers": {"X-TENANT": {"equalTo": "acme"}}},
+         "response": {"status": 200, "body": "upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      # Folding the names for comparison must not fold the document: the
+      # criterion is echoed in the spelling the client chose. A server that
+      # normalised names into its own index and rendered the index back would
+      # answer "x-tenant" and would have rewritten the client's stub.
+      body_json_subset:
+        request:
+          headers:
+            X-TENANT: {equalTo: "acme"}
+
+  # The second spelling exists to separate the two axes. The name folds with no
+  # opt-in; the value folds only because this matcher asked for it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0001-4000-8000-000000000002",
+         "name": "mixed-case header criterion, case-insensitive value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-name-folding-001/mixed",
+                     "headers": {"x-TeNaNt": {"equalTo": "acme", "caseInsensitive": true}}},
+         "response": {"status": 200, "body": "mixed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-folding-001/upper
+      headers: {X-Tenant: acme}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "upper"
+
+  # The name folded and the value did not, which is the pairing: a server that
+  # reached case-insensitivity by lower-casing the whole header line would
+  # answer 200 to this and would have made caseInsensitive unobservable.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-folding-001/upper
+      headers: {X-Tenant: ACME}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/wmv-header-name-folding-001/upper}
+    expect: {status: 404}
+
+  # A criterion whose name matches in no single case anywhere still resolves,
+  # and its flag governs the value independently.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-folding-001/mixed
+      headers: {X-Tenant: ACME}
+    expect: {status: 200, body: "mixed"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-folding-001/mixed
+      headers: {X-Tenant: acme}
+    expect: {status: 200, body: "mixed"}
+
+  # The relaxed value comparison is still a comparison.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-name-folding-001/mixed
+      headers: {X-Tenant: other}
+    expect: {status: 404}

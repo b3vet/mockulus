@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-optional-parameter-001
+behaviors: [B-MATCH-ABSENT, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# "Either not sent, or sent with this value" is the criterion every suite
+# reaches for once a client starts omitting a parameter it used to send, and it
+# is the one place where the key-level matcher has to survive being wrapped in a
+# combinator. That is not free: an absent subject is settled before the pattern
+# is consulted for some field kinds — an absent cookie fails this very criterion
+# — so the query flavour has to be pinned on its own rather than inferred.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000044",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-optional-parameter-001/optional",
+                     "queryParameters": {"p": {"or": [{"absent": true}, {"equalTo": "x"}]}}},
+         "response": {"status": 200, "body": "optional", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            p:
+              or:
+                - {absent: true}
+                - {equalTo: "x"}
+
+  # The branch that needs the wrapping to work: nothing was sent.
+  - request: {method: GET, path: /e2e/wmv-query-optional-parameter-001/optional}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "optional"
+
+  - request: {method: GET, path: "/e2e/wmv-query-optional-parameter-001/optional?p=x"}
+    expect: {status: 200, body: "optional"}
+
+  # Neither branch, so neither the criterion. Without this step the stub could
+  # be matching everything.
+  - request: {method: GET, path: "/e2e/wmv-query-optional-parameter-001/optional?p=y"}
+    expect: {status: 404}
+
+  # The step that makes "optional" mean what it says rather than "empty is fine
+  # too": a parameter sent with no value is sent, and the empty string is not
+  # the operand, so both branches fail.
+  - request: {method: GET, path: "/e2e/wmv-query-optional-parameter-001/optional?p="}
+    expect: {status: 404}
+
+  # A parameter the criterion never names cannot stand in for the absent branch.
+  - request: {method: GET, path: "/e2e/wmv-query-optional-parameter-001/optional?other=1"}
+    expect: {status: 200, body: "optional"}
+
+  # Any-of is taken over the whole criterion once per value, so a repeated
+  # parameter matches on the strength of the value that satisfies the second
+  # branch — and matches nothing when no value does.
+  - request: {method: GET, path: "/e2e/wmv-query-optional-parameter-001/optional?p=y&p=x"}
+    expect: {status: 200, body: "optional"}
+  - request: {method: GET, path: "/e2e/wmv-query-optional-parameter-001/optional?p=y&p=z"}
+    expect: {status: 404}

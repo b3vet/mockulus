@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-create-duplicate-spellings-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+  - B-ERR-109
+  - B-STUB-ID-UUID
+wm: verified
+# The step proving the refused document never reached the snapshot is an
+# unmatched request, whose body is the near-miss table WireMock renders and
+# mockulus does not (deviation #2/#18).
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0007-4000-8000-000000000001",
+         "name": "the original",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-duplicate-spellings-001/hello"},
+         "response": {"status": 200, "body": "created"}}
+    expect: {status: 201}
+
+  # The collision is declared under the other spelling. `id` and `uuid` are two
+  # names for one field, so the duplicate check has to be on the identity and
+  # not on the key the document happened to use — a check keyed off `id` alone
+  # would let this through and quietly hand two stubs the same identity, after
+  # which a PUT or a DELETE reaches whichever of them the index returns first.
+  #
+  # The detail names the identity in its canonical form, which is what makes the
+  # message actionable: the author gets back the id that is taken, not the one
+  # they typed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"uuid": "a1000008-0007-4000-8000-000000000001",
+         "name": "the impostor",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-duplicate-spellings-001/hijacked"},
+         "response": {"status": 500, "body": "clobbered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 109
+            title: "Duplicate stub mapping ID"
+            detail: "ID of the provided stub mapping 'a1000008-0007-4000-8000-000000000001' is already taken by another stub mapping"
+
+  # Create is not an upsert, so the refusal is total in three places. The stored
+  # document is untouched...
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0007-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0007-4000-8000-000000000001"
+        uuid: "a1000008-0007-4000-8000-000000000001"
+        name: "the original"
+        request: {method: GET, urlPath: /e2e/wmv-admin-create-duplicate-spellings-001/hello}
+        response: {status: 200, body: "created"}
+
+  # ...the original still serves its original response...
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-duplicate-spellings-001/hello}
+    expect: {status: 200, body: "created"}
+
+  # ...and the rejected document is not serving anywhere either. That third
+  # check is the one a partial write would fail: a server that registered the
+  # incoming stub and then noticed the collision would answer 422 here and still
+  # be serving the impostor's path.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-duplicate-spellings-001/hijacked}
+    expect: {status: 404}

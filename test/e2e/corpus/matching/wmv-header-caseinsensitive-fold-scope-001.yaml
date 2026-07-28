@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-caseinsensitive-fold-scope-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # matchers-core-equalto-001 pins that the flag relaxes case and not length.
+  # This operand carries a digit, a hyphen and an underscore between the letters
+  # so the other tempting relaxations are separable too: an implementation that
+  # reached case-insensitivity by stripping everything that is not a letter, or
+  # by comparing only the letters, still answers 200 to the folded spellings
+  # below and has to be caught by the ones after them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0008-4000-8000-000000000001",
+         "name": "mixed operand, case-insensitive",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-caseinsensitive-fold-scope-001/key",
+                     "headers": {"X-Key": {"equalTo": "Ab-1_Cd", "caseInsensitive": true}}},
+         "response": {"status": 200, "body": "key",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "Ab-1_Cd"}
+    expect: {status: 200, body: "key"}
+
+  # Folding is symmetric: it is applied to the operand as well as to the value,
+  # so the request may be in any case at all.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "ab-1_cd"}
+    expect: {status: 200, body: "key"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "AB-1_CD"}
+    expect: {status: 200, body: "key"}
+
+  # Digits have no case to give up, so they still have to be equal.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "Ab-2_Cd"}
+    expect: {status: 404}
+
+  # Neither does punctuation, and swapping one separator for another is not a
+  # case difference however much it looks like a normalisation.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "Ab_1_Cd"}
+    expect: {status: 404}
+
+  # Nor is dropping them.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "AB1CD"}
+    expect: {status: 404}
+
+  # The folded comparison is still a whole-string comparison at both ends.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "ab-1_cdx"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-caseinsensitive-fold-scope-001/key
+      headers: {X-Key: "xab-1_cd"}
+    expect: {status: 404}

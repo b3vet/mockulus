@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-body-base64-001
+behaviors: [B-RESP-TRANSFORMERS, B-TPL-BASE64-URLENCODE]
+wm: verified
+steps:
+  # `bodyAsBase64` is the accessor a stub reaches for when the payload is not
+  # text it can safely paste into a response — a signature, an upload, anything
+  # whose bytes have to survive a JSON string. It is the same payload as
+  # `request.body`, so rendering both and decoding one back is a closed loop
+  # that no single value could satisfy on its own.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0009-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-request-body-base64-001/upload"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "raw={{request.body}} b64={{request.bodyAsBase64}} back={{base64 request.bodyAsBase64 decode=true}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Twelve bytes divide by three, so this encoding carries no padding at all —
+  # the baseline the two padded lengths below are measured against.
+  #
+  # `back` closes the loop against `raw`. Between them, an accessor that
+  # encoded something other than the body — the whole request, the body with a
+  # trailing newline the client never sent — cannot pass, because the decode
+  # would have to produce exactly what the first field printed.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-base64-001/upload
+      headers: {Content-Type: text/plain}
+      body: "ping-payload"
+    expect:
+      status: 200
+      body: "raw=ping-payload b64=cGluZy1wYXlsb2Fk back=ping-payload"
+
+  # Two payloads whose lengths leave the two possible remainders: ten bytes
+  # pad with "==" and eleven with a single "=". An encoder built on the
+  # unpadded alphabet renders a string right in every character that a Java or
+  # JavaScript decoder still rejects, and only a payload whose length is not a
+  # multiple of three can catch it.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-base64-001/upload
+      headers: {Content-Type: text/plain}
+      body: "ping-paylo"
+    expect:
+      status: 200
+      body: "raw=ping-paylo b64=cGluZy1wYXlsbw== back=ping-paylo"
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-base64-001/upload
+      headers: {Content-Type: text/plain}
+      body: "ping-payloa"
+    expect:
+      status: 200
+      body: "raw=ping-payloa b64=cGluZy1wYXlsb2E= back=ping-payloa"
+
+  # No payload: the encoding of nothing is nothing, not the encoding of an
+  # empty JSON document and not a pad character on its own.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-base64-001/upload
+    expect:
+      status: 200
+      body: "raw= b64= back="
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0009-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-request-body-base64-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "b64={{request.bodyAsBase64}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-base64-001/literal
+      headers: {Content-Type: text/plain}
+      body: "ping-payload"
+    expect:
+      status: 200
+      body: "b64={{request.bodyAsBase64}}"

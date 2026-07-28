@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-doesnotmatch-anchoring-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # regex-anchoring-content-001 pins the full-match rule for `matches` on a
+  # header and for `doesNotMatch` on a body. The remaining corner is the one
+  # where getting it wrong costs the most: a search-style `doesNotMatch` on a
+  # header rejects every request whose header merely mentions the pattern, so a
+  # stub written to exclude one token stops serving traffic nobody excluded.
+  # The two stubs run the same operand in both directions over the same three
+  # header values, and every value has to be answered by exactly one of them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0012-4000-8000-000000000001",
+         "name": "matches over a header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-doesnotmatch-anchoring-001/positive",
+                     "headers": {"X-Ver": {"matches": "v[0-9]+"}}},
+         "response": {"status": 200, "body": "positive",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0012-4000-8000-000000000002",
+         "name": "doesNotMatch over a header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-doesnotmatch-anchoring-001/negative",
+                     "headers": {"X-Ver": {"doesNotMatch": "v[0-9]+"}}},
+         "response": {"status": 200, "body": "negative",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-doesnotmatch-anchoring-001/positive
+      headers: {X-Ver: "v12"}
+    expect: {status: 200, body: "positive"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-doesnotmatch-anchoring-001/positive
+      headers: {X-Ver: "xv12x"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-doesnotmatch-anchoring-001/negative
+      headers: {X-Ver: "v12"}
+    expect: {status: 404}
+
+  # The assertion: the pattern occurs in the value and the criterion still
+  # holds, because occurring is not matching.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-doesnotmatch-anchoring-001/negative
+      headers: {X-Ver: "xv12x"}
+    expect: {status: 200, body: "negative"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-doesnotmatch-anchoring-001/negative
+      headers: {X-Ver: "none"}
+    expect: {status: 200, body: "negative"}
+
+  # A header carrying no value at all: the positive form has nothing to match
+  # and the negative form has nothing that matches, so the pair still partitions
+  # the request.
+  - request: {method: GET, path: /e2e/wmv-header-doesnotmatch-anchoring-001/positive}
+    expect: {status: 404}
+
+  - request: {method: GET, path: /e2e/wmv-header-doesnotmatch-anchoring-001/negative}
+    expect: {status: 200, body: "negative"}

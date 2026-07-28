@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-anchor-alternation-path-002
+behaviors: [B-REQ-URLPATHPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The same wrapper question as wmv-url-anchor-alternation-001, asked of the
+  # other pattern field. The two fields are separate code paths — one is handed
+  # the target and one the path — and a wrapper applied correctly on one of them
+  # says nothing about the other, so the alternation has to be asserted twice.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0007-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/wmv-url-anchor-alternation-path-002/a|/e2e/wmv-url-anchor-alternation-path-002/bc"},
+         "response": {"status": 200, "body": "alternation", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          urlPathPattern: "/e2e/wmv-url-anchor-alternation-path-002/a|/e2e/wmv-url-anchor-alternation-path-002/bc"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-alternation-path-002/a}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "alternation"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-alternation-path-002/bc}
+    expect: {status: 200, body: "alternation"}
+
+  # The query is stripped before the pattern runs, so a branch describing only a
+  # path still matches a request that carries one. Against the identically
+  # written urlPattern of the sibling case this same request is a 404, which is
+  # what the two cases together pin.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-anchor-alternation-path-002/a?x=1"}
+    expect: {status: 200, body: "alternation"}
+
+  # Stripping the query does not relax the anchors: extra *path* after the first
+  # branch is still a non-match.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-alternation-path-002/a/extra}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-anchor-alternation-path-002/a/extra?x=1"}
+    expect: {status: 404}
+
+  # And extra path before the second branch is refused the same way.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-url-anchor-alternation-path-002/pre/e2e/wmv-url-anchor-alternation-path-002/bc
+    expect: {status: 404}

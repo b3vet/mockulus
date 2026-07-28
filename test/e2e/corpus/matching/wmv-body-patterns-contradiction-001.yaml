@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-patterns-contradiction-001
+behaviors: [B-REQ-BODYPATTERNS, B-MATCH-ABSENT, B-MATCH-CONTAINS-DOESNOTCONTAIN]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A list holding a key-level criterion and a value-level one, which no request
+  # can satisfy at once: the body has to be absent and to contain something. It
+  # is not a stub anyone writes on purpose, but it is what a merge of two
+  # mappings files produces, and what happens then is worth pinning — the stub
+  # registers and never matches, rather than one of the two entries winning. The
+  # two controls are the point of the case: each entry on its own matches the
+  # body the combined stub refuses, so the refusal is the conjunction and not a
+  # stub that failed to register properly.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0017-4000-8000-000000000001",
+         "name": "absent and contains in one list",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-patterns-contradiction-001/both",
+                     "bodyPatterns": [{"absent": true}, {"contains": "a"}]},
+         "response": {"status": 200, "body": "both",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0017-4000-8000-000000000002",
+         "name": "the first entry alone",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-patterns-contradiction-001/absent-only",
+                     "bodyPatterns": [{"absent": true}]},
+         "response": {"status": 200, "body": "absent-only",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0017-4000-8000-000000000003",
+         "name": "the second entry alone",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-patterns-contradiction-001/contains-only",
+                     "bodyPatterns": [{"contains": "a"}]},
+         "response": {"status": 200, "body": "contains-only",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # An absent body satisfies the first entry and fails the second.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-contradiction-001/both}
+    expect: {status: 404}
+
+  # A body carrying the text satisfies the second and fails the first.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-contradiction-001/both, body: "a"}
+    expect: {status: 404}
+
+  # The controls, on the same two bodies.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-contradiction-001/absent-only}
+    expect: {status: 200, body: "absent-only"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-patterns-contradiction-001/contains-only, body: "a"}
+    expect: {status: 200, body: "contains-only"}

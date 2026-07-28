@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-case-path-001
+behaviors: [B-REQ-URLPATH, B-REQ-URL, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Header names fold case and URL paths do not, and a matching engine that
+  # shares one comparison helper between the two surfaces gets this wrong in a
+  # way no single-stub test can see. Two stubs differing only in case make the
+  # question answerable: a case-folding server has to send one of these two
+  # bodies for both requests, and cannot send both.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0004-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-case-path-001/Items"},
+         "response": {"status": 200, "body": "upper", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-case-path-001/Items"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0004-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-case-path-001/items"},
+         "response": {"status": 200, "body": "lower", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A third spelling of the same word, stated as a `url` criterion, so the
+  # assertion covers both exact forms rather than only the path one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0004-4000-8000-000000000003",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-case-path-001/Mixed?Tag=Q"},
+         "response": {"status": 200, "body": "mixed", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-path-001/Items}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "upper"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-path-001/items}
+    expect: {status: 200, body: "lower"}
+
+  # A spelling neither stub claimed reaches neither of them.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-path-001/ITEMS}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-case-path-001/Mixed?Tag=Q"}
+    expect: {status: 200, body: "mixed"}
+
+  # The query half of a `url` criterion is case-sensitive on both sides of the
+  # `=`, which is the half most likely to be folded by a server that normalises
+  # query strings for its own parameter index and then matches on the result.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-case-path-001/Mixed?tag=Q"}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-case-path-001/Mixed?Tag=q"}
+    expect: {status: 404}

@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-create-after-delete-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+  - B-ADMIN-MAPPINGS-ID-DELETE
+  - B-ERR-109
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0008-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-after-delete-001/slot"},
+         "response": {"status": 200, "body": "first tenant"}}
+    expect: {status: 201}
+
+  # While the id is occupied the second create is refused 422 code 109. This is
+  # the same call that succeeds at the end of the case; only the occupancy of
+  # the id differs between them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0008-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-after-delete-001/slot"},
+         "response": {"status": 200, "body": "second tenant"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 109
+            title: "Duplicate stub mapping ID"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-after-delete-001/slot}
+    expect: {status: 200, body: "first tenant"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0008-4000-8000-000000000001}
+    expect: {status: 200}
+
+  # The guard protects a live stub, not the id itself. A suite that deletes its
+  # mappings and registers them again from the same fixture file — the ordinary
+  # per-test teardown and setup — would be broken by a server that remembered
+  # every id it had ever seen, and the breakage would only appear on the second
+  # run.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0008-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-after-delete-001/slot"},
+         "response": {"status": 200, "body": "second tenant"}}
+    expect:
+      status: 201
+      body_json:
+        id: "a1000008-0008-4000-8000-000000000001"
+        uuid: "a1000008-0008-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-create-after-delete-001/slot}
+        response: {status: 200, body: "second tenant"}
+
+  # The re-used id carries the new document and not a revived old one, so the
+  # create really created rather than resurrecting whatever the store still had
+  # filed under that key.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-after-delete-001/slot}
+    expect: {status: 200, body: "second tenant"}

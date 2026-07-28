@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-decode-name-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-MATCH-EQUALTO-CASEINSENSITIVE]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Parameter NAMES are decoded on the same terms as values. It is the easier half
+# to forget, because the name is a map key rather than a subject handed to a
+# matcher, and a lookup by the raw key finds nothing while looking like it
+# worked. Both stubs here are named things a client can only send encoded.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000009",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-name-001/brackets",
+                     "queryParameters": {"filter[type]": {"equalTo": "book"}}},
+         "response": {"status": 200, "body": "brackets", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            "filter[type]": {equalTo: "book"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000010",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-name-001/spaced",
+                     "queryParameters": {"a b": {"equalTo": "1"}}},
+         "response": {"status": 200, "body": "spaced", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The bracketed-array convention PHP and Rails clients emit reaches the stub
+  # under its decoded name.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-name-001/brackets?filter%5Btype%5D=book"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "brackets"
+
+  # Hex digits are case-insensitive in the name too, so the same name written
+  # with lower-case escapes is the same name.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-name-001/brackets?filter%5btype%5d=book"}
+    expect: {status: 200, body: "brackets"}
+
+  # A different name entirely, which is what the two steps above would collapse
+  # to if the brackets were being stripped rather than decoded.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-name-001/brackets?filter=book"}
+    expect: {status: 404}
+
+  # A name carrying a space arrives in either spelling, and `+` is a space in
+  # the name exactly as it is in a value.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-name-001/spaced?a%20b=1"}
+    expect: {status: 200, body: "spaced"}
+  - request: {method: GET, path: "/e2e/wmv-query-decode-name-001/spaced?a+b=1"}
+    expect: {status: 200, body: "spaced"}
+
+  # Dropping the space rather than decoding it would make this the same name.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-name-001/spaced?ab=1"}
+    expect: {status: 404}
+
+  # And the name resolving is not the whole criterion: the value still has to
+  # satisfy the matcher.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-name-001/spaced?a+b=2"}
+    expect: {status: 404}

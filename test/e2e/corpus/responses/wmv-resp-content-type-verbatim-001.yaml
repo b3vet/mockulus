@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-content-type-verbatim-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # Content-Type is a structured value, and a server that parses it in order to
+  # re-emit it will normalise something: the space after the semicolon, the case
+  # of the charset, the order of the parameters. A client under test may be
+  # asserting on the exact string, so the stub's spelling is the one that goes
+  # out — no space after the semicolon here, and a vendor subtype with a suffix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000b-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-verbatim-001/vendor"},
+         "response": {"status": 200, "body": "{\"v\":1}",
+                      "headers": {"Content-Type": "application/vnd.acme+json;charset=UTF-8"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-verbatim-001/vendor}
+    expect:
+      status: 200
+      headers: {Content-Type: "application/vnd.acme+json;charset=UTF-8"}
+      body: '{"v":1}'
+
+  # More than one parameter, spelled with the spaces the author wrote and a
+  # charset in the case the author wrote it in.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000b-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-verbatim-001/parameters"},
+         "response": {"status": 200, "body": "parameterised",
+                      "headers": {"Content-Type": "text/plain; charset=US-ASCII; boundary=zz"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-verbatim-001/parameters}
+    expect:
+      status: 200
+      headers: {Content-Type: "text/plain; charset=US-ASCII; boundary=zz"}
+      body: "parameterised"
+
+  # The declared charset labels the bytes; it does not convert them. This stub
+  # says ISO-8859-1 and carries a body that is not representable in it, and the
+  # bytes on the wire are still the UTF-8 the stub was written with. A server
+  # that transcoded to the declared charset would answer a different payload —
+  # and would make the label a command rather than a description, which is not
+  # what a mock is for: stating a wrong Content-Type on purpose is a test case.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000b-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-verbatim-001/mislabelled"},
+         "response": {"status": 200, "body": "héllo ☕",
+                      "headers": {"Content-Type": "text/plain; charset=ISO-8859-1"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-verbatim-001/mislabelled}
+    expect:
+      status: 200
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body: "héllo ☕"
+
+  # The control: the same body with no Content-Type at all. It is byte-identical
+  # to the one above, which is what makes the previous step a statement about
+  # the header rather than about the payload.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000b-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-verbatim-001/unlabelled"},
+         "response": {"status": 200, "body": "héllo ☕"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-verbatim-001/unlabelled}
+    expect:
+      status: 200
+      header_absent: [Content-Type]
+      body: "héllo ☕"

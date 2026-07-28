@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-filter-equality-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A filter selects the elements of an array that satisfy a predicate, so the
+  # bare form over one reads as "at least one element looks like this". The two
+  # stubs are complements over the same operand, and they are registered
+  # together because the interesting property of a filter is that it is NOT the
+  # negation of its complement over a multi-element array: both match a mixed
+  # array, since each finds its own element.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000f-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-equality-001/is-b",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.sku == 'B')]"}]},
+         "response": {"status": 200, "body": "is-b",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000f-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-equality-001/not-b",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.sku != 'B')]"}]},
+         "response": {"status": 200, "body": "not-b",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-equality-001/is-b
+      body: '{"items":[{"sku":"A"},{"sku":"B"}]}'
+    expect: {status: 200, body: "is-b"}
+
+  # Every element failing the predicate leaves the filter with nothing to
+  # select, which is a miss by the emptiness rule rather than by the path being
+  # wrong.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-equality-001/is-b
+      body: '{"items":[{"sku":"A"},{"sku":"C"}]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-equality-001/is-b
+      body: '{"items":[]}'
+    expect: {status: 404}
+
+  # Comparison is against the value, so a nested object carrying the wanted text
+  # somewhere inside it is not a match.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-equality-001/is-b
+      body: '{"items":[{"sku":{"code":"B"}}]}'
+    expect: {status: 404}
+
+  # The complement, on the same mixed array: both stubs match it, each on the
+  # strength of a different element. A filter implemented as "the predicate holds
+  # for the array" rather than "for some element of it" cannot produce this pair.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-equality-001/not-b
+      body: '{"items":[{"sku":"A"},{"sku":"B"}]}'
+    expect: {status: 200, body: "not-b"}
+
+  # With only the excluded element present there is nothing left for the
+  # complement to select.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-equality-001/not-b
+      body: '{"items":[{"sku":"B"}]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-equality-001/not-b
+      body: '{"items":[{"sku":"A"}]}'
+    expect: {status: 200, body: "not-b"}

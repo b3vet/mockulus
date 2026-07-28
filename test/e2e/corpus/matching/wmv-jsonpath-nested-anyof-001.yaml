@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-nested-anyof-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The nested form is any-of over everything the expression selected, and this
+  # case pins the quantifier itself rather than any particular inner matcher.
+  # `contains` is used because it can be satisfied by more than one distinct
+  # value, so "some hit satisfies it" and "the first hit satisfies it" can be
+  # told apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0014-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nested-anyof-001/codes",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$..code",
+                                                           "contains": "-X"}}]},
+         "response": {"status": 200, "body": "codes",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # One hit of two satisfies the inner matcher, and it is the second one — so an
+  # implementation that answered from the first hit alone would refuse this.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-anyof-001/codes
+      body: '{"a":{"code":"P-1"},"b":{"code":"Q-X"}}'
+    expect: {status: 200, body: "codes"}
+
+  # …and the same document with the satisfying hit first, because the two must
+  # be one answer: the order in which hits are gathered is not part of the
+  # contract, so nothing may depend on it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-anyof-001/codes
+      body: '{"a":{"code":"P-X"},"b":{"code":"Q-1"}}'
+    expect: {status: 200, body: "codes"}
+
+  # Every hit satisfying it is still a match: any-of does not mean exactly-one.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-anyof-001/codes
+      body: '{"a":{"code":"P-X"},"b":{"code":"Q-X"}}'
+    expect: {status: 200, body: "codes"}
+
+  # No hit satisfying it is the control for all three.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-anyof-001/codes
+      body: '{"a":{"code":"P-1"},"b":{"code":"Q-1"}}'
+    expect: {status: 404}
+
+  # Hits from different depths are gathered into the same list before the inner
+  # matcher runs.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-anyof-001/codes
+      body: '{"code":"P-1","a":{"b":{"code":"deep-X"}}}'
+    expect: {status: 200, body: "codes"}
+
+  # An expression that selects nothing has no hit to satisfy anything, which is
+  # a different reason for the same 404 and has to produce it anyway.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-anyof-001/codes
+      body: '{"a":{"other":"Q-X"}}'
+    expect: {status: 404}

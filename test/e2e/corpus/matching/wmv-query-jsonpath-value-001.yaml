@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-jsonpath-value-001
+behaviors: [B-MATCH-MATCHESJSONPATH, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# matchesJsonPath over a query parameter, in both of its forms: the bare
+# expression, which asks only whether the path selects anything, and the nested
+# form, which hands what it selected to another matcher. Putting them on a query
+# parameter rather than a body is what makes the case worth having — the
+# expression has to run against the decoded parameter, so a stub that reached
+# for the request body here would find an empty one and refuse everything.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000033",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-jsonpath-value-001/present",
+                     "queryParameters": {"payload": {"matchesJsonPath": "$.items[0].id"}}},
+         "response": {"status": 200, "body": "present", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            payload: {matchesJsonPath: "$.items[0].id"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000034",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-jsonpath-value-001/nested",
+                     "queryParameters": {"payload": {"matchesJsonPath": {"expression": "$.id",
+                                                                        "equalTo": "7"}}}},
+         "response": {"status": 200, "body": "nested", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # {"items":[{"id":"7"}]} — the path selects something, which is all the bare
+  # form asks.
+  - request: {method: GET, path: "/e2e/wmv-query-jsonpath-value-001/present?payload=%7B%22items%22%3A%5B%7B%22id%22%3A%227%22%7D%5D%7D"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "present"
+
+  # {"items":[]} — a well-formed document in which the path selects nothing.
+  # The parameter is present and parses, so this refusal is the expression's,
+  # not a fallback for a value the matcher could not read.
+  - request: {method: GET, path: "/e2e/wmv-query-jsonpath-value-001/present?payload=%7B%22items%22%3A%5B%5D%7D"}
+    expect: {status: 404}
+
+  # {"id":"7"} — the nested form, where the selected value has to satisfy the
+  # inner matcher as well.
+  - request: {method: GET, path: "/e2e/wmv-query-jsonpath-value-001/nested?payload=%7B%22id%22%3A%227%22%7D"}
+    expect: {status: 200, body: "nested"}
+
+  # {"id":"8"} — the path still selects, and the inner matcher is what refuses.
+  # Without this step the nested form would be indistinguishable from the bare
+  # one, which the step above cannot show on its own.
+  - request: {method: GET, path: "/e2e/wmv-query-jsonpath-value-001/nested?payload=%7B%22id%22%3A%228%22%7D"}
+    expect: {status: 404}

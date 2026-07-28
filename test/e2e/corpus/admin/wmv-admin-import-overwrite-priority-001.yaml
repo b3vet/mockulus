@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-overwrite-priority-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-STUB-PRIORITY
+wm: verified
+steps:
+  # Two stubs on one path at the absent, therefore default, priority. The newer
+  # one serves, on the insertion-sequence tie-break alone.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0021-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-priority-001/lane"},
+         "response": {"status": 200, "body": "older"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0021-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-priority-001/lane"},
+         "response": {"status": 200, "body": "newer"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-priority-001/lane}
+    expect: {status: 200, body: "newer"}
+
+  # The two things an overwrite does to selection pull in opposite directions,
+  # and this is where they can be told apart. `seq` is preserved — the stub
+  # keeps its place in the tie-break — while `priority` comes from the incoming
+  # document like every other field, and priority is compared first. So the
+  # older stub now wins, not because it moved but because it out-ranks.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0021-4000-8000-000000000001",
+            "priority": 1,
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-priority-001/lane"},
+            "response": {"status": 200, "body": "older, promoted"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-priority-001/lane}
+    expect: {status: 200, body: "older, promoted"}
+
+  # The other direction, and the reason the first is not enough on its own.
+  # Overwriting again with the priority omitted drops the stub back to the
+  # default 5, and the tie-break underneath resolves the way it always did — so
+  # the preserved `seq` really was preserved through both edits, and the swing
+  # in the previous step was the priority field and nothing else.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0021-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-priority-001/lane"},
+            "response": {"status": 200, "body": "older, demoted"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-priority-001/lane}
+    expect: {status: 200, body: "newer"}
+
+  # Both edits landed on the document all the same, which is what stops the
+  # step above from also passing against an import that ignored the payload.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0021-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0021-4000-8000-000000000001"
+        uuid: "a1000008-0021-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-overwrite-priority-001/lane}
+        response: {status: 200, body: "older, demoted"}

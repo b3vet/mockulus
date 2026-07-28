@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-unicode-escapes-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Two JSON documents can spell the same string differently: an accented
+  # character or its \u escape, an escaped solidus or a bare one, a surrogate
+  # pair or the character it denotes. The comparison is over decoded strings, so
+  # none of that is part of the document — which an implementation comparing
+  # operand text would get wrong in exactly the deployments where it matters,
+  # the ones carrying non-ASCII payloads. This operand is written in escapes and
+  # the requests below are written in characters.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0022-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-unicode-escapes-001/text",
+                     "bodyPatterns": [{"equalToJson": "{\"s\":\"caf\\u00e9\",\"p\":\"a\\/b\",\"g\":\"\\ud834\\udd1e\"}"}]},
+         "response": {"status": 200, "body": "text",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The same three strings written as literal characters.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-unicode-escapes-001/text
+      body: '{"s":"café","p":"a/b","g":"𝄞"}'
+    expect: {status: 200, body: "text"}
+
+  # The escaped solidus is a legal escape for the same character, so a request
+  # that keeps it matches too.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-unicode-escapes-001/text
+      body: '{"s":"café","p":"a\/b","g":"𝄞"}'
+    expect: {status: 200, body: "text"}
+
+  # The surrogate pair denotes exactly one character, and its neighbour in the
+  # same block is a different string — the negative that stops the acceptance
+  # above from being "any astral character will do".
+  - request:
+      method: POST
+      path: /e2e/wmv-json-unicode-escapes-001/text
+      body: '{"s":"café","p":"a/b","g":"𝄢"}'
+    expect: {status: 404}
+
+  # Decoding is not normalising: the unaccented spelling is a different string.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-unicode-escapes-001/text
+      body: '{"s":"cafe","p":"a/b","g":"𝄞"}'
+    expect: {status: 404}
+
+  # A backslash that survived decoding would show up here, since this value is
+  # the literal text of an escape rather than the character it denotes.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-unicode-escapes-001/text
+      body: '{"s":"caf\\u00e9","p":"a/b","g":"𝄞"}'
+    expect: {status: 404}
+
+  # Member names decode by the same rules as values, which is the position an
+  # implementation that special-cased value decoding would miss.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0022-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-unicode-escapes-001/keys",
+                     "bodyPatterns": [{"equalToJson": "{\"caf\\u00e9\":1}"}]},
+         "response": {"status": 200, "body": "keys",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-unicode-escapes-001/keys
+      body: '{"café":1}'
+    expect: {status: 200, body: "keys"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-unicode-escapes-001/keys
+      body: '{"cafe":1}'
+    expect: {status: 404}

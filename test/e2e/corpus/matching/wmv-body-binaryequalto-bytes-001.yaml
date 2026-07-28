@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-binaryequalto-bytes-001
+behaviors: [B-MATCH-BINARYEQUALTO, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+#
+# The one non-ASCII character in the case is written as an escape, because the
+# question being asked is which bytes the body carries.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # binaryEqualTo exists so that a body which is not text can still be matched,
+  # and the sharpest way to show it is a body that text handling would ruin. The
+  # operand decodes to the three bytes 'a', NUL, 'b': a comparison that went
+  # through a C-style string, or that stopped at the first zero byte, would
+  # treat this operand as one byte long and match every body beginning with 'a'.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000c-4000-8000-000000000001",
+         "name": "binaryEqualTo over bytes including NUL",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-binaryequalto-bytes-001/nul",
+                     "bodyPatterns": [{"binaryEqualTo": "YQBi"}]},
+         "response": {"status": 200, "body": "nul",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000c-4000-8000-000000000002",
+         "name": "binaryEqualTo over a multi-byte character",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-binaryequalto-bytes-001/multibyte",
+                     "bodyPatterns": [{"binaryEqualTo": "w7w="}]},
+         "response": {"status": 200, "body": "multibyte",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-bytes-001/nul, body: "a\0b"}
+    expect: {status: 200, body: "nul"}
+
+  # The body that a comparison truncating at the NUL would call equal.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-bytes-001/nul, body: "a"}
+    expect: {status: 404}
+
+  # Two more truncations of the operand, so the length check is pinned from
+  # both sides of the zero byte rather than only before it.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-bytes-001/nul, body: "a\0"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-bytes-001/nul, body: "ab"}
+    expect: {status: 404}
+
+  # And a body that begins with the operand and continues, which a prefix
+  # comparison would accept.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-bytes-001/nul, body: "a\0bc"}
+    expect: {status: 404}
+
+  # The second operand decodes to the two bytes 0xC3 0xBC, which are U+00FC in
+  # UTF-8. Sending that character is a match, and sending the letter its accent
+  # was stripped from is not — the comparison is over the encoded bytes, and it
+  # is exact.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-bytes-001/multibyte, body: "\u00fc"}
+    expect: {status: 200, body: "multibyte"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-bytes-001/multibyte, body: "u"}
+    expect: {status: 404}

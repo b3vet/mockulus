@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-default-policy-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0018-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-default-policy-001/slot"},
+         "response": {"status": 200, "body": "original"}}
+    expect: {status: 201}
+
+  # A payload with no importOptions object at all. The whole block is optional
+  # and its absence means OVERWRITE, so a fixture file that carries nothing but
+  # a mappings array — the file every recorded or hand-written stub set starts
+  # as — re-imports cleanly over itself.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0018-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-default-policy-001/slot"},
+            "response": {"status": 200, "body": "defaulted"}}
+         ]}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-default-policy-001/slot}
+    expect: {status: 200, body: "defaulted"}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0018-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0018-4000-8000-000000000001"
+        uuid: "a1000008-0018-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-default-policy-001/slot}
+        response: {status: 200, body: "defaulted"}
+
+  # The control that turns the step above into an assertion about the default
+  # rather than about imports in general: the same payload with the policy
+  # spelled out as IGNORE leaves the stub exactly where it was. So the absent
+  # block resolved to OVERWRITE, and not to "whatever the code does when it has
+  # no options to consult".
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0018-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-default-policy-001/slot"},
+            "response": {"status": 200, "body": "ignored"}}
+         ],
+         "importOptions": {"duplicatePolicy": "IGNORE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-default-policy-001/slot}
+    expect: {status: 200, body: "defaulted"}
+
+  # And an empty batch under the same defaults is a 200 that changes nothing —
+  # the default policy has no opinion to apply when there is no mapping to apply
+  # it to, and in particular does not read as "declare the deployment empty".
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": []}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-default-policy-001/slot}
+    expect: {status: 200, body: "defaulted"}

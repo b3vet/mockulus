@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-per-request-001
+behaviors: [B-RESP-TRANSFORMERS, B-ADMIN-MAPPINGS-ID-GET]
+wm: verified
+steps:
+  # A template is compiled once and rendered per request, and the two halves of
+  # that sentence are separately observable. This case holds one stub still and
+  # asks it four times, then asks the admin API what the stub actually says.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0021-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-per-request-001/counter"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Doubled": "{{math request.query.n 'x' 2}}"},
+                      "body": "n={{request.query.n}} doubled={{math request.query.n 'x' 2}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-tmpl-per-request-001/counter?n=1"}
+    expect:
+      status: 200
+      headers: {X-Doubled: "2"}
+      body: "n=1 doubled=2"
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-tmpl-per-request-001/counter?n=2"}
+    expect:
+      status: 200
+      headers: {X-Doubled: "4"}
+      body: "n=2 doubled=4"
+
+  # Back to the first value. A render memoised on the compiled stub would have
+  # been replaced by the second request and would answer 4 here — which is the
+  # failure a monotonically increasing sequence of requests could never catch,
+  # and the one a caching optimisation introduces.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-tmpl-per-request-001/counter?n=1"}
+    expect:
+      status: 200
+      headers: {X-Doubled: "2"}
+      body: "n=1 doubled=2"
+
+  # The stub itself is unchanged by having been rendered. What the admin API
+  # returns is the source, not the last answer: a document that came back
+  # carrying "n=1 doubled=2" would mean the rendering had been written into the
+  # stub, and the next export of this deployment would ship one request's
+  # answer as the mapping.
+  - admin: {method: GET, path: /__admin/mappings/a1000009-0021-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "a1000009-0021-4000-8000-000000000001"
+        response:
+          body: "n={{request.query.n}} doubled={{math request.query.n 'x' 2}}"
+          headers: {X-Doubled: "{{math request.query.n 'x' 2}}"}
+          transformers: ["response-template"]
+
+  # And it still serves after the read-back.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-tmpl-per-request-001/counter?n=3"}
+    expect:
+      status: 200
+      headers: {X-Doubled: "6"}
+      body: "n=3 doubled=6"

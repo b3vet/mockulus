@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-both-flags-objects-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Both flags together over a collection of records — the combination a client
+  # reaches for when it does not control the server's ordering and does not care
+  # about fields it did not ask about. The two expected records name disjoint
+  # members, so neither can stand in for the other and the pairing is forced;
+  # that keeps this case clear of deviation #25, which is confined to arrays
+  # where one expected element is strictly more permissive than another.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0015-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-both-flags-objects-001/items",
+                     "bodyPatterns": [{"equalToJson": "{\"items\":[{\"a\":1},{\"b\":2}]}",
+                                       "ignoreArrayOrder": true,
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "items",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-both-flags-objects-001/items
+      body: '{"items":[{"a":1},{"b":2}]}'
+    expect: {status: 200, body: "items"}
+
+  # Reordered, and each record carrying members the stub never named: the two
+  # relaxations applying at once, at two different depths.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-both-flags-objects-001/items
+      body: '{"items":[{"b":2,"x":9},{"a":1,"y":8}]}'
+    expect: {status: 200, body: "items"}
+
+  # A third record nobody asked about is an unclaimed element, so it is ignored.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-both-flags-objects-001/items
+      body: '{"items":[{"c":3},{"b":2},{"a":1}]}'
+    expect: {status: 200, body: "items"}
+
+  # The relaxation reaches arbitrarily deep inside a paired record.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-both-flags-objects-001/items
+      body: '{"items":[{"b":2},{"a":1,"deep":{"z":[1,2]}}],"meta":{"page":1}}'
+    expect: {status: 200, body: "items"}
+
+  # What neither flag gives up: every expected record still needs a partner...
+  - request:
+      method: POST
+      path: /e2e/wmv-json-both-flags-objects-001/items
+      body: '{"items":[{"a":1},{"c":3}]}'
+    expect: {status: 404}
+
+  # ...a partner it actually agrees with...
+  - request:
+      method: POST
+      path: /e2e/wmv-json-both-flags-objects-001/items
+      body: '{"items":[{"a":9},{"b":2}]}'
+    expect: {status: 404}
+
+  # ...and a partner of its own, so one record carrying both expected members
+  # does not answer both expected records.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-both-flags-objects-001/items
+      body: '{"items":[{"a":1,"b":2}]}'
+    expect: {status: 404}

@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-matches-inline-flags-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `caseInsensitive` is a flag on equalTo and there is no equivalent on
+  # `matches`; the regex spelling of it is the inline `(?i)`. That only works if
+  # the operand reaches the engine as the author wrote it, and the anchoring of
+  # §6.6 wraps every pattern before it gets there. A wrapper that put the
+  # pattern anywhere the inline flag could not govern — or that pre-compiled
+  # with its own flag set — breaks one of the two stubs below.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0013-4000-8000-000000000001",
+         "name": "matches, no inline flag",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-matches-inline-flags-001/strict",
+                     "headers": {"X-Env": {"matches": "PROD"}}},
+         "response": {"status": 200, "body": "strict",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0013-4000-8000-000000000002",
+         "name": "matches with an inline case-insensitive flag",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-matches-inline-flags-001/folded",
+                     "headers": {"X-Env": {"matches": "(?i)PROD"}}},
+         "response": {"status": 200, "body": "folded",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      # The operand is stored as written rather than as compiled, so what a
+      # later reader sees is the pattern the author meant.
+      body_json_subset:
+        request:
+          headers:
+            X-Env: {matches: "(?i)PROD"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-inline-flags-001/strict
+      headers: {X-Env: "PROD"}
+    expect: {status: 200, body: "strict"}
+
+  # Without the flag the pattern is case-sensitive, which is the control that
+  # makes the folded stub's 200 below attributable to the flag.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-inline-flags-001/strict
+      headers: {X-Env: "prod"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-inline-flags-001/folded
+      headers: {X-Env: "prod"}
+    expect: {status: 200, body: "folded"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-inline-flags-001/folded
+      headers: {X-Env: "PrOd"}
+    expect: {status: 200, body: "folded"}
+
+  # The flag governs case and nothing else: the pattern is still anchored, so a
+  # value that merely starts with it is not a match.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-inline-flags-001/folded
+      headers: {X-Env: "prod-eu"}
+    expect: {status: 404}

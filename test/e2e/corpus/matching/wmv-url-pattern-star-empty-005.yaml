@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pattern-star-empty-005
+behaviors: [B-REQ-URLPATHPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A closure that can match nothing is where "full match" and "the pattern is
+  # the whole path" have to be true at the same time. The empty tail is legal,
+  # so `/opt/` matches — but only because the slash before the closure is
+  # required text, which is exactly what a reader of the pattern is most likely
+  # to get wrong and what a prefix-matching implementation would blur away.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0013-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/wmv-url-pattern-star-empty-005/opt/[0-9]*"},
+         "response": {"status": 200, "body": "star", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPathPattern: "/e2e/wmv-url-pattern-star-empty-005/opt/[0-9]*"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-star-empty-005/opt/123}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "star"
+
+  # Nought repetitions is a match, and the trailing slash is the reason the
+  # subject reaches the closure at all.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-star-empty-005/opt/}
+    expect: {status: 200, body: "star"}
+
+  # Without that slash there is nothing for the required text to match against,
+  # however empty the closure is willing to be.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-star-empty-005/opt}
+    expect: {status: 404}
+
+  # The closure is still a character class and the pattern is still anchored, so
+  # a tail it cannot account for is a non-match rather than a partial one.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-star-empty-005/opt/12a}
+    expect: {status: 404}
+
+  # The query is not part of the subject here, so it neither helps nor hurts:
+  # `/opt/` with a query is still the empty tail.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-pattern-star-empty-005/opt/?a=1"}
+    expect: {status: 200, body: "star"}

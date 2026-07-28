@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-bracket-key-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Bracket notation is the only way to name a key that contains the separator
+  # the dot notation uses, and the pair of stubs below is what makes the two
+  # notations distinguishable at all: $['a.b'] names one key, $.a.b names two.
+  # An implementation that normalised brackets into dots before compiling would
+  # answer 200 to both of the documents beneath, and nothing else in a corpus
+  # would notice.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0006-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-bracket-key-001/bracket",
+                     "bodyPatterns": [{"matchesJsonPath": "$['a.b']"}]},
+         "response": {"status": 200, "body": "bracket",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0006-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-bracket-key-001/dotted",
+                     "bodyPatterns": [{"matchesJsonPath": "$.a.b"}]},
+         "response": {"status": 200, "body": "dotted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A flat key spelled with a dot in it: the bracket path finds it, the dotted
+  # path looks for a nested object and finds nothing.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bracket-key-001/bracket
+      body: '{"a.b":"flat"}'
+    expect: {status: 200, body: "bracket"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bracket-key-001/dotted
+      body: '{"a.b":"flat"}'
+    expect: {status: 404}
+
+  # And the mirror image, which is what makes the pair a proof rather than an
+  # observation: nesting is exactly what the bracket path does not accept.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bracket-key-001/bracket
+      body: '{"a":{"b":"nested"}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bracket-key-001/dotted
+      body: '{"a":{"b":"nested"}}'
+    expect: {status: 200, body: "dotted"}
+
+  # Bracket notation over ordinary keys is the same selection the dots make, so
+  # a stub author can spell a path either way and get one answer. The nested
+  # form is used here so the case asserts on the value selected, not only on
+  # whether something was.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0006-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-bracket-key-001/chain",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$['customer']['id']",
+                                                           "equalTo": "C-1"}}]},
+         "response": {"status": 200, "body": "chain",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bracket-key-001/chain
+      body: '{"customer":{"id":"C-1"}}'
+    expect: {status: 200, body: "chain"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bracket-key-001/chain
+      body: '{"customer":{"id":"C-2"}}'
+    expect: {status: 404}
+
+  # A key whose name is the whole bracketed text — "customer.id" — is not what
+  # the chained brackets select, which is the same claim as the first pair made
+  # from the other direction.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bracket-key-001/chain
+      body: '{"customer.id":"C-1"}'
+    expect: {status: 404}

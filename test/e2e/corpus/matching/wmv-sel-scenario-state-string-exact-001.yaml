@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-state-string-exact-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE]
+wm: verified
+# The last step is unmatched, and that body differs by design (deviation
+# #2/#18). Every other body, and every status, is diffed.
+wm_ignore: ["$unmatched-body"]
+# A scenario state is an opaque string compared for equality. Nothing in the
+# matching stack folds case for it, and nothing constrains its alphabet: the
+# names are whatever the suite wrote, including ones that differ only in case
+# and ones carrying spaces and punctuation.
+#
+# Case matters more than it looks, because the initial state has a canonical
+# spelling — `Started` — that suite authors reach for from memory and get wrong.
+# If the comparison folded case, a stub written `"started"` would silently serve
+# from the initial state and the flow would appear to work until the day two
+# stubs disagreed. The lowercase stub is registered second here, so under a
+# folding comparison it would be the newer of two eligible candidates and would
+# take the request; under the contract it is simply not a candidate.
+#
+# Each state is then visited in turn on one path, so the same three stubs answer
+# three different ways and each spelling is shown to be reachable rather than
+# merely refused.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0014-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-state-string-exact-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-string-exact-001/desk"},
+         "response": {"status": 200, "body": "canonical Started",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {requiredScenarioState: "Started"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0014-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-state-string-exact-001",
+         "requiredScenarioState": "started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-string-exact-001/desk"},
+         "response": {"status": 200, "body": "lower case started",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {requiredScenarioState: "started"}
+
+  # A state name is not an identifier: spaces, digits and punctuation are all
+  # just characters in the string being compared.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0014-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-state-string-exact-001",
+         "requiredScenarioState": "awaiting approval (level 2)",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-string-exact-001/desk"},
+         "response": {"status": 200, "body": "awaiting approval",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {requiredScenarioState: "awaiting approval (level 2)"}
+
+  # Three stubs on the path and the initial state picks exactly one of them.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-string-exact-001/desk}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "canonical Started"
+
+  # The transitions are ungated so each can be driven from wherever the previous
+  # one left the flow.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0014-4000-8000-000000000004",
+         "scenarioName": "wmv-sel-scenario-state-string-exact-001",
+         "newScenarioState": "started",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-state-string-exact-001/to-lower"},
+         "response": {"status": 200, "body": "moved",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-state-string-exact-001/to-lower}
+    expect: {status: 200, body: "moved"}
+
+  # The lowercase spelling was a real state all along — it was refused above
+  # because it was not the current one, not because it was rejected as a name.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-string-exact-001/desk}
+    expect: {status: 200, body: "lower case started"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0014-4000-8000-000000000005",
+         "scenarioName": "wmv-sel-scenario-state-string-exact-001",
+         "newScenarioState": "awaiting approval (level 2)",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-state-string-exact-001/to-approval"},
+         "response": {"status": 200, "body": "moved",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-state-string-exact-001/to-approval}
+    expect: {status: 200, body: "moved"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-string-exact-001/desk}
+    expect: {status: 200, body: "awaiting approval"}
+
+  # The other direction of the case question, and the sharpest of the three: a
+  # state spelled in upper case is a fourth state, distinct from both of the
+  # stubs that look like it, so the path has no answer at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0014-4000-8000-000000000006",
+         "scenarioName": "wmv-sel-scenario-state-string-exact-001",
+         "newScenarioState": "STARTED",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-state-string-exact-001/to-upper"},
+         "response": {"status": 200, "body": "moved",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-state-string-exact-001/to-upper}
+    expect: {status: 200, body: "moved"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-string-exact-001/desk}
+    expect: {status: 404}

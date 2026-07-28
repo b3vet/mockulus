@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-flags-per-matcher-001
+behaviors:
+  - B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # bodyPatterns is a conjunction, and a relaxation flag belongs to the matcher
+  # document that carries it. Two equalToJson criteria over the same body is how
+  # a stub says "these two fragments are both present", and it only works if the
+  # two are evaluated independently against the whole document.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0016-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-flags-per-matcher-001/both",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}", "ignoreExtraElements": true},
+                                      {"equalToJson": "{\"b\":2}", "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "both",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-flags-per-matcher-001/both
+      body: '{"a":1,"b":2,"c":3}'
+    expect: {status: 200, body: "both"}
+
+  # Satisfying one criterion is not satisfying the stub — the two steps below
+  # are the ones an implementation that stopped at the first matching pattern
+  # would answer 200.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-flags-per-matcher-001/both
+      body: '{"a":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-flags-per-matcher-001/both
+      body: '{"b":2}'
+    expect: {status: 404}
+
+  # A flag set on one criterion says nothing about its neighbour. Here the first
+  # criterion tolerates extra members and the second does not, so the strict one
+  # governs: a document with a third member fails the stub even though the
+  # relaxed criterion accepts it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0016-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-flags-per-matcher-001/mixed",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}", "ignoreExtraElements": true},
+                                      {"equalToJson": "{\"a\":1,\"b\":2}"}]},
+         "response": {"status": 200, "body": "mixed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-flags-per-matcher-001/mixed
+      body: '{"a":1,"b":2}'
+    expect: {status: 200, body: "mixed"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-flags-per-matcher-001/mixed
+      body: '{"a":1,"b":2,"c":3}'
+    expect: {status: 404}
+
+  # And the relaxed criterion is still being evaluated rather than skipped: a
+  # document that satisfies the strict one cannot fail the relaxed one, so the
+  # negative that isolates it is a wrong value the strict criterion also sees.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-flags-per-matcher-001/mixed
+      body: '{"a":9,"b":2}'
+    expect: {status: 404}

@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-body-001
+behaviors: [B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # `request.body` is the raw payload as bytes-to-text, not a parsed document,
+  # which is what lets a stub echo a request whose content type nobody agreed
+  # on. The helpers around it here are the ones a stub uses to build an answer
+  # out of the payload rather than to repeat it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0008-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-request-body-001/echo"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "body={{request.body}} size={{size request.body}} head={{substring request.body 0 4}} shout={{upper request.body}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `size` counts the characters of the payload, so a body read as a document
+  # and re-serialised — or truncated at the first newline — is a different
+  # number here rather than a difference nobody sees.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-001/echo
+      headers: {Content-Type: text/plain}
+      body: "ping-payload"
+    expect:
+      status: 200
+      body: "body=ping-payload size=12 head=ping shout=PING-PAYLOAD"
+
+  # A second payload through the same stub, with a different length, so `size`
+  # is measuring rather than reporting a constant.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-001/echo
+      headers: {Content-Type: text/plain}
+      body: "pongs"
+    expect:
+      status: 200
+      body: "body=pongs size=5 head=pong shout=PONGS"
+
+  # The empty request is the case a stub gets wrong: a body that is not there
+  # has to be the empty string and falsy, not the word "null" and not truthy.
+  # It gets its own stub because that is the only way to ask the question
+  # without also asking what a substring past the end of nothing means.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0008-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-request-body-001/optional"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "body=[{{request.body}}] size={{size request.body}} has={{#if request.body}}yes{{else}}no{{/if}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-001/optional
+    expect:
+      status: 200
+      body: "body=[] size=0 has=no"
+
+  # Its control, on the same stub: with a payload the branch flips.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-001/optional
+      headers: {Content-Type: text/plain}
+      body: "here"
+    expect:
+      status: 200
+      body: "body=[here] size=4 has=yes"
+
+  # And the opt-in control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0008-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-request-body-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "body={{request.body}} size={{size request.body}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-request-body-001/literal
+      headers: {Content-Type: text/plain}
+      body: "ping-payload"
+    expect:
+      status: 200
+      body: "body={{request.body}} size={{size request.body}}"

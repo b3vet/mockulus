@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-negative-index-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An index counted from the end is the one path shape that cannot be answered
+  # by a single forward pass over the body — the length is not known until the
+  # array has been read — so a stub written this way exercises a different route
+  # to the same node than every other definite path in this corpus does. The
+  # assertions below are ordinary; the point is that they hold on that route too.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0009-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-negative-index-001/last",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[-1]",
+                                                           "equalTo": "z"}}]},
+         "response": {"status": 200, "body": "last",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0009-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-negative-index-001/third-last",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[-3]"}]},
+         "response": {"status": 200, "body": "third-last",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-negative-index-001/last
+      body: '{"items":["a","z"]}'
+    expect: {status: 200, body: "last"}
+
+  # The same two elements the other way round: -1 is the end of the array and
+  # not merely "some element", so this is a miss.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-negative-index-001/last
+      body: '{"items":["z","a"]}'
+    expect: {status: 404}
+
+  # A one-element array is its own last element, which is where an off-by-one in
+  # the conversion from the end would show.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-negative-index-001/last
+      body: '{"items":["z"]}'
+    expect: {status: 200, body: "last"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-negative-index-001/last
+      body: '{"items":[]}'
+    expect: {status: 404}
+
+  # Counting back past the start selects nothing rather than wrapping round to
+  # the end, which is the failure a signed index invites.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-negative-index-001/third-last
+      body: '{"items":["a","b"]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-negative-index-001/third-last
+      body: '{"items":["a","b","c"]}'
+    expect: {status: 200, body: "third-last"}

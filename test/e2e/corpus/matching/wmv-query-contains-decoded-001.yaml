@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-contains-decoded-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A single space as the operand is the sharpest available probe of what a
+# substring criterion is handed: the character occurs in the decoded value and
+# in neither of its wire spellings, so a server searching the raw query text
+# answers 404 to every step here that expects 200.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000022",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-contains-decoded-001/space",
+                     "queryParameters": {"q": {"contains": " "}}},
+         "response": {"status": 200, "body": "space", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            q: {contains: " "}
+
+  # A criterion every value satisfies, registered so the step that matters can
+  # be asked of it: does a vacuously true matcher excuse the parameter from
+  # being there at all?
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000023",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-contains-decoded-001/anything",
+                     "queryParameters": {"q": {"contains": ""}}},
+         "response": {"status": 200, "body": "anything", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/space?q=a+b"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "space"
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/space?q=a%20b"}
+    expect: {status: 200, body: "space"}
+
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/space?q=ab"}
+    expect: {status: 404}
+
+  # An escaped plus is a plus, not a space, so this value has no space in it
+  # even though its wire spelling and the first step's differ by two characters.
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/space?q=a%2Bb"}
+    expect: {status: 404}
+
+  # Substring, not prefix: a space at the front and at the back both count.
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/space?q=+ab"}
+    expect: {status: 200, body: "space"}
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/space?q=ab+"}
+    expect: {status: 200, body: "space"}
+
+  # The empty operand is a substring of every value, including the empty one.
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/anything?q=whatever"}
+    expect: {status: 200, body: "anything"}
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/anything?q="}
+    expect: {status: 200, body: "anything"}
+
+  # And the answer to the question the stub was registered for: no. A value
+  # criterion is a claim about a value, so it needs one to be there — the
+  # parameter's absence is not a value the matcher gets to be true about.
+  - request: {method: GET, path: /e2e/wmv-query-contains-decoded-001/anything}
+    expect: {status: 404}
+
+  - request: {method: GET, path: "/e2e/wmv-query-contains-decoded-001/anything?other=1"}
+    expect: {status: 404}

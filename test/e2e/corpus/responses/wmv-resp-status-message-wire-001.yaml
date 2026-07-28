@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-status-message-wire-001
+behaviors:
+  - B-RESP-STATUSMESSAGE
+  - B-RESP-HEADERS
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2. The replay cannot see the reason
+# phrase — it compares status code, headers and body — but that is not what this
+# case is for. Naming a statusMessage moves the whole response onto a writer of
+# our own (deviation #7), and what the differential checks is that everything
+# else about the response is unchanged by the move: the same status, the same
+# headers, the same repeated header, the same bytes. The phrase itself is
+# asserted directly, against the one thing Go's client does keep verbatim.
+wm: verified
+steps:
+  # The full shape in one response: a status with no household name, a phrase,
+  # a declared Content-Type, a header that repeats, a header that does not, and
+  # a JSON payload. All of it has to come out of the hand-written path.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0003-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-wire-001/phrased"},
+         "response": {"status": 207, "statusMessage": "Multi Status Custom",
+                      "jsonBody": {"ok": true, "n": 1.0},
+                      "headers": {"Content-Type": "application/json",
+                                  "X-Multi": ["a", "b"], "X-Solo": "s"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          status: 207
+          statusMessage: "Multi Status Custom"
+          headers: {X-Multi: ["a", "b"]}
+
+  # The phrase reaches the status line, and nothing else moved. X-Multi is read
+  # at its first value here because Go's Header.Get returns the first of a
+  # repeated header; that both values are still emitted is what the T5 diff
+  # asserts, since the normalizer joins repeats and would report a flattened or
+  # dropped second value as a header mismatch against WireMock.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-wire-001/phrased}
+    expect:
+      status: 207
+      status_message: "Multi Status Custom"
+      headers:
+        Content-Type: application/json
+        X-Multi: "a"
+        X-Solo: "s"
+      body: '{"ok":true,"n":1.0}'
+
+  # The control, and the reason the case registers two stubs that differ in one
+  # field. This one names no phrase, so it never leaves net/http's own writer.
+  # Everything else about the two responses is identical by construction, which
+  # makes any difference between the two steps attributable to the phrase alone.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0003-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-wire-001/unphrased"},
+         "response": {"status": 207,
+                      "jsonBody": {"ok": true, "n": 1.0},
+                      "headers": {"Content-Type": "application/json",
+                                  "X-Multi": ["a", "b"], "X-Solo": "s"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-wire-001/unphrased}
+    expect:
+      status: 207
+      status_message: "Multi-Status"
+      headers:
+        Content-Type: application/json
+        X-Multi: "a"
+        X-Solo: "s"
+      body: '{"ok":true,"n":1.0}'
+
+  # A phrased response ends its connection (deviation #7) and an unphrased one
+  # does not, so the two are served by different code down to the socket. That
+  # difference must not be observable in the answers: asking for the phrased
+  # stub again, after the unphrased one has been served in between, has to give
+  # the same response as the first time. A hijack that left the listener in a
+  # bad state would show up here rather than in a deployment under load.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-wire-001/phrased}
+    expect:
+      status: 207
+      status_message: "Multi Status Custom"
+      headers: {Content-Type: application/json, X-Solo: "s"}
+      body: '{"ok":true,"n":1.0}'

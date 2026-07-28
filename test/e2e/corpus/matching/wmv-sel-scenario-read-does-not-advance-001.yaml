@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-read-does-not-advance-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE, B-REQ-METHOD]
+wm: verified
+# The last step is unmatched, and that body differs by design (deviation
+# #2/#18). Every other body, and every status, is diffed.
+wm_ignore: ["$unmatched-body"]
+# The other independent pairing of the two scenario fields: a stub with
+# requiredScenarioState and no newScenarioState is gated but inert. It answers
+# as often as it is asked and leaves the flow exactly where it found it.
+#
+# That is what makes a scenario usable for the ordinary shape of a stateful
+# service — a resource that can be read any number of times and changes only
+# when something writes to it. If serving a gated stub advanced the flow by
+# itself, a test that read the resource twice before acting on it would see two
+# different answers and every assertion after the first would be timing.
+#
+# The three stubs share one path and differ by method and by state, so the
+# transcript separates reads from writes and both from the gate.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0017-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-read-does-not-advance-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-read-does-not-advance-001/basket"},
+         "response": {"status": 200, "body": "basket open",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {requiredScenarioState: "Started"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0017-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-read-does-not-advance-001",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "closed",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-read-does-not-advance-001/basket"},
+         "response": {"status": 200, "body": "basket closed now",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        requiredScenarioState: "Started"
+        newScenarioState: "closed"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0017-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-read-does-not-advance-001",
+         "requiredScenarioState": "closed",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-read-does-not-advance-001/basket"},
+         "response": {"status": 200, "body": "basket already closed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Three reads with nothing between them. A server that advanced the flow on
+  # every served scenario stub would answer the second of these differently, and
+  # a server that advanced it on every *matched candidate* would answer the
+  # second one differently too, since the write stub is a candidate for the
+  # first read's state.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-read-does-not-advance-001/basket}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "basket open"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-read-does-not-advance-001/basket}
+    expect: {status: 200, body: "basket open"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-read-does-not-advance-001/basket}
+    expect: {status: 200, body: "basket open"}
+
+  # The write, on the same path, told apart from the reads only by its method.
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-read-does-not-advance-001/basket}
+    expect: {status: 200, body: "basket closed now"}
+
+  # The reads that were repeatable a moment ago now answer differently, which is
+  # what makes the three identical answers above an assertion rather than an
+  # accident: the flow can move, and it moved when something wrote to it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-read-does-not-advance-001/basket}
+    expect: {status: 200, body: "basket already closed"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-read-does-not-advance-001/basket}
+    expect: {status: 200, body: "basket already closed"}
+
+  # And the write is gated on the state it consumed, so repeating it is not
+  # idempotent-by-accident — there is nothing left on the path for a POST.
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-read-does-not-advance-001/basket}
+    expect: {status: 404}

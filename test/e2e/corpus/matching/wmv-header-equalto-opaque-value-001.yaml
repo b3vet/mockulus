@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-equalto-opaque-value-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A header criterion compares the field value as a string. Nothing in the
+  # matching path knows that `; ` separates parameters or that `=` binds one,
+  # which matters because a stub author writing `Content-Type` criteria will
+  # eventually send a value carrying both. The three stubs below are the same
+  # question asked at three granularities.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0005-4000-8000-000000000001",
+         "name": "the whole field value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-equalto-opaque-value-001/whole",
+                     "headers": {"X-Options": {"equalTo": "charset=utf-8; q=0.5"}}},
+         "response": {"status": 200, "body": "whole",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0005-4000-8000-000000000002",
+         "name": "only the leading parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-equalto-opaque-value-001/leading",
+                     "headers": {"X-Options": {"equalTo": "charset=utf-8"}}},
+         "response": {"status": 200, "body": "leading",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0005-4000-8000-000000000003",
+         "name": "a parameter looked for as a substring",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-equalto-opaque-value-001/substring",
+                     "headers": {"X-Options": {"contains": "q=0.5"}}},
+         "response": {"status": 200, "body": "substring",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-equalto-opaque-value-001/whole
+      headers: {X-Options: "charset=utf-8; q=0.5"}
+    expect: {status: 200, body: "whole"}
+
+  # The interesting negative: a server that split the field value on `;` and
+  # compared the first token — the shape every media-type helper has — answers
+  # 200 here. equalTo has no such helper behind it.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-equalto-opaque-value-001/leading
+      headers: {X-Options: "charset=utf-8; q=0.5"}
+    expect: {status: 404}
+
+  # The control for that step: with nothing after it, the same operand matches,
+  # so the 404 above is about the extra parameter and not about the operand.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-equalto-opaque-value-001/leading
+      headers: {X-Options: "charset=utf-8"}
+    expect: {status: 200, body: "leading"}
+
+  # Nor is the value canonicalised before comparison: the optional space after
+  # the separator is part of the string, so dropping it is a different value.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-equalto-opaque-value-001/whole
+      headers: {X-Options: "charset=utf-8;q=0.5"}
+    expect: {status: 404}
+
+  # Reaching a parameter is what `contains` is for, and it works because the
+  # whole field value is there to search.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-equalto-opaque-value-001/substring
+      headers: {X-Options: "charset=utf-8; q=0.5"}
+    expect: {status: 200, body: "substring"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-equalto-opaque-value-001/substring
+      headers: {X-Options: "charset=utf-8"}
+    expect: {status: 404}

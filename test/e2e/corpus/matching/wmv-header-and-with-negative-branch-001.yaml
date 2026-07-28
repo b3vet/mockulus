@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-and-with-negative-branch-001
+behaviors: [B-MATCH-AND-OR-NOT, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # "Everything beginning with pr except production" is a conjunction of a
+  # positive and a negative branch, and the two operands deliberately overlap:
+  # every value the second branch excludes is one the first branch accepts. A
+  # combinator that evaluated its branches independently and took the best
+  # answer, rather than requiring both, cannot tell the two apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0018-4000-8000-000000000001",
+         "name": "and over a positive and a negative branch",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-and-with-negative-branch-001/narrowed",
+                     "headers": {"X-Env": {"and": [{"contains": "pr"},
+                                                   {"doesNotContain": "prod"}]}}},
+         "response": {"status": 200, "body": "narrowed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The same stub with the negative branch removed, so every 404 below can be
+  # attributed to that branch rather than to the operand it shares.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0018-4000-8000-000000000002",
+         "name": "the positive branch alone",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-and-with-negative-branch-001/broad",
+                     "headers": {"X-Env": {"contains": "pr"}}},
+         "response": {"status": 200, "body": "broad",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-and-with-negative-branch-001/narrowed
+      headers: {X-Env: "preview"}
+    expect: {status: 200, body: "narrowed"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-and-with-negative-branch-001/narrowed
+      headers: {X-Env: "prod"}
+    expect: {status: 404}
+
+  # Excluded on the strength of a substring rather than of the whole value,
+  # which is what separates the negative branch from an inverted equalTo.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-and-with-negative-branch-001/narrowed
+      headers: {X-Env: "preprod"}
+    expect: {status: 404}
+
+  # And the first branch is still load-bearing: a value the negative branch has
+  # no objection to is refused because the positive one does.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-and-with-negative-branch-001/narrowed
+      headers: {X-Env: "staging"}
+    expect: {status: 404}
+
+  # The control: the same two values against the positive branch alone.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-and-with-negative-branch-001/broad
+      headers: {X-Env: "prod"}
+    expect: {status: 200, body: "broad"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-and-with-negative-branch-001/broad
+      headers: {X-Env: "staging"}
+    expect: {status: 404}

@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-names-scope-state-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# State is keyed by scenario name, and the two scenarios here use identical state
+# names — `Started` and `moved` — so an implementation keying state by the state
+# name, or holding one current state for the deployment, gives the two flows the
+# same answer. That is not a hypothetical: a shared mockulus is the deployment
+# shape §1 recommends, and `moved`, `done`, `ready` are exactly the names several
+# suites will pick independently on the same instance. If one suite's transition
+# moved another's flow, the second suite would fail somewhere far from the cause.
+#
+# The two scenarios are advanced one at a time, and after each advance both are
+# read, so the case asserts the flow that moved *and* the flow that did not.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0015-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-names-scope-state-001-alpha",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-names-scope-state-001/alpha"},
+         "response": {"status": 200, "body": "alpha at the start",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        scenarioName: "wmv-sel-scenario-names-scope-state-001-alpha"
+        requiredScenarioState: "Started"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0015-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-names-scope-state-001-alpha",
+         "requiredScenarioState": "moved",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-names-scope-state-001/alpha"},
+         "response": {"status": 200, "body": "alpha has moved",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0015-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-names-scope-state-001-beta",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-names-scope-state-001/beta"},
+         "response": {"status": 200, "body": "beta at the start",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0015-4000-8000-000000000004",
+         "scenarioName": "wmv-sel-scenario-names-scope-state-001-beta",
+         "requiredScenarioState": "moved",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-names-scope-state-001/beta"},
+         "response": {"status": 200, "body": "beta has moved",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0015-4000-8000-000000000005",
+         "scenarioName": "wmv-sel-scenario-names-scope-state-001-alpha",
+         "newScenarioState": "moved",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-names-scope-state-001/advance-alpha"},
+         "response": {"status": 200, "body": "alpha advanced",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0015-4000-8000-000000000006",
+         "scenarioName": "wmv-sel-scenario-names-scope-state-001-beta",
+         "newScenarioState": "moved",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-names-scope-state-001/advance-beta"},
+         "response": {"status": 200, "body": "beta advanced",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Both flows start where every scenario starts, which is the baseline the two
+  # reads after each advance are compared against.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-names-scope-state-001/alpha}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "alpha at the start"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-names-scope-state-001/beta}
+    expect: {status: 200, body: "beta at the start"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-names-scope-state-001/advance-alpha}
+    expect: {status: 200, body: "alpha advanced"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-names-scope-state-001/alpha}
+    expect: {status: 200, body: "alpha has moved"}
+
+  # The assertion the case exists for. Beta's stub is gated on the same state
+  # name that alpha has just entered, and beta has not moved.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-names-scope-state-001/beta}
+    expect: {status: 200, body: "beta at the start"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-names-scope-state-001/advance-beta}
+    expect: {status: 200, body: "beta advanced"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-names-scope-state-001/beta}
+    expect: {status: 200, body: "beta has moved"}
+
+  # And beta's transition did not disturb alpha either, which rules out the
+  # remaining reading of the steps above — that the two flows share one state
+  # and alpha simply moved first.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-names-scope-state-001/alpha}
+    expect: {status: 200, body: "alpha has moved"}

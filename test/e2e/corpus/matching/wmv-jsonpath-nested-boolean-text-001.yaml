@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-nested-boolean-text-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A selected boolean reaches an inner matcher as the word JSON spells it with,
+  # and the pair of stubs below is what makes that observable in both
+  # directions. The false stub matters more than the true one: false is the
+  # value an implementation is most likely to conflate with absence, and a stub
+  # asking for it would then never match anything at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0017-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nested-boolean-text-001/vip",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.vip",
+                                                           "equalTo": "true"}}]},
+         "response": {"status": 200, "body": "vip",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0017-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nested-boolean-text-001/plain",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.vip",
+                                                           "equalTo": "false"}}]},
+         "response": {"status": 200, "body": "plain",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-boolean-text-001/vip
+      body: '{"vip":true}'
+    expect: {status: 200, body: "vip"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-boolean-text-001/vip
+      body: '{"vip":false}'
+    expect: {status: 404}
+
+  # The false stub over the same two documents, which is the half that fails
+  # whenever a false has been dropped somewhere between the selection and the
+  # inner matcher.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-boolean-text-001/plain
+      body: '{"vip":false}'
+    expect: {status: 200, body: "plain"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-boolean-text-001/plain
+      body: '{"vip":true}'
+    expect: {status: 404}
+
+  # The word sent as a string satisfies the same stub: the comparison is textual
+  # once the value has been rendered, exactly as it is for numbers.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-boolean-text-001/vip
+      body: '{"vip":"true"}'
+    expect: {status: 200, body: "vip"}
+
+  # And absence is not false — the stub asking for false refuses a document that
+  # never mentioned the key.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-boolean-text-001/plain
+      body: '{"other":false}'
+    expect: {status: 404}

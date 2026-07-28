@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-equalto-whitespace-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Whitespace is where a body matcher is most tempting to normalize: a client
+  # library appends a newline, a proxy pretty-prints, and "just trim it" looks
+  # like a kindness. It is not — equalTo is an equality over the bytes that
+  # arrived, and a stub author who wrote trailing whitespace into the operand
+  # asked for it. The operand here carries leading spaces, an internal single
+  # space and a trailing newline, so any trimming or collapsing on either side
+  # is observable.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0001-4000-8000-000000000001",
+         "name": "equalTo keeps the operand's whitespace",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-equalto-whitespace-001/exact",
+                     "bodyPatterns": [{"equalTo": "  a b  \n"}]},
+         "response": {"status": 200, "body": "exact",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0001-4000-8000-000000000002",
+         "name": "equalTo distinguishes CRLF from LF",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-equalto-whitespace-001/crlf",
+                     "bodyPatterns": [{"equalTo": "a\r\nb"}]},
+         "response": {"status": 200, "body": "crlf",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The body the operand describes, byte for byte.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-whitespace-001/exact, body: "  a b  \n"}
+    expect: {status: 200, body: "exact"}
+
+  # The trimmed spelling is a different body. An implementation that trimmed
+  # either side before comparing would answer this 200, and every stub in the
+  # deployment would quietly become whitespace-blind with it.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-whitespace-001/exact, body: "a b"}
+    expect: {status: 404}
+
+  # Trimming only the trailing newline — the single most common "harmless"
+  # normalization — is enough to make the two bodies different.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-whitespace-001/exact, body: "  a b  "}
+    expect: {status: 404}
+
+  # And the relaxation is not one-directional either: an extra newline past the
+  # one the operand asked for is a mismatch too, so this is equality rather
+  # than a prefix test that tolerates a tail of whitespace.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-whitespace-001/exact, body: "  a b  \n\n"}
+    expect: {status: 404}
+
+  # Interior whitespace counts the same as the whitespace at the ends: two
+  # spaces between the words is not one. A comparison that collapsed runs of
+  # whitespace would pass this.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-whitespace-001/exact, body: "  a  b  \n"}
+    expect: {status: 404}
+
+  # Line endings are part of the body as well. A stub written against a client
+  # that sends CRLF must keep refusing the LF spelling, or a suite that passes
+  # on Windows and fails on Linux is one library upgrade away.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-whitespace-001/crlf, body: "a\r\nb"}
+    expect: {status: 200, body: "crlf"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-whitespace-001/crlf, body: "a\nb"}
+    expect: {status: 404}

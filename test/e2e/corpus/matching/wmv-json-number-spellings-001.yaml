@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-number-spellings-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Numbers compare by value, so the spelling a client's serializer happened to
+  # choose must not decide whether the stub matches. The interesting positions
+  # are the ones a comparison written on parsed values gets for free but a
+  # comparison written on raw text does not: inside a nested object, and inside
+  # an array where the element also has to line up positionally.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0004-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-number-spellings-001/doc",
+                     "bodyPatterns": [{"equalToJson": "{\"n\":100,\"o\":{\"m\":0.5},\"xs\":[2,3]}"}]},
+         "response": {"status": 200, "body": "spellings",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-spellings-001/doc
+      body: '{"n":100,"o":{"m":0.5},"xs":[2,3]}'
+    expect: {status: 200, body: "spellings"}
+
+  # Exponent notation for the integer, exponent notation at depth, and a
+  # trailing-zero float in an array slot — all in one request, so the step
+  # fails if any single position is compared textually.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-spellings-001/doc
+      body: '{"n":1e2,"o":{"m":5e-1},"xs":[2.0,3.00]}'
+    expect: {status: 200, body: "spellings"}
+
+  # The capital exponent marker and a leading-zero decimal are the same numbers
+  # again, spelled the way another serializer writes them.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-spellings-001/doc
+      body: '{"n":1.0E2,"o":{"m":0.50},"xs":[2e0,3]}'
+    expect: {status: 200, body: "spellings"}
+
+  # Value-equality stops at the value: the string spelling of a number is a
+  # string, which is the confusion the relaxation above is most likely to leak
+  # into.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-spellings-001/doc
+      body: '{"n":"100","o":{"m":0.5},"xs":[2,3]}'
+    expect: {status: 404}
+
+  # And it is equality, not proximity: no tolerance is applied, so a number that
+  # differs in the seventh decimal is a different number.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-spellings-001/doc
+      body: '{"n":100,"o":{"m":0.5},"xs":[2,3.0000001]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-spellings-001/doc
+      body: '{"n":101,"o":{"m":0.5},"xs":[2,3]}'
+    expect: {status: 404}
+
+  # The nested position has its own negative, so the acceptance at depth above
+  # cannot have come from ignoring the nested object.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-spellings-001/doc
+      body: '{"n":100,"o":{"m":0.6},"xs":[2,3]}'
+    expect: {status: 404}

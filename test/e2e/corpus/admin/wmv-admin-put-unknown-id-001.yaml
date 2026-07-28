@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-put-unknown-id-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+wm: verified
+# The closing mock-port step lands on the unmatched 404, whose body WireMock
+# fills with a near-miss table and mockulus deliberately does not (deviation
+# #2/#18). Only that body is given up; every admin body below is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # PUT replaces an existing stub and never creates one, so an id nothing was
+  # registered under answers 404 — and a bare one, with no body and no
+  # Content-Type. A suite that PUTs a stub it forgot to register has to fail on
+  # the call it got wrong; an upsert would leave it holding a mock filed under
+  # an id it never chose to create.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0001-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-unknown-id-001/ghost"},
+         "response": {"status": 200, "body": "ghost"}}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # The existence check runs before the body is parsed, and the next three
+  # bodies are what make that ordering observable, because each of them is
+  # rejected on its own merits against an id that does exist. This one is not
+  # parseable JSON at all.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0001-4000-8000-000000000001
+      body: '{"request": {'
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # This one parses and then names a field mockulus answers 422 for.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0001-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-unknown-id-001/ghost"},
+         "response": {"status": 200},
+         "postServeActions": [{"name": "webhook"}]}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # And this one is not a document at all. Answering any of the three 422 would
+  # send the author looking for a mistake in their stub JSON when the mistake is
+  # the id in the URL — the diagnosis is wrong even though the call still fails.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0001-4000-8000-000000000001
+      body: ""
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # None of the four attempts created anything, under the id or on the wire.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0001-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-unknown-id-001/ghost}
+    expect: {status: 404}
+
+  # The control the four refusals need: register that exact id, and the very
+  # first body — unchanged — is accepted. So the 404s were a statement about the
+  # id and not about the request, which is the only reading that makes the
+  # ordering claim mean anything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0001-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-unknown-id-001/ghost"},
+         "response": {"status": 200, "body": "placeholder"}}
+    expect: {status: 201}
+
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0001-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-unknown-id-001/ghost"},
+         "response": {"status": 200, "body": "ghost"}}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0001-4000-8000-000000000001"
+        uuid: "a1000008-0001-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-put-unknown-id-001/ghost}
+        response: {status: 200, body: "ghost"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-unknown-id-001/ghost}
+    expect: {status: 200, body: "ghost"}

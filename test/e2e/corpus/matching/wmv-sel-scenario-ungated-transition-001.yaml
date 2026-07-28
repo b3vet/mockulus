@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-ungated-transition-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# The two scenario fields are independent. A stub carrying newScenarioState
+# without requiredScenarioState is ungated: it matches whatever the flow is
+# doing, and it sets the state outright rather than stepping it on from a
+# particular place. That is what a suite uses to put a flow where it wants it
+# without replaying the calls that lead there, and it only works if the write is
+# unconditional — a server that quietly required the flow to be at Started would
+# serve the first call of a test and refuse the second, which is the worst place
+# for the difference to show up.
+#
+# The probe path reports where the flow is, one stub per state. The two setters
+# are then driven in an order that is only possible if neither is gated: from
+# Started to one, from one to two, and from two back to one — the last of which
+# steps *backwards* through a machine that declares no such edge.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0016-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-ungated-transition-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-ungated-transition-001/state"},
+         "response": {"status": 200, "body": "Started",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0016-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-ungated-transition-001",
+         "requiredScenarioState": "one",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-ungated-transition-001/state"},
+         "response": {"status": 200, "body": "one",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0016-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-ungated-transition-001",
+         "requiredScenarioState": "two",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-ungated-transition-001/state"},
+         "response": {"status": 200, "body": "two",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Neither setter names a required state, and the echo is asserted so the
+  # document really is the ungated shape rather than one that acquired a default.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0016-4000-8000-000000000004",
+         "scenarioName": "wmv-sel-scenario-ungated-transition-001",
+         "newScenarioState": "one",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-ungated-transition-001/set-one"},
+         "response": {"status": 200, "body": "set to one",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        scenarioName: "wmv-sel-scenario-ungated-transition-001"
+        newScenarioState: "one"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0016-4000-8000-000000000005",
+         "scenarioName": "wmv-sel-scenario-ungated-transition-001",
+         "newScenarioState": "two",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-ungated-transition-001/set-two"},
+         "response": {"status": 200, "body": "set to two",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {newScenarioState: "two"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-ungated-transition-001/state}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "Started"
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-ungated-transition-001/set-one}
+    expect: {status: 200, body: "set to one"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-ungated-transition-001/state}
+    expect: {status: 200, body: "one"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-ungated-transition-001/set-two}
+    expect: {status: 200, body: "set to two"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-ungated-transition-001/state}
+    expect: {status: 200, body: "two"}
+
+  # The step that makes the case: the same setter is driven again from a state it
+  # has never been driven from. It serves and it takes, so the transition is a
+  # write and not an edge in a graph the server is walking.
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-ungated-transition-001/set-one}
+    expect: {status: 200, body: "set to one"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-ungated-transition-001/state}
+    expect: {status: 200, body: "one"}
+
+  # Setting the state to what it already is is a write like any other, and it
+  # neither fails nor clears the flow back to the beginning.
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-ungated-transition-001/set-one}
+    expect: {status: 200, body: "set to one"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-ungated-transition-001/state}
+    expect: {status: 200, body: "one"}

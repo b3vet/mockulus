@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-stray-separators-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-MATCH-EQUALTO-CASEINSENSITIVE]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Query strings assembled by concatenation pick up separators with nothing
+# either side of them — a leading `&` from an empty first parameter, a trailing
+# one from a loop that appends rather than joins. None of them is a parameter,
+# and none of them may disturb the parameters around it: a parser that stopped
+# at the first empty element, or that let one shift the following element's
+# name, would take the stub out of service for a client that only ever sends
+# well-formed queries when its parameter list is full.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000041",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-stray-separators-001/pairs",
+                     "queryParameters": {"q": {"equalTo": "hello"}}},
+         "response": {"status": 200, "body": "pairs", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-stray-separators-001/pairs?q=hello"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "pairs"
+
+  # A separator before the only parameter.
+  - request: {method: GET, path: "/e2e/wmv-query-stray-separators-001/pairs?&q=hello"}
+    expect: {status: 200, body: "pairs"}
+
+  # After it.
+  - request: {method: GET, path: "/e2e/wmv-query-stray-separators-001/pairs?q=hello&"}
+    expect: {status: 200, body: "pairs"}
+
+  # And between two of them, where a parser that mis-handled the empty element
+  # would be most likely to lose the parameter that follows.
+  - request: {method: GET, path: "/e2e/wmv-query-stray-separators-001/pairs?q=hello&&r=1"}
+    expect: {status: 200, body: "pairs"}
+  - request: {method: GET, path: "/e2e/wmv-query-stray-separators-001/pairs?r=1&&q=hello"}
+    expect: {status: 200, body: "pairs"}
+
+  # An element with an `=` but nothing before it is a parameter with an empty
+  # name, not a value belonging to whatever came after it. So `q` is not there
+  # and the criterion fails — the step that keeps the four above from being
+  # explained by "anything unparseable is ignored generously".
+  - request: {method: GET, path: "/e2e/wmv-query-stray-separators-001/pairs?=hello"}
+    expect: {status: 404}

@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-encoded-hex-case-004
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The hex digits of an escape are case-insensitive to a decoder and are two
+  # different characters to a comparison. Since the path is compared as
+  # received, the comparison wins: `%C3%A9` and `%c3%a9` are the same accented
+  # letter and different paths. This is the assertion that would catch a
+  # normalization added later for the best of reasons — canonicalising escapes
+  # before matching looks harmless and quietly merges these two stubs.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0028-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-encoded-hex-case-004/upper/caf%C3%A9"},
+         "response": {"status": 200, "body": "upper-hex", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-encoded-hex-case-004/upper/caf%C3%A9"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0028-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-encoded-hex-case-004/lower/caf%c3%a9"},
+         "response": {"status": 200, "body": "lower-hex", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Each spelling reaches the stub written with it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-hex-case-004/upper/caf%C3%A9}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "upper-hex"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-hex-case-004/lower/caf%c3%a9}
+    expect: {status: 200, body: "lower-hex"}
+
+  # And not the other, in both directions — the symmetry is what rules out a
+  # normalization that happened to pick one case over the other.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-hex-case-004/upper/caf%c3%a9}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-hex-case-004/lower/caf%C3%A9}
+    expect: {status: 404}

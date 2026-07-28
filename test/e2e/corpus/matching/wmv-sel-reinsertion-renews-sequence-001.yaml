@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-reinsertion-renews-sequence-001
+behaviors: [B-STUB-PRIORITY, B-STUB-ID-UUID, B-ADMIN-MAPPINGS-ID-DELETE]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# The tie-break of §5.3 is the insertion sequence, and the word that matters is
+# insertion: the number is issued when a mapping is written, not derived from
+# the mapping's identity and not remembered against its id. That distinction is
+# invisible while stubs are only ever added — every plausible implementation
+# agrees then — and it decides the answer as soon as a suite tears one stub down
+# and puts it back, which is the ordinary shape of a test that re-arms its
+# fixture between cases.
+#
+# Both stubs carry the same priority throughout, so the sequence is the only key
+# in play, and the same pair is flipped twice: whichever stub was written last
+# is the one that answers, however many times it has been written before.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0007-4000-8000-000000000001",
+         "priority": 6,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-reinsertion-renews-sequence-001/lane"},
+         "response": {"status": 200, "body": "first registered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "a100000a-0007-4000-8000-000000000001"
+        priority: 6
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0007-4000-8000-000000000002",
+         "priority": 6,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-reinsertion-renews-sequence-001/lane"},
+         "response": {"status": 200, "body": "second registered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-reinsertion-renews-sequence-001/lane}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "second registered"
+
+  # The older stub is removed and written again, byte for byte, under the very
+  # same id. If the sequence were a property of the identity it would come back
+  # where it was and the answer would not change.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0007-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0007-4000-8000-000000000001",
+         "priority": 6,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-reinsertion-renews-sequence-001/lane"},
+         "response": {"status": 200, "body": "first registered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "a100000a-0007-4000-8000-000000000001"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-reinsertion-renews-sequence-001/lane}
+    expect: {status: 200, body: "first registered"}
+
+  # And back the other way, which is what makes the step above an assertion
+  # about the write and not about that particular id: the same treatment applied
+  # to the other stub hands the path back to it.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0007-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0007-4000-8000-000000000002",
+         "priority": 6,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-reinsertion-renews-sequence-001/lane"},
+         "response": {"status": 200, "body": "second registered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-reinsertion-renews-sequence-001/lane}
+    expect: {status: 200, body: "second registered"}

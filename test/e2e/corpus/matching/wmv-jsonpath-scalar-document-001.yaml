@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-scalar-document-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A body that is a bare JSON scalar is a valid document with no members, which
+  # is the case between "well-formed object" and "not JSON at all" — and the one
+  # a parser is most likely to accept while an evaluator built around containers
+  # falls over. The root path selects the scalar; a path naming anything inside
+  # it selects nothing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0025-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-scalar-document-001/root",
+                     "bodyPatterns": [{"matchesJsonPath": "$"}]},
+         "response": {"status": 200, "body": "root",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0025-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-scalar-document-001/member",
+                     "bodyPatterns": [{"matchesJsonPath": "$.a"}]},
+         "response": {"status": 200, "body": "member",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-document-001/root
+      body: '"text"'
+    expect: {status: 200, body: "root"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-document-001/root
+      body: '5'
+    expect: {status: 200, body: "root"}
+
+  # A bare null is a document whose root is a null, and the null rule applies to
+  # it exactly as it does to a selected member.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-document-001/root
+      body: 'null'
+    expect: {status: 404}
+
+  # Naming a member of a scalar selects nothing — a miss rather than an error.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-document-001/member
+      body: '"text"'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-document-001/member
+      body: '{"a":1}'
+    expect: {status: 200, body: "member"}

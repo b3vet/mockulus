@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-jsonbody-order-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # jsonBody takes a JSON value rather than a string, so the server decides how
+  # to write it back out — and the members have to come out in the order they
+  # went in. Go's own object model is a map, whose iteration order is randomised
+  # deliberately and whose encoder sorts the keys, so serving this document
+  # through a map[string]any yields "a" before "m" before "z" and this step
+  # fails. The member names are chosen so that the submitted order and the
+  # alphabetical one disagree at every level.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000d-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-order-001/nested"},
+         "response": {"status": 200,
+                      "jsonBody": {"z": 1, "a": 2,
+                                   "m": {"y": 1, "b": {"x": true, "c": false}},
+                                   "list": [{"q": 1, "d": 2}, {"p": 3, "e": 4}]}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          jsonBody:
+            z: 1
+            a: 2
+
+  # Asserted as exact bytes. A body_json assertion would compare the decoded
+  # documents, which are equal under every ordering, and would pass against the
+  # very rewrite this case exists to catch.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-order-001/nested}
+    expect:
+      status: 200
+      body: '{"z":1,"a":2,"m":{"y":1,"b":{"x":true,"c":false}},"list":[{"q":1,"d":2},{"p":3,"e":4}]}'
+
+  # The control that separates "the order is preserved" from "the submitted text
+  # is echoed". This document is spaced out and spread over the field in a way
+  # no server would reproduce by accident, and what comes back is compact — so
+  # the value is being serialised rather than the bytes copied, and it is that
+  # serialisation which is order-preserving.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000d-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-order-001/spaced"},
+         "response": {"status": 200,
+                      "jsonBody": { "z" :  1 ,
+                                    "a" : [ 1 , 2 ] ,
+                                    "empty" : { } ,
+                                    "none" : [ ] }}}
+    expect: {status: 201}
+
+  # The empty object and the empty array are here because they are the two
+  # values a re-serialiser is most likely to conflate or to drop: they carry no
+  # members to copy, and "{}" and "[]" are different answers to a client.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-order-001/spaced}
+    expect:
+      status: 200
+      body: '{"z":1,"a":[1,2],"empty":{},"none":[]}'

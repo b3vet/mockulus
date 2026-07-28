@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-wildcard-presence-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A wildcard names every direct child of a node, whatever kind of node it is,
+  # so the bare form over one reads as "this container has something in it". It
+  # is the cheapest expression that turns the emptiness rule into a question
+  # about the list rather than about the value, and the null steps below are
+  # where the two come apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000b-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-wildcard-presence-001/attrs",
+                     "bodyPatterns": [{"matchesJsonPath": "$.attrs.*"}]},
+         "response": {"status": 200, "body": "attrs",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-presence-001/attrs
+      body: '{"attrs":{"a":1}}'
+    expect: {status: 200, body: "attrs"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-presence-001/attrs
+      body: '{"attrs":{}}'
+    expect: {status: 404}
+
+  # One member whose value is null still gives the wildcard one hit, and a
+  # one-element list is not empty. The definite path $.attrs.a would refuse the
+  # very same document, which is the distinction this expression exists to show.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-presence-001/attrs
+      body: '{"attrs":{"a":null}}'
+    expect: {status: 200, body: "attrs"}
+
+  # The wildcard reads an array's elements as readily as an object's members, so
+  # the stub does not care which container the client sent.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-presence-001/attrs
+      body: '{"attrs":[1]}'
+    expect: {status: 200, body: "attrs"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-presence-001/attrs
+      body: '{"attrs":[]}'
+    expect: {status: 404}
+
+  # A scalar has no children at all — not one child that is itself — so this is
+  # a miss rather than a match on the scalar.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-presence-001/attrs
+      body: '{"attrs":"text"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-presence-001/attrs
+      body: '{"other":{"a":1}}'
+    expect: {status: 404}

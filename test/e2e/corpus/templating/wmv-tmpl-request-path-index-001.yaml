@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-path-index-001
+behaviors: [B-RESP-TRANSFORMERS, B-REQ-URLPATHPATTERN]
+wm: verified
+# One step asks for a path the pattern refuses, and the unmatched body is
+# deviation #2/#18. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `request.path` is a string and an indexable list of segments at the same
+  # time, and `request.pathSegments` is the second spelling of the list. A stub
+  # that pulls an identifier out of the URL depends on which index holds what,
+  # so the template renders three positions of the same path at once.
+  #
+  # The stub matches on a pattern rather than a fixed path, so the two requests
+  # below reach it with different segments and the indices have to move.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0003-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/wmv-tmpl-request-path-index-001/[a-z]+/[a-z]+"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "s0={{request.path.[0]}} s2={{request.path.[2]}} s3={{request.path.[3]}} seg2={{request.pathSegments.[2]}} past=[{{request.path.[9]}}] whole={{request.path}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The leading empty segment is the trap: a path beginning with "/" splits
+  # into an empty first field unless the splitter drops it, and an
+  # implementation that kept it renders every index one place late. `s0` is
+  # "e2e" and not the empty string, which fixes the numbering for the rest.
+  #
+  # `past` is bracketed because an index beyond the last segment renders as
+  # nothing — not as the path, and not as the index expression, either of which
+  # would produce a body that still looks plausible.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-index-001/alpha/beta
+    expect:
+      status: 200
+      body: "s0=e2e s2=alpha s3=beta seg2=alpha past=[] whole=/e2e/wmv-tmpl-request-path-index-001/alpha/beta"
+
+  # A second path through the same stub. The two segments that moved are the
+  # two that change here, and the two that did not are unchanged — which is the
+  # pairing that separates "reads the request" from "remembers the first one".
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-index-001/gamma/delta
+    expect:
+      status: 200
+      body: "s0=e2e s2=gamma s3=delta seg2=gamma past=[] whole=/e2e/wmv-tmpl-request-path-index-001/gamma/delta"
+
+  # `whole` renders the path itself even though the same name indexes a list,
+  # so the dual reading is not a trick that costs the plain spelling. A path
+  # short of the pattern is refused, which keeps the two steps above statements
+  # about a matched request rather than about any request at all.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-index-001/alpha
+    expect: {status: 404}
+
+  # The control: the indices are template syntax, not a URL convention the
+  # server rewrites on its own.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0003-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-path-index-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "s0={{request.path.[0]}} seg2={{request.pathSegments.[2]}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-index-001/literal
+    expect:
+      status: 200
+      body: "s0={{request.path.[0]}} seg2={{request.pathSegments.[2]}}"

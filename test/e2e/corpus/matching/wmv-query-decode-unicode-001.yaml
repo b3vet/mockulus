@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-decode-unicode-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-MATCH-CONTAINS-DOESNOTCONTAIN]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A non-ASCII value reaches the query as several percent escapes standing for
+# the bytes of its UTF-8 encoding, and the criterion operand is the text. So the
+# comparison only works if the escapes are decoded as a byte sequence and that
+# sequence is read as UTF-8 — decoding each escape to its own character, which
+# is what a Latin-1 reading does, produces two characters where there is one.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000011",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-unicode-001/city",
+                     "queryParameters": {"city": {"equalTo": "Üsküdar"}}},
+         "response": {"status": 200, "body": "city", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            city: {equalTo: "Üsküdar"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000012",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-unicode-001/partial",
+                     "queryParameters": {"city": {"contains": "skü"}}},
+         "response": {"status": 200, "body": "partial", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-decode-unicode-001/city?city=%C3%9Csk%C3%BCdar"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "city"
+
+  # The escapes carry hex digits, so their case is not part of the value.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-unicode-001/city?city=%c3%9csk%c3%bcdar"}
+    expect: {status: 200, body: "city"}
+
+  # The ASCII transliteration is a different string, which is the control that
+  # keeps the two steps above from passing on a prefix comparison.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-unicode-001/city?city=Uskudar"}
+    expect: {status: 404}
+
+  # A substring criterion spanning a multi-byte character holds, so the decoded
+  # value is being searched as text rather than as its escaped spelling — the
+  # escaped spelling contains no `ü` anywhere.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-unicode-001/partial?city=%C3%9Csk%C3%BCdar"}
+    expect: {status: 200, body: "partial"}
+
+  - request: {method: GET, path: "/e2e/wmv-query-decode-unicode-001/partial?city=%C3%9Cskudar"}
+    expect: {status: 404}

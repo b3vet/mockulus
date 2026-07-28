@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-array-object-extra-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The everyday shape: a collection of records, of which the stub cares about
+  # one field. ignoreExtraElements has to reach inside the array's elements —
+  # an implementation that applied the relaxation to objects reached through
+  # members but not to objects reached through an index would refuse the first
+  # request below while accepting the equivalent one nested under a member.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0013-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-array-object-extra-001/relaxed",
+                     "bodyPatterns": [{"equalToJson": "{\"items\":[{\"id\":1},{\"id\":2}]}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "relaxed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-array-object-extra-001/relaxed
+      body: '{"items":[{"id":1,"n":"a"},{"id":2,"n":"b"}]}'
+    expect: {status: 200, body: "relaxed"}
+
+  # Two relaxations at once — extra members inside the elements, and an element
+  # past the end of the expected array — since they are the same rule read at
+  # two depths.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-array-object-extra-001/relaxed
+      body: '{"items":[{"id":1,"n":"a"},{"id":2},{"id":3,"n":"c"}]}'
+    expect: {status: 200, body: "relaxed"}
+
+  # Without ignoreArrayOrder the elements are still positional, so the same two
+  # records swapped are a mismatch. Reading "ignore extra" as "search the array"
+  # would accept this.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-array-object-extra-001/relaxed
+      body: '{"items":[{"id":2,"n":"b"},{"id":1,"n":"a"}]}'
+    expect: {status: 404}
+
+  # An expected member missing from an element is missing, however many others
+  # the element carries.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-array-object-extra-001/relaxed
+      body: '{"items":[{"n":"a"},{"id":2}]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-array-object-extra-001/relaxed
+      body: '{"items":[{"id":1,"n":"a"}]}'
+    expect: {status: 404}
+
+  # The control: the same operand without the flag refuses the request the
+  # relaxed stub accepted first, so every acceptance above is the flag's doing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0013-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-array-object-extra-001/strict",
+                     "bodyPatterns": [{"equalToJson": "{\"items\":[{\"id\":1},{\"id\":2}]}"}]},
+         "response": {"status": 200, "body": "strict",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-array-object-extra-001/strict
+      body: '{"items":[{"id":1,"n":"a"},{"id":2,"n":"b"}]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-array-object-extra-001/strict
+      body: '{"items":[{"id":1},{"id":2}]}'
+    expect: {status: 200, body: "strict"}

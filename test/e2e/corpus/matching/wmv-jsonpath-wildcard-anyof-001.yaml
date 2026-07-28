@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-wildcard-anyof-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A wildcard over an object's VALUES is the shape where any-of matters most: a
+  # stub that wants "some slot is open" cannot name the slot, because the keys
+  # are data. The inner matcher is applied to each selected value in turn and one
+  # satisfying value is enough.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000c-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-wildcard-anyof-001/slots",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.slots.*",
+                                                           "equalTo": "open"}}]},
+         "response": {"status": 200, "body": "slots",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # One value out of two satisfies the inner matcher. This is the step that
+  # separates any-of from all-of: an implementation requiring every selected
+  # value to satisfy the matcher answers 404 here.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-anyof-001/slots
+      body: '{"slots":{"a":"taken","b":"open"}}'
+    expect: {status: 200, body: "slots"}
+
+  # …and it holds whichever position the satisfying value occupies, so nothing
+  # turns on the order the members happen to be serialised in.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-anyof-001/slots
+      body: '{"slots":{"a":"open","b":"taken"}}'
+    expect: {status: 200, body: "slots"}
+
+  # Every value satisfying it is still a match — any-of is not exactly-one.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-anyof-001/slots
+      body: '{"slots":{"a":"open","b":"open"}}'
+    expect: {status: 200, body: "slots"}
+
+  # No value satisfying it is the control the three steps above are read
+  # against, and it is what a matcher that ignored the inner matcher entirely
+  # would get wrong.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-anyof-001/slots
+      body: '{"slots":{"a":"taken","b":"held"}}'
+    expect: {status: 404}
+
+  # An empty object selects nothing, so there is no value to satisfy anything.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-anyof-001/slots
+      body: '{"slots":{}}'
+    expect: {status: 404}
+
+  # The wanted value sitting one level below the wildcard is out of reach: the
+  # wildcard selects the member, and the member is an object rather than the
+  # text the inner matcher wants.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-wildcard-anyof-001/slots
+      body: '{"slots":{"a":{"b":"open"}}}'
+    expect: {status: 404}

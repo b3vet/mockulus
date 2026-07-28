@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-value-whitespace-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Whitespace inside a field value is part of the value; whitespace around one
+  # is framing, and nothing on the path from the wire to the matcher preserves
+  # it. The practical consequence is the authoring trap this case pins: an
+  # operand written with padding — the easy mistake when a value is copied out
+  # of a captured request — describes a value that cannot arrive, so the stub
+  # never matches and there is nothing in the answer to say why.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0021-4000-8000-000000000001",
+         "name": "operand without padding",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-value-whitespace-001/trimmed",
+                     "headers": {"X-Pad": {"equalTo": "a b"}}},
+         "response": {"status": 200, "body": "trimmed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0021-4000-8000-000000000002",
+         "name": "operand carrying the padding",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-value-whitespace-001/padded",
+                     "headers": {"X-Pad": {"equalTo": " a b "}}},
+         "response": {"status": 200, "body": "padded",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      # The padding survives registration untouched: it is only the compared
+      # value that never carries any, so an operand cannot be quietly repaired
+      # into one that would have matched.
+      body_json_subset:
+        request:
+          headers:
+            X-Pad: {equalTo: " a b "}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-value-whitespace-001/trimmed
+      headers: {X-Pad: "a b"}
+    expect: {status: 200, body: "trimmed"}
+
+  # The interior space is significant, so this is a different value.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-value-whitespace-001/trimmed
+      headers: {X-Pad: "ab"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-value-whitespace-001/trimmed
+      headers: {X-Pad: "a  b"}
+    expect: {status: 404}
+
+  # Sending the padding does not produce a padded value: the unpadded operand
+  # still matches…
+  - request:
+      method: GET
+      path: /e2e/wmv-header-value-whitespace-001/trimmed
+      headers: {X-Pad: " a b "}
+    expect: {status: 200, body: "trimmed"}
+
+  # …and the padded one cannot be satisfied by anything, which is the trap. A
+  # server that trimmed the operand to match would answer 200 to both of these
+  # and would have made the two stubs indistinguishable.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-value-whitespace-001/padded
+      headers: {X-Pad: " a b "}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-value-whitespace-001/padded
+      headers: {X-Pad: "a b"}
+    expect: {status: 404}

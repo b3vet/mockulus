@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-delete-all-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-ADMIN-MAPPINGS-GET
+# deleteAllNotInImport removes every stub whose id is absent from the payload,
+# deployment-wide rather than namespace-wide. There is no way to exercise it
+# without taking every other case's mappings with it, so the case claims the
+# deployment and runs when nothing else does.
+requires: [exclusive]
+wm: verified
+# The steps checking that a removed stub stopped matching land on the unmatched
+# 404, whose body is the near-miss table WireMock renders and mockulus does not
+# (deviation #2/#18).
+#
+# The listing steps need no such allowance and deliberately do not declare
+# $global-listing: by the time they run this case has emptied the deployment of
+# everything it did not import, so mockulus holds exactly what the per-case
+# oracle holds and the two envelopes — `meta.total` included — are comparable in
+# full. That is the whole point of an exclusive case.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A stub the import below will not mention. It stands in for every other
+  # suite's mappings on a shared deployment.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0022-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-delete-all-001/outsider"},
+         "response": {"status": 200, "body": "outsider"}}
+    expect: {status: 201}
+
+  # First the flag off, which is the control: an import that names one stub and
+  # leaves the rest alone. Without this half the removal below would be
+  # indistinguishable from an import that always clears first.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0022-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-delete-all-001/kept"},
+            "response": {"status": 200, "body": "kept"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-delete-all-001/outsider}
+    expect: {status: 200, body: "outsider"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-delete-all-001/kept}
+    expect: {status: 200, body: "kept"}
+
+  # Now the same payload with the flag on. It turns the import from a set of
+  # edits into a statement of the complete desired state, and everything outside
+  # the payload goes — which is why a deployment shared between suites is
+  # exactly where this flag should not be used casually.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0022-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-delete-all-001/kept"},
+            "response": {"status": 200, "body": "kept"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": true}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-delete-all-001/kept}
+    expect: {status: 200, body: "kept"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-delete-all-001/outsider}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0022-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # The scope is the whole deployment and the payload is the whole survivor
+  # list, which is a claim about the envelope rather than about one entry — the
+  # exclusive declaration above is what earns the right to make it.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json:
+        mappings:
+          - id: "a1000008-0022-4000-8000-000000000002"
+            uuid: "a1000008-0022-4000-8000-000000000002"
+            request: {method: GET, urlPath: /e2e/wmv-admin-import-delete-all-001/kept}
+            response: {status: 200, body: "kept"}
+        meta: {total: 1}
+
+  # An empty payload with the flag on is the degenerate case of the same rule,
+  # and it has to mean what it says: nothing is in the import, so nothing
+  # survives. Treating an empty batch as "no instructions" would make the one
+  # call that wipes a deployment silently do nothing.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": true}}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json:
+        mappings: []
+        meta: {total: 0}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-delete-all-001/kept}
+    expect: {status: 404}

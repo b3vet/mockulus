@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-delay-fixed-001
+behaviors:
+  - B-RESP-FIXEDDELAYMILLISECONDS
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+wm: verified
+# One step is a deliberate miss, and the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # What a corpus case can assert about a delay is not how long it took — the
+  # E2E gate never asserts latency, which belongs to the perf suite on the
+  # reference rig (§19.3) — but that the response survives being held back. That
+  # is not a formality: a delayed response is written after the handler has sat
+  # on a timer, so it is the case where a write deadline computed without the
+  # delay, or a buffer recycled while the request slept, truncates the answer.
+  # The payload is deliberately structured rather than a word, so a partial
+  # write is visible.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0016-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-delay-fixed-001/slow"},
+         "response": {"status": 200, "fixedDelayMilliseconds": 250,
+                      "jsonBody": {"served": "after the delay", "n": [1, 2, 3]},
+                      "headers": {"Content-Type": "application/json", "X-Slow": "yes"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {fixedDelayMilliseconds: 250}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-fixed-001/slow}
+    expect:
+      status: 200
+      headers: {Content-Type: application/json, X-Slow: "yes"}
+      body: '{"served":"after the delay","n":[1,2,3]}'
+
+  # The undelayed twin: the same response object with the delay taken out. The
+  # two answers must be identical, which is what makes the delay a property of
+  # when the response is written rather than of what is written.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0016-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-delay-fixed-001/fast"},
+         "response": {"status": 200,
+                      "jsonBody": {"served": "after the delay", "n": [1, 2, 3]},
+                      "headers": {"Content-Type": "application/json", "X-Slow": "yes"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-fixed-001/fast}
+    expect:
+      status: 200
+      headers: {Content-Type: application/json, X-Slow: "yes"}
+      body: '{"served":"after the delay","n":[1,2,3]}'
+
+  # Zero is a delay, not a mistake, and it has to be accepted: a client that
+  # generates stubs from a template writes the field whatever the value, and
+  # rejecting it would make "no delay" unsayable in the field that means delay.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0016-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-delay-fixed-001/zero"},
+         "response": {"status": 200, "fixedDelayMilliseconds": 0, "body": "immediate",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {fixedDelayMilliseconds: 0}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-fixed-001/zero}
+    expect:
+      status: 200
+      body: "immediate"
+
+  # The delay decorates a response, and an unmatched request has none to
+  # decorate: a path this stub does not cover is a 404 rather than a slow 404.
+  # The status is all a corpus case can assert here, and it is the assertion
+  # that would fail if the delay had been attached to the listener rather than
+  # to the matched stub.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-fixed-001/unmatched}
+    expect: {status: 404}

@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-not-absent-required-001
+behaviors: [B-MATCH-AND-OR-NOT, B-MATCH-ABSENT, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # "This request must carry a body, whatever it says" has no matcher of its
+  # own. Every positive body matcher already fails an absent body, so the only
+  # thing missing is a criterion with no opinion about the content — and the
+  # supported spelling for it is `not` around `absent`, which is also the
+  # spelling deviation #23 points a reader at instead of `{"absent": false}`.
+  # This case is what makes that pointer worth following: the combinator has to
+  # compose the key-level matcher, not only the value-level ones.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0010-4000-8000-000000000001",
+         "name": "a body is required",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-not-absent-required-001/required",
+                     "bodyPatterns": [{"not": {"absent": true}}]},
+         "response": {"status": 200, "body": "required",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control on the other side of the inversion: the same criterion without
+  # the `not`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0010-4000-8000-000000000002",
+         "name": "a body is forbidden",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-not-absent-required-001/forbidden",
+                     "bodyPatterns": [{"absent": true}]},
+         "response": {"status": 200, "body": "forbidden",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-not-absent-required-001/required, body: "anything at all"}
+    expect: {status: 200, body: "required"}
+
+  # Content really is irrelevant: one whitespace byte is a body, and the
+  # criterion is satisfied by it exactly as it is by a sentence.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-not-absent-required-001/required, body: " "}
+    expect: {status: 200, body: "required"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-not-absent-required-001/required}
+    expect: {status: 404}
+
+  # The control stub answers each of those three the other way round, which is
+  # what proves the `not` is doing the work rather than the stub simply being
+  # permissive.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-not-absent-required-001/forbidden}
+    expect: {status: 200, body: "forbidden"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-not-absent-required-001/forbidden, body: " "}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-not-absent-required-001/forbidden, body: "anything at all"}
+    expect: {status: 404}

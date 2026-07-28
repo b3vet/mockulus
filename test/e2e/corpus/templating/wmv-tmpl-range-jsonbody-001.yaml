@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-range-jsonbody-001
+behaviors: [B-TPL-RANGE, B-TPL-IF-UNLESS-EACH-WITH-LOOKUP]
+wm: verified
+steps:
+  # templating-range-001 pins `range` as a list. This case spends it on the
+  # thing it exists for: generating a JSON collection of a size the stub
+  # chooses, where the separator logic is not decoration but the difference
+  # between a document that parses and one that does not.
+  #
+  # The assertions are made on the parsed document rather than on the text, so
+  # what is being claimed is that the output is JSON — a trailing comma is a
+  # parse failure here rather than a character somebody has to notice.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0024-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-range-jsonbody-001/page"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "application/json"},
+                      "body": "{\"page\": {{request.query.page}}, \"ids\": [{{#each (range 1 3)}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}], \"empty\": [{{#each (range 2 1)}}{{this}}{{/each}}]}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `ids` has three elements from `range 1 3`, because both bounds are
+  # inclusive. An exclusive upper bound produces two and the document still
+  # parses, which is exactly why the elements are asserted rather than the
+  # shape.
+  #
+  # `empty` is an inverted range. It has to yield nothing — a range that
+  # clamped to a single element renders `[2]` and a range that counted
+  # backwards renders `[2, 1]`, and both are valid JSON that no parser
+  # complains about.
+  #
+  # `page` is interpolated straight into a numeric position, so the value
+  # arrives without quotes: a model that rendered a query parameter as a
+  # quoted string produces `"page": "2"` and this assertion fails on the type
+  # rather than on the digits.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-range-jsonbody-001/page?page=2
+    expect:
+      status: 200
+      body_json:
+        page: 2
+        ids: [1, 2, 3]
+        empty: []
+
+  # A second request moves the interpolated field and leaves the computed ones
+  # alone, which is what separates a rendered document from a fixture.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-range-jsonbody-001/page?page=7
+    expect:
+      status: 200
+      body_json:
+        page: 7
+        ids: [1, 2, 3]
+        empty: []
+
+  # The control. Unrendered, the same document is not JSON at all — which is
+  # the honest statement of what the transformer is doing here, and why a stub
+  # generating a collection cannot be written without it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0024-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-range-jsonbody-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "application/json"},
+                      "body": "{\"page\": {{request.query.page}}, \"ids\": [{{#each (range 1 3)}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}]}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-range-jsonbody-001/literal?page=2
+    expect:
+      status: 200
+      body: "{\"page\": {{request.query.page}}, \"ids\": [{{#each (range 1 3)}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}]}"

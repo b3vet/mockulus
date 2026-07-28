@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-strings-request-001
+behaviors: [B-TPL-TRIM-LOWER-LOWERCASE-UPPER-UPPERCASE-SPLIT-JOIN-CONCAT-SUBST, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # The string helpers are pinned against literals by templating-strings-001.
+  # What they are actually used for is reshaping something the caller sent, so
+  # every operand here comes out of the request. That is not the same operand:
+  # a query value reaches the template as a model that is also indexable, and a
+  # helper handed that model rather than its text would reshape the wrong
+  # thing. The padding travels in the query rather than in a header because a
+  # header's surrounding whitespace is stripped before any of this runs, which
+  # would leave `trim` asserting nothing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0016-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-strings-request-001/reshape"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "trimmed=[{{trim request.query.pad}}] up={{upper request.query.tier}} low={{lower request.query.pad}} head={{substring request.query.tier 0 3}} tail={{substring request.query.tier 3}} dotted={{replace request.query.tier '-' '.'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `trimmed` is bracketed because what it asserts is the absence of the spaces
+  # the parameter carried — an unbracketed assertion cannot see them go, and
+  # `low` next to it keeps them, so the two together say the trim is a trim
+  # rather than a general tidying of every value on the way through.
+  #
+  # `up` and `low` are given operands from two different parts of the model, so
+  # a pair of helpers wired to the same function fails on one of them, and the
+  # `-` inside the operand survives both: a case-folding helper that also
+  # normalised punctuation would be a quiet corruption of anything it touched.
+  #
+  # `head` and `tail` split the same value at the same index, so between them
+  # they pin the end index as exclusive and the two-argument form as
+  # "to the end" — and the two halves have to concatenate back to the operand.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-strings-request-001/reshape?tier=go-ld&pad=%20%20PADDED%20%20
+    expect:
+      status: 200
+      body: "trimmed=[PADDED] up=GO-LD low=  padded   head=go- tail=ld dotted=go.ld"
+
+  # A second request. `dotted` replaces every occurrence rather than the first,
+  # which one hyphen could never have shown, and the two substrings land in
+  # different places because the operand is longer — and still concatenate back
+  # to it, which is what makes them a split rather than two slices that happen
+  # to look right.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-strings-request-001/reshape?tier=a-b-c-d&pad=%20%20Mixed%20%20
+    expect:
+      status: 200
+      body: "trimmed=[Mixed] up=A-B-C-D low=  mixed   head=a-b tail=-c-d dotted=a.b.c.d"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0016-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-strings-request-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "up={{upper request.query.tier}} dotted={{replace request.query.tier '-' '.'}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-strings-request-001/literal?tier=go-ld
+    expect:
+      status: 200
+      body: "up={{upper request.query.tier}} dotted={{replace request.query.tier '-' '.'}}"

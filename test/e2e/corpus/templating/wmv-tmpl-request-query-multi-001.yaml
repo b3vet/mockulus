@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-query-multi-001
+behaviors: [B-RESP-TRANSFORMERS, B-REQ-QUERYPARAMETERS]
+wm: verified
+steps:
+  # A query parameter can arrive more than once, and the model has to answer
+  # both questions a stub asks about it: what is the value, and what is the
+  # second value. The bare name is the first one — anything else would break
+  # every stub written for the common case — and the index reaches past it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0005-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-query-multi-001/search"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "first={{request.query.tag}} i0={{request.query.tag.[0]}} i1=[{{request.query.tag.[1]}}] past=[{{request.query.tag.[9]}}] missing=[{{request.query.gone}}] blank=[{{request.query.blank}}] ifblank={{#if request.query.blank}}present{{else}}absent{{/if}} ifgone={{#if request.query.gone}}present{{else}}absent{{/if}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `first` and `i0` are the same value reached two ways, which is what makes
+  # the bare spelling a claim about the first element rather than a coincidence
+  # of a single-valued parameter.
+  #
+  # The pair of `#if`s is the sharper half. `?blank=` is present with an empty
+  # value and `gone` is not there at all, and the two have to branch
+  # differently: a model that collapsed the empty string to absence would make
+  # a stub answering "the caller sent no filter" fire for a caller who sent an
+  # empty one, which is a different request (SPEC §5.2).
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-query-multi-001/search?tag=red&tag=blue&blank=
+    expect:
+      status: 200
+      body: "first=red i0=red i1=[blue] past=[] missing=[] blank=[] ifblank=present ifgone=absent"
+
+  # One value for the same parameter. `i1` is now empty where it held "blue"
+  # above, so the list is built from the request rather than kept from the last
+  # one, and an index past the end renders as nothing rather than wrapping
+  # round to the first element.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-query-multi-001/search?tag=solo
+    expect:
+      status: 200
+      body: "first=solo i0=solo i1=[] past=[] missing=[] blank=[] ifblank=absent ifgone=absent"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0005-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-query-multi-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "first={{request.query.tag}} i1={{request.query.tag.[1]}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-query-multi-001/literal?tag=red&tag=blue
+    expect:
+      status: 200
+      body: "first={{request.query.tag}} i1={{request.query.tag.[1]}}"

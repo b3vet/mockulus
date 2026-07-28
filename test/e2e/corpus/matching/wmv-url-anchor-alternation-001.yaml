@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-anchor-alternation-001
+behaviors: [B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed,
+# and status is the whole observable of a URL matcher.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A top-level alternation is the pattern that separates a correct full-match
+  # wrapper from the obvious wrong one. SPEC §6.6 says the pattern is wrapped in
+  # `\A(?:…)\z`; concatenating the anchors without the group instead gives
+  # `\A/…/a|/…/bc\z`, which every engine reads as "start-anchored /…/a" OR
+  # "end-anchored /…/bc" — a prefix rule on one branch and a suffix rule on the
+  # other. Both halves of that failure are asserted below, and neither is
+  # visible with a pattern that has no bar in it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0006-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/wmv-url-anchor-alternation-001/a|/e2e/wmv-url-anchor-alternation-001/bc"},
+         "response": {"status": 200, "body": "alternation", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          urlPattern: "/e2e/wmv-url-anchor-alternation-001/a|/e2e/wmv-url-anchor-alternation-001/bc"
+
+  # Both branches are live, so the negatives below are about the anchors rather
+  # than about a pattern that only ever had one usable arm.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-alternation-001/a}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "alternation"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-alternation-001/bc}
+    expect: {status: 200, body: "alternation"}
+
+  # Trailing text after the first branch. An ungrouped wrapper answers this 200.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-alternation-001/a/extra}
+    expect: {status: 404}
+
+  # Leading text before the second branch. The mirror-image failure of the same
+  # bug, and the one that lets an attacker-controlled prefix reach a stub.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-url-anchor-alternation-001/pre/e2e/wmv-url-anchor-alternation-001/bc
+    expect: {status: 404}
+
+  # A target that is a near-neighbour of both branches and equal to neither.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-alternation-001/abc}
+    expect: {status: 404}
+
+  # The alternation's subject is the whole target, so a query defeats the branch
+  # that describes only a path — the same rule that applies to a pattern with no
+  # bar in it.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-anchor-alternation-001/a?x=1"}
+    expect: {status: 404}

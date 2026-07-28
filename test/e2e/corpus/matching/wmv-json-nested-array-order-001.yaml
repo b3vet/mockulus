@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-nested-array-order-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An array of arrays asks the order-independence question twice: the outer
+  # sequence and each inner one. The flag is a property of the comparison rather
+  # than of a level, so it holds at both — and the last step is what stops that
+  # from collapsing into "flatten everything and compare the multiset".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0014-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-nested-array-order-001/matrix",
+                     "bodyPatterns": [{"equalToJson": "{\"m\":[[1,2],[3,4]]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "matrix",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/matrix
+      body: '{"m":[[1,2],[3,4]]}'
+    expect: {status: 200, body: "matrix"}
+
+  # The inner arrays reordered, the outer one left alone.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/matrix
+      body: '{"m":[[2,1],[4,3]]}'
+    expect: {status: 200, body: "matrix"}
+
+  # The outer array reordered, the inner ones left alone.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/matrix
+      body: '{"m":[[3,4],[1,2]]}'
+    expect: {status: 200, body: "matrix"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/matrix
+      body: '{"m":[[4,3],[2,1]]}'
+    expect: {status: 200, body: "matrix"}
+
+  # Elements do not migrate between the inner arrays: the same four numbers
+  # regrouped is a different document, and an implementation that compared the
+  # flattened contents would accept it.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/matrix
+      body: '{"m":[[1,3],[2,4]]}'
+    expect: {status: 404}
+
+  # Order is all that is given up, at either level: the counts still hold.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/matrix
+      body: '{"m":[[1,2],[3,4],[5,6]]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/matrix
+      body: '{"m":[[1,2,3],[4]]}'
+    expect: {status: 404}
+
+  # The control on the same operand: without the flag the inner reordering that
+  # matched above is a mismatch.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0014-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-nested-array-order-001/strict",
+                     "bodyPatterns": [{"equalToJson": "{\"m\":[[1,2],[3,4]]}"}]},
+         "response": {"status": 200, "body": "strict",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/strict
+      body: '{"m":[[2,1],[4,3]]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-nested-array-order-001/strict
+      body: '{"m":[[1,2],[3,4]]}'
+    expect: {status: 200, body: "strict"}

@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-overwrite-scope-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+wm: verified
+steps:
+  # Three stubs on three paths. Two of them will be named by the import below
+  # and one will not, which is what makes "exactly the ids it names" checkable
+  # in both directions from a single call.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0020-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-scope-001/one"},
+         "response": {"status": 200, "body": "one-v1"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0020-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-scope-001/two"},
+         "response": {"status": 200, "body": "two-v1"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0020-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-scope-001/three"},
+         "response": {"status": 200, "body": "three-v1"}}
+    expect: {status: 201}
+
+  # One call carrying two collisions. Both have to be applied: an import that
+  # stopped at the first duplicate — or that treated the batch as one document
+  # to be swapped in — would leave the deployment holding half the file the
+  # author handed it, and the half that landed would depend on array order.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0020-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-scope-001/one"},
+            "response": {"status": 200, "body": "one-v2"}},
+           {"id": "a1000008-0020-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-scope-001/two"},
+            "response": {"status": 200, "body": "two-v2"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-scope-001/one}
+    expect: {status: 200, body: "one-v2"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-scope-001/two}
+    expect: {status: 200, body: "two-v2"}
+
+  # And the stub the payload never mentioned is exactly as it was. With
+  # deleteAllNotInImport off, an import declares a set of edits rather than the
+  # whole desired state — the distinction the flag exists to draw, and the one
+  # that makes an import safe to run against a deployment shared with other
+  # suites.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-scope-001/three}
+    expect: {status: 200, body: "three-v1"}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0020-4000-8000-000000000003}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0020-4000-8000-000000000003"
+        uuid: "a1000008-0020-4000-8000-000000000003"
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-overwrite-scope-001/three}
+        response: {status: 200, body: "three-v1"}

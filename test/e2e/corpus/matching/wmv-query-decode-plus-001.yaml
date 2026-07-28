@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-decode-plus-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-MATCH-EQUALTO-CASEINSENSITIVE]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# In a query string `+` means a space and a space means nothing else, which is
+# the one decoding rule that differs from the rest of a URL. A stub author who
+# gets it wrong writes a criterion that never fires against a browser form post,
+# so the two stubs below pin both directions of it.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-plus-001/space",
+                     "queryParameters": {"q": {"equalTo": "a b"}}},
+         "response": {"status": 200, "body": "space", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-plus-001/plus",
+                     "queryParameters": {"q": {"equalTo": "a+b"}}},
+         "response": {"status": 200, "body": "plus", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # `+` and `%20` are the two wire spellings of one space, so both satisfy the
+  # criterion that asks for a space.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-plus-001/space?q=a+b"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "space"
+  - request: {method: GET, path: "/e2e/wmv-query-decode-plus-001/space?q=a%20b"}
+    expect: {status: 200, body: "space"}
+
+  # And `%2B` is the wire spelling of a literal plus, which is a different
+  # character: an implementation that decoded only percent escapes and left `+`
+  # alone would answer 200 here and 404 to the first step above.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-plus-001/space?q=a%2Bb"}
+    expect: {status: 404}
+
+  - request: {method: GET, path: "/e2e/wmv-query-decode-plus-001/plus?q=a%2Bb"}
+    expect: {status: 200, body: "plus"}
+
+  # Hex digits in an escape are not case-sensitive, so the same escape written
+  # in lower case is the same character.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-plus-001/plus?q=a%2bb"}
+    expect: {status: 200, body: "plus"}
+
+  # The mirror of the step above: a criterion asking for a literal plus is not
+  # satisfied by the `+` on the wire, because that one is a space.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-plus-001/plus?q=a+b"}
+    expect: {status: 404}

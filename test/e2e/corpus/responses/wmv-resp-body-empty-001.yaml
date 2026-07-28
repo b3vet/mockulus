@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-body-empty-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-RESP-STATUS
+  - B-STUB-RESPONSE
+wm: verified
+# The last step is a deliberate miss, and the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Three ways to say "this response has no bytes", which have to converge: a
+  # response with no body field at all, a `body` set to the empty string, and a
+  # base64Body whose operand decodes to nothing. They are three different points
+  # in the code — no body form selected, a selected form that is empty, and a
+  # decode that produces zero bytes — and a client cannot tell them apart, so
+  # neither may the answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0013-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-empty-001/unset"},
+         "response": {"status": 200}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0013-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-empty-001/empty-string"},
+         "response": {"status": 200, "body": ""}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0013-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-empty-001/empty-base64"},
+         "response": {"status": 200, "base64Body": ""}}
+    expect: {status: 201}
+
+  # 200 with nothing in it, three times. The status assertion is what makes each
+  # of these a claim: an empty body is also what a client sees from a response
+  # that was never built, so "no bytes" only means something next to a status
+  # that says the stub was found and served.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-empty-001/unset}
+    expect:
+      status: 200
+      body: ""
+      header_absent: [Content-Type]
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-empty-001/empty-string}
+    expect:
+      status: 200
+      body: ""
+      header_absent: [Content-Type]
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-empty-001/empty-base64}
+    expect:
+      status: 200
+      body: ""
+      header_absent: [Content-Type]
+
+  # The control: one byte, through the same field as the empty string above. An
+  # implementation that had lost the body entirely would pass all three steps
+  # above and fail this one, which is the only reason they are worth asserting.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0013-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-empty-001/one-byte"},
+         "response": {"status": 200, "body": "x"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-empty-001/one-byte}
+    expect:
+      status: 200
+      body: "x"
+
+  # And the other control: an empty 200 is not what an unmatched request gets,
+  # so the three stubs above were really matched rather than merely not refused.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-empty-001/never-registered}
+    expect: {status: 404}

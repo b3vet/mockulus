@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-every-criterion-load-bearing-001
+behaviors: [B-REQ-HEADERS, B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-MATCH-MATCHES-DOESNOTMATCH, B-MATCH-ABSENT]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Five criteria of five kinds on one request, because the cheap-to-expensive
+  # evaluation order of §6.5 means a stub is normally rejected long before its
+  # last criterion is ever consulted. A criterion that was mis-parsed, dropped
+  # at compile time, or evaluated against the wrong header would still leave
+  # every case that flips one criterion at a time passing — unless the other
+  # four are satisfied, which is what the five negatives below arrange. Each
+  # breaks exactly one criterion and holds the rest, so a 200 anywhere names the
+  # criterion that is not doing any work.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0016-4000-8000-000000000001",
+         "name": "five header criteria of five kinds",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-every-criterion-load-bearing-001/all",
+                     "headers": {"X-Tenant": {"equalTo": "acme"},
+                                 "X-Env": {"contains": "prod"},
+                                 "X-Ver": {"matches": "v[0-9]+"},
+                                 "X-Region": {"doesNotContain": "eu"},
+                                 "X-Debug": {"absent": true}}},
+         "response": {"status": 200, "body": "all",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-every-criterion-load-bearing-001/all
+      headers: {X-Tenant: acme, X-Env: prod-1, X-Ver: v3, X-Region: us-east}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "all"
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-every-criterion-load-bearing-001/all
+      headers: {X-Tenant: acmex, X-Env: prod-1, X-Ver: v3, X-Region: us-east}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-every-criterion-load-bearing-001/all
+      headers: {X-Tenant: acme, X-Env: staging, X-Ver: v3, X-Region: us-east}
+    expect: {status: 404}
+
+  # The version is still recognisable and is no longer a full match, which is
+  # the anchoring rule doing the rejecting rather than the pattern.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-every-criterion-load-bearing-001/all
+      headers: {X-Tenant: acme, X-Env: prod-1, X-Ver: version3, X-Region: us-east}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-every-criterion-load-bearing-001/all
+      headers: {X-Tenant: acme, X-Env: prod-1, X-Ver: v3, X-Region: eu-west}
+    expect: {status: 404}
+
+  # The absence criterion is last in the document and names a header the other
+  # four say nothing about, so it is the one an implementation is most likely to
+  # have evaluated somewhere the rest of the conjunction cannot see.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-every-criterion-load-bearing-001/all
+      headers: {X-Tenant: acme, X-Env: prod-1, X-Ver: v3, X-Region: us-east, X-Debug: "1"}
+    expect: {status: 404}

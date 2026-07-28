@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-root-array-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A JSON document does not have to be an object, and a collection endpoint
+  # posts an array at the root. Comparison and both flags have to reach it
+  # there, which is not automatic in an implementation that enters the document
+  # expecting members and only then recurses into arrays.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0010-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-root-array-001/ordered",
+                     "bodyPatterns": [{"equalToJson": "[1,2,3]"}]},
+         "response": {"status": 200, "body": "ordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/ordered
+      body: '[1,2,3]'
+    expect: {status: 200, body: "ordered"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/ordered
+      body: '[3,2,1]'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/ordered
+      body: '[1,2,3,4]'
+    expect: {status: 404}
+
+  # An object is not the array, whatever its members are called.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/ordered
+      body: '{"0":1,"1":2,"2":3}'
+    expect: {status: 404}
+
+  # ignoreArrayOrder applies to the root array, not only to arrays found under
+  # a member.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0010-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-root-array-001/unordered",
+                     "bodyPatterns": [{"equalToJson": "[1,2,3]",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "unordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/unordered
+      body: '[3,1,2]'
+    expect: {status: 200, body: "unordered"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/unordered
+      body: '[1,2]'
+    expect: {status: 404}
+
+  # And so does ignoreExtraElements, whose array reading is "the elements past
+  # the end of the expected array". At the root that is the tail of the posted
+  # collection.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0010-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-root-array-001/tail",
+                     "bodyPatterns": [{"equalToJson": "[1,2]",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "tail",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/tail
+      body: '[1,2,9]'
+    expect: {status: 200, body: "tail"}
+
+  # Ignored where they fall: the expected elements are still the leading ones.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/tail
+      body: '[9,1,2]'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-array-001/tail
+      body: '[1]'
+    expect: {status: 404}

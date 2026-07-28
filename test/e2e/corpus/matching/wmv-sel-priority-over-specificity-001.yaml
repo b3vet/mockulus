@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-priority-over-specificity-001
+behaviors: [B-STUB-PRIORITY, B-REQ-URLPATHPATTERN, B-REQ-HEADERS]
+wm: verified
+# Every step is served, so bodies are compared throughout and each body names
+# the stub that won.
+#
+# The intuition a suite author brings from routing frameworks is that the more
+# specific rule wins: a path plus a header criterion beats a bare pattern
+# because it says more about the request. §5.3 has no such rule — the only
+# things that separate two matching stubs are the priority number and the
+# insertion sequence — and that difference is a live source of surprise, because
+# a broad stub registered for one test can quietly take over the endpoint
+# another test set up carefully.
+#
+# The two lanes below hold every shape constant and swap only the two numbers.
+# The winner follows the numbers, which is the whole assertion: an engine that
+# ranked candidates by how much they asked of the request would answer the same
+# thing in both lanes.
+steps:
+  # Lane A. The narrow stub — exact path, plus a header the request must carry —
+  # is registered first and given the weaker number.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0002-4000-8000-000000000001",
+         "priority": 9,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-priority-over-specificity-001/a/item",
+                     "headers": {"X-Key": {"equalTo": "k"}}},
+         "response": {"status": 200, "body": "narrow",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 9}
+
+  # The broad stub asks nothing beyond a path shape, and is scoped to this
+  # lane's own subtree so it cannot answer for anything else in the deployment.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0002-4000-8000-000000000002",
+         "priority": 1,
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/wmv-sel-priority-over-specificity-001/a/.*"},
+         "response": {"status": 200, "body": "broad",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        priority: 1
+        request: {urlPathPattern: "/e2e/wmv-sel-priority-over-specificity-001/a/.*"}
+
+  # Both stubs match this request in full. The broad one answers, because 1 < 9
+  # and nothing else is consulted.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-priority-over-specificity-001/a/item
+      headers: {X-Key: k}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "broad"
+
+  # And the narrow stub is a genuine match rather than a decoration: it takes the
+  # path back the moment the stub that outranked it is gone.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0002-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-priority-over-specificity-001/a/item
+      headers: {X-Key: k}
+    expect: {status: 200, body: "narrow"}
+
+  # Lane B: the same two shapes, in the same registration order, with the
+  # priorities exchanged.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0002-4000-8000-000000000003",
+         "priority": 1,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-priority-over-specificity-001/b/item",
+                     "headers": {"X-Key": {"equalTo": "k"}}},
+         "response": {"status": 200, "body": "narrow",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0002-4000-8000-000000000004",
+         "priority": 9,
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/wmv-sel-priority-over-specificity-001/b/.*"},
+         "response": {"status": 200, "body": "broad",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-priority-over-specificity-001/b/item
+      headers: {X-Key: k}
+    expect: {status: 200, body: "narrow"}
+
+  # The header the narrow stub demands is what makes the two lanes comparable:
+  # drop it and only the broad stub matches, so its number never comes into it.
+  # A request that reaches the broad stub by falling through is not evidence
+  # about precedence, and this step exists so the two above cannot be read that
+  # way.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-over-specificity-001/b/item}
+    expect: {status: 200, body: "broad"}

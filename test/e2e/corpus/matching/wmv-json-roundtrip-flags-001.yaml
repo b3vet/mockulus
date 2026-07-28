@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-roundtrip-flags-001
+behaviors:
+  - B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS
+  - B-ADMIN-MAPPINGS-ID-GET
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The relaxation flags are part of the stub document, so a client that reads
+  # its mapping back has to see the criteria it registered — a suite that
+  # snapshots its stubs, or a diff of two deployments, is comparing this
+  # document. A flag dropped on the way out would be invisible from the mock
+  # port, which is why the read-back is asserted alongside the behavior.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0027-4000-8000-000000000001",
+         "name": "equalToJson flags round trip",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-roundtrip-flags-001/xs",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,2]}",
+                                       "ignoreArrayOrder": true,
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "flags",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "a1000004-0027-4000-8000-000000000001"
+        request:
+          bodyPatterns:
+            - equalToJson: '{"xs":[1,2]}'
+              ignoreArrayOrder: true
+              ignoreExtraElements: true
+
+  # Both flags come back as booleans rather than as the strings a lenient
+  # deserializer would accept and re-emit.
+  - admin: {method: GET, path: /__admin/mappings/a1000004-0027-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        request:
+          bodyPatterns:
+            - equalToJson: '{"xs":[1,2]}'
+              ignoreArrayOrder: true
+              ignoreExtraElements: true
+
+  # And the document that was echoed is the document that is matching: both
+  # relaxations are live on the mock port.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-roundtrip-flags-001/xs
+      body: '{"xs":[2,1,9],"extra":true}'
+    expect: {status: 200, body: "flags"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-roundtrip-flags-001/xs
+      body: '{"xs":[1]}'
+    expect: {status: 404}
+
+  # A stub registered without the flags does not acquire them: the read-back
+  # carries no relaxation, and the mock port refuses what the relaxed stub
+  # accepted.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0027-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-roundtrip-flags-001/plain",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,2]}"}]},
+         "response": {"status": 200, "body": "plain",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000004-0027-4000-8000-000000000002}
+    expect:
+      status: 200
+      body_json_subset:
+        request:
+          bodyPatterns:
+            - equalToJson: '{"xs":[1,2]}'
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-roundtrip-flags-001/plain
+      body: '{"xs":[2,1,9],"extra":true}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-roundtrip-flags-001/plain
+      body: '{"xs":[1,2]}'
+    expect: {status: 200, body: "plain"}

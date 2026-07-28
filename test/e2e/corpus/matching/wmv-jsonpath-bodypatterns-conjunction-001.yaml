@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-bodypatterns-conjunction-001
+behaviors: [B-MATCH-MATCHESJSONPATH, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Several body patterns are a conjunction, and two JSONPath criteria over one
+  # body are the case where an implementation might be tempted to evaluate the
+  # document once and keep whichever answer it got. The two criteria here are
+  # deliberately of different forms — one bare, one nested — so a short-circuit
+  # that kept only the first, or only the last, is visible in the steps below.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0019-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-bodypatterns-conjunction-001/order",
+                     "bodyPatterns": [{"matchesJsonPath": "$.customer.id"},
+                                      {"matchesJsonPath": {"expression": "$.status",
+                                                           "equalTo": "paid"}}]},
+         "response": {"status": 200, "body": "order",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bodypatterns-conjunction-001/order
+      body: '{"customer":{"id":"C-1"},"status":"paid"}'
+    expect: {status: 200, body: "order"}
+
+  # The first criterion satisfied and the second not.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bodypatterns-conjunction-001/order
+      body: '{"customer":{"id":"C-1"},"status":"pending"}'
+    expect: {status: 404}
+
+  # …and the other way round, which is the step that catches a conjunction
+  # collapsed onto whichever criterion happened to be evaluated last.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bodypatterns-conjunction-001/order
+      body: '{"customer":{},"status":"paid"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bodypatterns-conjunction-001/order
+      body: '{"status":"paid"}'
+    expect: {status: 404}
+
+  # Neither satisfied, so the stub is not matched for two reasons at once and
+  # still answers exactly as it does for one.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bodypatterns-conjunction-001/order
+      body: '{"customer":{},"status":"pending"}'
+    expect: {status: 404}
+
+  # A null under the first criterion is the interesting near-miss: the key is
+  # there, the second criterion holds, and the stub must still refuse — because
+  # a selected null is not a match for the bare form.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-bodypatterns-conjunction-001/order
+      body: '{"customer":{"id":null},"status":"paid"}'
+    expect: {status: 404}

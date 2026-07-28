@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-comma-list-single-value-001
+behaviors: [B-REQ-HEADERS, B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A header criterion is any-of over the values a repeated header carries, and
+# the negative matchers are any-of too — which is why they are not the
+# complements of their positive twins (SPEC §6.6 rule 5). The question this case
+# settles is which values a criterion gets to be any-of over. RFC 7230 lets a
+# list-valued header be sent either as repeated field lines or as one line of
+# comma-separated members, and treating those two spellings as equivalent is the
+# helpful thing to do. Neither server does: one field line is one value however
+# many commas it holds, and the negative matchers therefore get no second value
+# to hold on to.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0006-4000-8000-000000000001",
+         "name": "equalTo one member of the list",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-comma-list-single-value-001/member",
+                     "headers": {"X-Tag": {"equalTo": "a"}}},
+         "response": {"status": 200, "body": "member",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0006-4000-8000-000000000002",
+         "name": "equalTo the whole line",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-comma-list-single-value-001/line",
+                     "headers": {"X-Tag": {"equalTo": "a,b"}}},
+         "response": {"status": 200, "body": "line",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0006-4000-8000-000000000003",
+         "name": "doesNotContain a member of the list",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-comma-list-single-value-001/excludes",
+                     "headers": {"X-Tag": {"doesNotContain": "a"}}},
+         "response": {"status": 200, "body": "excludes",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0006-4000-8000-000000000004",
+         "name": "doesNotMatch either member of the list",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-comma-list-single-value-001/unmatched",
+                     "headers": {"X-Tag": {"doesNotMatch": "a|b"}}},
+         "response": {"status": 200, "body": "unmatched",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control that the operand is right at all: sent alone, the member matches.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-comma-list-single-value-001/member
+      headers: {X-Tag: "a"}
+    expect: {status: 200, body: "member"}
+
+  # Sent as one line with a second member, it does not: the value is "a,b".
+  - request:
+      method: GET
+      path: /e2e/wmv-header-comma-list-single-value-001/member
+      headers: {X-Tag: "a,b"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-comma-list-single-value-001/line
+      headers: {X-Tag: "a,b"}
+    expect: {status: 200, body: "line"}
+
+  # The sharp one. Under any-of over a split line the criterion would hold on
+  # "b", the member that does not contain "a", and this would be a 200 — a stub
+  # written to exclude "a" quietly admitting a request that carries it.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-comma-list-single-value-001/excludes
+      headers: {X-Tag: "a,b"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-comma-list-single-value-001/excludes
+      headers: {X-Tag: "b"}
+    expect: {status: 200, body: "excludes"}
+
+  # The same argument through the regex negative, in the direction that fails
+  # the other way: every member of a split line would fully match `a|b`, leaving
+  # no value for doesNotMatch to hold on and answering 404. The unsplit line is
+  # not a full match of the pattern, so the criterion holds.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-comma-list-single-value-001/unmatched
+      headers: {X-Tag: "a,b"}
+    expect: {status: 200, body: "unmatched"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-comma-list-single-value-001/unmatched
+      headers: {X-Tag: "a"}
+    expect: {status: 404}

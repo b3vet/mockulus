@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pattern-charclass-slash-007
+behaviors: [B-REQ-URLPATHPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A URL pattern has no idea what a path segment is. That is worth pinning
+  # because the neighbouring field does: a urlPathTemplate variable binds one
+  # segment and stops at the slash (see url-criteria-pathtemplate-001), so the
+  # two path criteria that both look like "a placeholder in the middle of a
+  # path" behave differently at exactly the place a reader would assume they
+  # agree. Here the slash is inside the class, so the match runs straight
+  # through as many segments as there are.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0015-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/wmv-url-pattern-charclass-slash-007/deep/[a-z/]+"},
+         "response": {"status": 200, "body": "spans-segments", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPathPattern: "/e2e/wmv-url-pattern-charclass-slash-007/deep/[a-z/]+"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-charclass-slash-007/deep/abc}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "spans-segments"
+
+  # Three segments where the pattern names one repetition: the separators are
+  # ordinary members of the class and nothing stops at them.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-charclass-slash-007/deep/a/b/c}
+    expect: {status: 200, body: "spans-segments"}
+
+  # Nothing else about the class is relaxed by that, which is what stops the two
+  # steps above from being read as "the pattern matches anything under /deep/":
+  # a digit is outside it…
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-charclass-slash-007/deep/a1}
+    expect: {status: 404}
+
+  # …upper case is outside it…
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-charclass-slash-007/deep/A}
+    expect: {status: 404}
+
+  # …and one or more still means at least one.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-charclass-slash-007/deep/}
+    expect: {status: 404}

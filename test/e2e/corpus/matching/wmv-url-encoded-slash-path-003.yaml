@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-encoded-slash-path-003
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An encoded separator is the case where "the path is compared as received"
+  # has teeth: `%2F` is a slash that is not a separator, so a path holding one
+  # has fewer segments than it appears to. Nothing about the comparison depends
+  # on that reading — the criterion and the subject are both text — and the two
+  # stubs below say so by claiming the two spellings independently.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0023-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-encoded-slash-path-003/seg%2Fment"},
+         "response": {"status": 200, "body": "encoded-separator", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-encoded-slash-path-003/seg%2Fment"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0023-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-encoded-slash-path-003/seg/ment"},
+         "response": {"status": 200, "body": "real-separator", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-slash-path-003/seg%2Fment}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "encoded-separator"
+
+  # The two stubs stay apart: decoding the escape on the way in would send this
+  # request to the first stub and the one above to the second, so a single
+  # mixed-up answer here reports the whole failure.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-slash-path-003/seg/ment}
+    expect: {status: 200, body: "real-separator"}

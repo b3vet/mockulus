@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-falsey-scalars-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The bare form asks whether a value is there, not whether it is truthy. Every
+  # value a language would call falsey is a present scalar and matches; only a
+  # null and a path that selects nothing do not. This is the single stub where
+  # borrowing a host language's notion of emptiness produces a matcher that
+  # looks right and rejects half the documents it should accept.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0003-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-falsey-scalars-001/flag",
+                     "bodyPatterns": [{"matchesJsonPath": "$.flag"}]},
+         "response": {"status": 200, "body": "flag",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-falsey-scalars-001/flag
+      body: '{"flag":false}'
+    expect: {status: 200, body: "flag"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-falsey-scalars-001/flag
+      body: '{"flag":0}'
+    expect: {status: 200, body: "flag"}
+
+  # Zero written as a decimal is the same value reached through the number
+  # parser's other branch, and the answer must not depend on which branch ran.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-falsey-scalars-001/flag
+      body: '{"flag":0.0}'
+    expect: {status: 200, body: "flag"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-falsey-scalars-001/flag
+      body: '{"flag":""}'
+    expect: {status: 200, body: "flag"}
+
+  # A string that looks like a falsey number is still a string, so nothing here
+  # is coerced before the test.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-falsey-scalars-001/flag
+      body: '{"flag":"0"}'
+    expect: {status: 200, body: "flag"}
+
+  # The two that genuinely do not match, and the pair that gives the case its
+  # teeth: an implementation lenient enough to accept the six steps above by
+  # accident would accept these too.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-falsey-scalars-001/flag
+      body: '{"flag":null}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-falsey-scalars-001/flag
+      body: '{"other":false}'
+    expect: {status: 404}

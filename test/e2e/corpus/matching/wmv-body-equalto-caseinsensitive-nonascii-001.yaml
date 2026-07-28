@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-equalto-caseinsensitive-nonascii-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+#
+# Non-ASCII characters are written as escapes throughout, so the case says which
+# code points it means rather than trusting a font and an editor to agree.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # caseInsensitive is easy to get right for ASCII and easy to get wrong just
+  # past it, because the two obvious implementations diverge there: folding case
+  # per character, and folding the string under full Unicode case mapping. The
+  # three stubs below are the places that separates them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0004-4000-8000-000000000001",
+         "name": "caseInsensitive over accented Latin",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-equalto-caseinsensitive-nonascii-001/latin",
+                     "bodyPatterns": [{"equalTo": "GR\u00dc\u1e9eE \u00c4\u00d6\u00dc",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "latin",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0004-4000-8000-000000000002",
+         "name": "caseInsensitive does not expand the sharp s",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-equalto-caseinsensitive-nonascii-001/sharp-s",
+                     "bodyPatterns": [{"equalTo": "stra\u00dfe", "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "sharp-s",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0004-4000-8000-000000000003",
+         "name": "caseInsensitive over Cyrillic",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-equalto-caseinsensitive-nonascii-001/cyrillic",
+                     "bodyPatterns": [{"equalTo": "\u0416\u0423\u041a", "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "cyrillic",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The operand as written matches itself, which is the baseline the rest of the
+  # steps are read against.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/latin
+      body: "GR\u00dc\u1e9eE \u00c4\u00d6\u00dc"
+    expect: {status: 200, body: "latin"}
+
+  # Every letter lowered, including the ones outside ASCII: U+00DC/U+00FC,
+  # U+1E9E/U+00DF and the three umlauts all pair up. An implementation that
+  # folded only the ASCII range — the accident you get from a byte-wise
+  # tolower — would refuse this.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/latin
+      body: "gr\u00fc\u00dfe \u00e4\u00f6\u00fc"
+    expect: {status: 200, body: "latin"}
+
+  # Stripping the accents is not folding case, so the transliterated spelling is
+  # a different string and stays one.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/latin
+      body: "grusse aou"
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/sharp-s
+      body: "stra\u00dfe"
+    expect: {status: 200, body: "sharp-s"}
+
+  # U+00DF pairs with U+1E9E, the capital sharp s, so this is still one letter
+  # against one letter.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/sharp-s
+      body: "STRA\u00dfE"
+    expect: {status: 200, body: "sharp-s"}
+
+  # And this is the line: the traditional uppercasing of the sharp s is "SS",
+  # which is a full case mapping — one character becoming two. caseInsensitive
+  # folds character by character and does not do it, so a stub written for a
+  # German street name keeps refusing the expanded spelling.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/sharp-s
+      body: "STRASSE"
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/cyrillic
+      body: "\u0436\u0443\u043a"
+    expect: {status: 200, body: "cyrillic"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/cyrillic
+      body: "\u0416\u0443\u043a"
+    expect: {status: 200, body: "cyrillic"}
+
+  # The last character here is Latin "k", not Cyrillic U+043A, and the two look
+  # the same in every font. Folding case must not fold alphabets: this is the
+  # step that fails if the comparison ever reached for a lookalike-tolerant
+  # collation instead of a case fold.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-equalto-caseinsensitive-nonascii-001/cyrillic
+      body: "\u0436\u0443k"
+    expect: {status: 404}

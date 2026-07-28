@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-literal-operands-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `matches` and `equalTo` sit side by side in the same matcher table and take
+  # the same shape of operand, which makes routing one through the regex engine
+  # by accident a cheap mistake to make and an expensive one to notice: every
+  # operand without a metacharacter behaves identically either way. These
+  # operands are chosen so the two implementations disagree.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0004-4000-8000-000000000001",
+         "name": "equalTo with a dot in the operand",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-literal-operands-001/equal",
+                     "headers": {"X-Ver": {"equalTo": "a.c"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0004-4000-8000-000000000002",
+         "name": "contains with a dot in the operand",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-literal-operands-001/contains",
+                     "headers": {"X-Ver": {"contains": "a.c"}}},
+         "response": {"status": 200, "body": "contains",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # An operand that is not a well-formed pattern at all. Registration
+  # succeeding is already part of the assertion: a matcher compiled as a regex
+  # would have been rejected here, and the stub would never have existed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0004-4000-8000-000000000003",
+         "name": "equalTo on an operand that is not a valid pattern",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-literal-operands-001/unparseable",
+                     "headers": {"X-Ver": {"equalTo": "a[b"}}},
+         "response": {"status": 200, "body": "unparseable",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-literal-operands-001/equal
+      headers: {X-Ver: "a.c"}
+    expect: {status: 200, body: "equal"}
+
+  # The dot stands for a dot. A regex-compiled operand answers 200 here.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-literal-operands-001/equal
+      headers: {X-Ver: "abc"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-literal-operands-001/contains
+      headers: {X-Ver: "xa.cx"}
+    expect: {status: 200, body: "contains"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-literal-operands-001/contains
+      headers: {X-Ver: "xabcx"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-literal-operands-001/unparseable
+      headers: {X-Ver: "a[b"}
+    expect: {status: 200, body: "unparseable"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-literal-operands-001/unparseable
+      headers: {X-Ver: "ab"}
+    expect: {status: 404}

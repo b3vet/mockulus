@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-placeholder-array-slot-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # ${json-unit.ignore-element} means two different things depending on where it
+  # sits, and the array reading is the surprising one: in an object it stands in
+  # for a member that may be absent, but in an array it occupies a slot rather
+  # than excusing one. Reading the object rule into the array would make the
+  # expected array's length elastic, which is the assertion below.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0017-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-array-slot-001/slot",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[1,\"${json-unit.ignore-element}\"]}"}]},
+         "response": {"status": 200, "body": "slot",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The slot accepts any value, of any type.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/slot
+      body: '{"xs":[1,99]}'
+    expect: {status: 200, body: "slot"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/slot
+      body: '{"xs":[1,null]}'
+    expect: {status: 200, body: "slot"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/slot
+      body: '{"xs":[1,{"deep":[1,2]}]}'
+    expect: {status: 200, body: "slot"}
+
+  # But it needs a slot to accept: an array of one element is short, exactly as
+  # it would be with a literal in that position.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/slot
+      body: '{"xs":[1]}'
+    expect: {status: 404}
+
+  # It is also still the second slot: the literal element keeps its position.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/slot
+      body: '{"xs":[99,1]}'
+    expect: {status: 404}
+
+  # And it stands in for one element, not for the tail.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/slot
+      body: '{"xs":[1,2,3]}'
+    expect: {status: 404}
+
+  # The contrast that makes the rule visible rather than arbitrary: the very
+  # same placeholder in a member position does excuse the member's absence.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0017-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-array-slot-001/member",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1,\"b\":\"${json-unit.ignore-element}\"}"}]},
+         "response": {"status": 200, "body": "member",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/member
+      body: '{"a":1}'
+    expect: {status: 200, body: "member"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-array-slot-001/member
+      body: '{"a":1,"b":99}'
+    expect: {status: 200, body: "member"}

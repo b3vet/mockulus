@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-body-vs-jsonbody-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # The same JSON document written twice, once as text and once as a value. The
+  # two fields are not synonyms: `body` is bytes and is served as it was written
+  # — spacing included — while `jsonBody` is a value and is re-rendered compact.
+  # Which of the two an author reaches for is how they say whether the exact
+  # formatting is part of the fixture, so collapsing them into one path takes
+  # that choice away.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0011-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-vs-jsonbody-001/text"},
+         "response": {"status": 200,
+                      "body": "{ \"id\" :  7 , \"tags\" : [ \"a\" , \"b\" ] }"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0011-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-vs-jsonbody-001/value"},
+         "response": {"status": 200,
+                      "jsonBody": { "id" :  7 , "tags" : [ "a" , "b" ] }}}
+    expect:
+      status: 201
+      # The stored mapping keeps the two apart as well: this one is a value, and
+      # reading it back gives a value rather than the text of one.
+      body_json_subset:
+        response:
+          jsonBody: {id: 7, tags: ["a", "b"]}
+
+  # Every space the author put in the text form is still there. A server that
+  # parsed a JSON-looking body and re-emitted it — to validate it, to normalise
+  # it, to add a Content-Type — would answer the compact form here, and the
+  # fixture would stop being byte-exact without anything in the stub changing.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-vs-jsonbody-001/text}
+    expect:
+      status: 200
+      body: '{ "id" :  7 , "tags" : [ "a" , "b" ] }'
+
+  # And the value form is compact, from a document submitted with exactly the
+  # same spacing. The two steps together are what make each of them a claim:
+  # either answer alone is consistent with an implementation that has only one
+  # code path and got lucky about which behaviour it picked.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-vs-jsonbody-001/value}
+    expect:
+      status: 200
+      body: '{"id":7,"tags":["a","b"]}'
+
+  # Neither form invents a Content-Type, so the difference between them is the
+  # bytes and nothing else.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-vs-jsonbody-001/text}
+    expect:
+      status: 200
+      header_absent: [Content-Type]
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-vs-jsonbody-001/value}
+    expect:
+      status: 200
+      header_absent: [Content-Type]
+
+  # The complement: text that is not JSON at all goes out untouched through the
+  # same field, so `body` is not a JSON field that tolerates other content — it
+  # never looked at the content in the first place.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0011-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-body-vs-jsonbody-001/broken"},
+         "response": {"status": 200, "body": "{ this is not json at all"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-body-vs-jsonbody-001/broken}
+    expect:
+      status: 200
+      body: "{ this is not json at all"
