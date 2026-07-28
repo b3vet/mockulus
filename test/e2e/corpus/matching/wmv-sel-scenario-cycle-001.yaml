@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-cycle-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# Scenario walks in the corpus run forwards and stop. Two shapes that a state
+# machine allows and a walk never reaches are asserted here, because both are
+# places an implementation can accidentally special-case the initial state or
+# the transition write.
+#
+# Lane A is a cycle: two stubs on one path that hand the flow back and forth,
+# with the return edge landing on `Started`. `Started` is the name the initial
+# state has when nothing has been written, so a server storing "has this
+# scenario begun" alongside the state, or treating a write of `Started` as a
+# reset to be skipped, breaks on the third request rather than the first.
+#
+# Lane B is a self-edge: a stub whose newScenarioState is its own
+# requiredScenarioState. It has to be a write that leaves the flow where it is,
+# not an error and not a no-op that clears the state — and telling those apart
+# needs a state that is not the initial one, which is why the lane is moved off
+# `Started` first.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0018-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-cycle-001-cycle",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "flipped",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-cycle-001/toggle"},
+         "response": {"status": 200, "body": "was at Started",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        requiredScenarioState: "Started"
+        newScenarioState: "flipped"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0018-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-cycle-001-cycle",
+         "requiredScenarioState": "flipped",
+         "newScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-cycle-001/toggle"},
+         "response": {"status": 200, "body": "was at flipped",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        requiredScenarioState: "flipped"
+        newScenarioState: "Started"
+
+  # Five identical requests. The first two would pass against an implementation
+  # that could only move away from the initial state; the third is where a
+  # written `Started` has to be indistinguishable from the one nothing wrote.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/toggle}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "was at Started"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/toggle}
+    expect: {status: 200, body: "was at flipped"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/toggle}
+    expect: {status: 200, body: "was at Started"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/toggle}
+    expect: {status: 200, body: "was at flipped"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/toggle}
+    expect: {status: 200, body: "was at Started"}
+
+  # Lane B, in a scenario of its own so the cycle above is not disturbed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0018-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-cycle-001-hold",
+         "newScenarioState": "holding",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-cycle-001/enter-hold"},
+         "response": {"status": 200, "body": "entered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0018-4000-8000-000000000004",
+         "scenarioName": "wmv-sel-scenario-cycle-001-hold",
+         "requiredScenarioState": "holding",
+         "newScenarioState": "holding",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-cycle-001/hold"},
+         "response": {"status": 200, "body": "still holding",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        requiredScenarioState: "holding"
+        newScenarioState: "holding"
+
+  # The control for the self-edge: a stub gated on the initial state, on the
+  # same path. If the self-transition cleared the state instead of writing it,
+  # this stub would take over the path and the assertion below would say so.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0018-4000-8000-000000000005",
+         "scenarioName": "wmv-sel-scenario-cycle-001-hold",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-cycle-001/hold"},
+         "response": {"status": 200, "body": "not holding yet",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/hold}
+    expect: {status: 200, body: "not holding yet"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-cycle-001/enter-hold}
+    expect: {status: 200, body: "entered"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/hold}
+    expect: {status: 200, body: "still holding"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/hold}
+    expect: {status: 200, body: "still holding"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-cycle-001/hold}
+    expect: {status: 200, body: "still holding"}

@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-placeholder-embedded-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A placeholder is recognised by the shape of the whole expected value, not by
+  # a substring search: ${json-unit.ignore} is a placeholder when it is the
+  # entire string and ordinary text when something else shares the value with
+  # it. The distinction matters in both directions — a scanner that looked
+  # anywhere would turn a literal into a wildcard, and would also refuse this
+  # registration as an unrecognised placeholder in an unexpected position.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0021-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-embedded-001/suffixed",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"id-${json-unit.ignore}\"}"}]},
+         "response": {"status": 200, "body": "suffixed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Compared as text, so only that text matches.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-embedded-001/suffixed
+      body: '{"a":"id-${json-unit.ignore}"}'
+    expect: {status: 200, body: "suffixed"}
+
+  # If the embedded placeholder had been interpreted, this would match.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-embedded-001/suffixed
+      body: '{"a":"id-anything"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-embedded-001/suffixed
+      body: '{"a":"id-"}'
+    expect: {status: 404}
+
+  # The regex placeholder is the one form that is a prefix rather than a whole
+  # value, which makes "prefix" precise: text before it leaves it inert.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0021-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-embedded-001/not-a-prefix",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"pre ${json-unit.regex}[a-z]+\"}"}]},
+         "response": {"status": 200, "body": "not-a-prefix",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-embedded-001/not-a-prefix
+      body: '{"a":"pre ${json-unit.regex}[a-z]+"}'
+    expect: {status: 200, body: "not-a-prefix"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-embedded-001/not-a-prefix
+      body: '{"a":"pre abc"}'
+    expect: {status: 404}
+
+  # The control that the placeholders are live at all in this position, so the
+  # refusals above are about where the text sits rather than about a stub that
+  # never interprets anything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0021-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-embedded-001/whole",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"${json-unit.ignore}\"}"}]},
+         "response": {"status": 200, "body": "whole",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-embedded-001/whole
+      body: '{"a":"id-anything"}'
+    expect: {status: 200, body: "whole"}

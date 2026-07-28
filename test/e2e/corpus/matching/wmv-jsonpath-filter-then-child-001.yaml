@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-filter-then-child-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A filter is a step like any other, so a path can carry on past it — select
+  # the elements that satisfy the predicate, then read one field of each. That
+  # composition is the useful shape in practice ("the quantity of the line whose
+  # sku is B") and it is also the shape where an implementation can quietly drop
+  # the filter and still pass a naive test.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0013-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-then-child-001/qty",
+                     "bodyPatterns": [{"matchesJsonPath":
+                       {"expression": "$.items[?(@.sku == 'B')].qty", "equalTo": "2"}}]},
+         "response": {"status": 200, "body": "qty",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-then-child-001/qty
+      body: '{"items":[{"sku":"A","qty":1},{"sku":"B","qty":2}]}'
+    expect: {status: 200, body: "qty"}
+
+  # The discriminator: the wanted quantity is on the element the filter excluded
+  # and the selected element carries a different one. Dropping the filter and
+  # reading every qty answers 200 here, and the step above cannot tell the
+  # difference on its own.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-then-child-001/qty
+      body: '{"items":[{"sku":"A","qty":2},{"sku":"B","qty":9}]}'
+    expect: {status: 404}
+
+  # The filter selecting an element that does not carry the field leaves the
+  # path with nothing, rather than falling back to a sibling element.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-then-child-001/qty
+      body: '{"items":[{"sku":"A","qty":2},{"sku":"B"}]}'
+    expect: {status: 404}
+
+  # Two elements pass the filter and one of their quantities is the wanted one:
+  # the step after the filter is applied to each selected element and the result
+  # is any-of over what it found.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-then-child-001/qty
+      body: '{"items":[{"sku":"B","qty":9},{"sku":"B","qty":2}]}'
+    expect: {status: 200, body: "qty"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-then-child-001/qty
+      body: '{"items":[{"sku":"C","qty":2}]}'
+    expect: {status: 404}

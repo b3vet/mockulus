@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-selection-by-header-only-001
+behaviors: [B-REQ-HEADERS, B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-ABSENT, B-STUB-REQUEST]
+wm: verified
+# The non-matching step lands on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and the three matched bodies are all still
+# diffed, and those bodies are the assertion here.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Three stubs on one method and one path, differing in nothing but the header
+  # criterion. Everything the selection order of §5.3 would normally use to
+  # separate them is identical — same priority, same URL, same method — so the
+  # only thing that can decide which body comes back is the header, and each of
+  # the three answers below names the stub that was chosen. A case asserting
+  # only status could not tell a correct selection from a lucky one; asserting
+  # the body makes the wrong stub a visible wrong answer rather than a 200.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0023-4000-8000-000000000001",
+         "name": "selected by X-Env prod",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-selection-by-header-only-001/route",
+                     "headers": {"X-Env": {"equalTo": "prod"}}},
+         "response": {"status": 200, "body": "prod",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0023-4000-8000-000000000002",
+         "name": "selected by X-Env dev",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-selection-by-header-only-001/route",
+                     "headers": {"X-Env": {"equalTo": "dev"}}},
+         "response": {"status": 200, "body": "dev",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0023-4000-8000-000000000003",
+         "name": "selected by X-Env being absent",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-selection-by-header-only-001/route",
+                     "headers": {"X-Env": {"absent": true}}},
+         "response": {"status": 200, "body": "none",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Registered first and therefore last in insertion order, so a server that
+  # ignored the header criteria and fell back on "newest wins" would answer
+  # "none" here and to every other request below.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-selection-by-header-only-001/route
+      headers: {X-Env: prod}
+    expect: {status: 200, body: "prod"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-selection-by-header-only-001/route
+      headers: {X-Env: dev}
+    expect: {status: 200, body: "dev"}
+
+  - request: {method: GET, path: /e2e/wmv-header-selection-by-header-only-001/route}
+    expect: {status: 200, body: "none"}
+
+  # A value none of the three criteria accepts is unmatched rather than served
+  # by whichever stub was nearest.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-selection-by-header-only-001/route
+      headers: {X-Env: stage}
+    expect: {status: 404}

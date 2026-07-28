@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-equalto-normalization-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+#
+# Every non-ASCII character below is written as an escape rather than as itself,
+# on the stub side and the request side alike. The whole question here is which
+# code points a body carries, and a literal would leave that to whatever editor
+# last touched the file — which is exactly the ambiguity under test.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # "cafe" with an acute accent has two spellings that render identically: the
+  # single code point U+00E9, or "e" followed by the combining acute U+0301.
+  # Unicode normalization would make the two equal; equalTo does not normalize,
+  # so each stub matches its own spelling and refuses the other. The pair is
+  # what makes that falsifiable in both directions — a server normalizing
+  # toward either form answers one of the four steps below the wrong way, and
+  # one normalizing toward a third form answers all four wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0002-4000-8000-000000000001",
+         "name": "equalTo against the precomposed spelling",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-equalto-normalization-001/precomposed",
+                     "bodyPatterns": [{"equalTo": "caf\u00e9"}]},
+         "response": {"status": 200, "body": "precomposed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0002-4000-8000-000000000002",
+         "name": "equalTo against the decomposed spelling",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-equalto-normalization-001/decomposed",
+                     "bodyPatterns": [{"equalTo": "cafe\u0301"}]},
+         "response": {"status": 200, "body": "decomposed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-normalization-001/precomposed, body: "caf\u00e9"}
+    expect: {status: 200, body: "precomposed"}
+
+  # The same three glyphs, spelled the other way. This is the assertion.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-normalization-001/precomposed, body: "cafe\u0301"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-normalization-001/decomposed, body: "cafe\u0301"}
+    expect: {status: 200, body: "decomposed"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-normalization-001/decomposed, body: "caf\u00e9"}
+    expect: {status: 404}
+
+  # The control against reading the case as "accented text never matches":
+  # dropping the accent altogether is a mismatch for the same ordinary reason a
+  # missing letter is, not for a normalization reason.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-equalto-normalization-001/precomposed, body: "cafe"}
+    expect: {status: 404}

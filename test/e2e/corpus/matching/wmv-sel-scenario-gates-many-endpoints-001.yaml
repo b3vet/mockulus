@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-gates-many-endpoints-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# A scenario holds one state for a name, not one per endpoint, and every corpus
+# case that walks a flow along a single path leaves that ambiguous — an
+# implementation keying state by URL, or memoizing "the state this path is in",
+# passes all of them. It fails here, where one transition on one endpoint has to
+# change the answer of two others that were never requested.
+#
+# That is also the use the feature is actually put to. A service under test is a
+# handful of endpoints whose answers are correlated: the account, its balance,
+# and its statement all change together when the account is activated, and a
+# suite mocks that by giving three endpoints two stubs each and moving them with
+# one call.
+#
+# All six gated stubs are registered before anything is asked, and all three
+# endpoints are read on both sides of the single transition.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0025-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-gates-many-endpoints-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-gates-many-endpoints-001/account"},
+         "response": {"status": 200, "body": "account pending",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        scenarioName: "wmv-sel-scenario-gates-many-endpoints-001"
+        requiredScenarioState: "Started"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0025-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-gates-many-endpoints-001",
+         "requiredScenarioState": "activated",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-gates-many-endpoints-001/account"},
+         "response": {"status": 200, "body": "account active",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0025-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-gates-many-endpoints-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-gates-many-endpoints-001/balance"},
+         "response": {"status": 200, "body": "balance unavailable",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0025-4000-8000-000000000004",
+         "scenarioName": "wmv-sel-scenario-gates-many-endpoints-001",
+         "requiredScenarioState": "activated",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-gates-many-endpoints-001/balance"},
+         "response": {"status": 200, "body": "balance 0.00",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0025-4000-8000-000000000005",
+         "scenarioName": "wmv-sel-scenario-gates-many-endpoints-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-gates-many-endpoints-001/statement"},
+         "response": {"status": 200, "body": "no statements",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0025-4000-8000-000000000006",
+         "scenarioName": "wmv-sel-scenario-gates-many-endpoints-001",
+         "requiredScenarioState": "activated",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-gates-many-endpoints-001/statement"},
+         "response": {"status": 200, "body": "statement available",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The transition lives on a fourth endpoint, so none of the three that change
+  # is the one that was called.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0025-4000-8000-000000000007",
+         "scenarioName": "wmv-sel-scenario-gates-many-endpoints-001",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "activated",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-gates-many-endpoints-001/activate"},
+         "response": {"status": 200, "body": "activated",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # All three endpoints report the initial state. The `activated` stubs are the
+  # newer of each pair, so a server that ignored the gate entirely would answer
+  # the other line on every one of these.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/account}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "account pending"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/balance}
+    expect: {status: 200, body: "balance unavailable"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/statement}
+    expect: {status: 200, body: "no statements"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/activate}
+    expect: {status: 200, body: "activated"}
+
+  # One call moved three endpoints that were not part of it, and the endpoint
+  # that did the moving is now gated out of its own path.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/account}
+    expect: {status: 200, body: "account active"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/balance}
+    expect: {status: 200, body: "balance 0.00"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/statement}
+    expect: {status: 200, body: "statement available"}
+
+  # Read a second time, because a state consumed by the first read after a
+  # transition would give three endpoints one correct answer each and then
+  # diverge — and a suite asserting on each endpoint once would never see it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/account}
+    expect: {status: 200, body: "account active"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gates-many-endpoints-001/balance}
+    expect: {status: 200, body: "balance 0.00"}

@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pattern-plus-quantifier-004
+behaviors: [B-REQ-URLPATH, B-REQ-URLPATHPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `+` is legal in a path and means a plus there — the space reading belongs to
+  # form encoding and to the query, not to the path. It is also a quantifier, so
+  # the exact and pattern spellings of the same segment select disjoint sets of
+  # requests, and neither set is the one a reader skimming the two stubs would
+  # guess. This pair is the sharpest form of "urlPath compares, urlPathPattern
+  # compiles": the two criteria are byte-identical and share no request at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0012-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-pattern-plus-quantifier-004/lit/a+b"},
+         "response": {"status": 200, "body": "literal-plus", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-pattern-plus-quantifier-004/lit/a+b"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0012-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/wmv-url-pattern-plus-quantifier-004/pat/a+b"},
+         "response": {"status": 200, "body": "quantified", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The exact criterion takes the plus at face value…
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-plus-quantifier-004/lit/a+b}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "literal-plus"
+
+  # …and does not accept a space's other spelling in its place, which is what
+  # rules out a server that decoded `+` to a space anywhere on the path.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-plus-quantifier-004/lit/a%20b}
+    expect: {status: 404}
+
+  # Nor the repetition the pattern reading would produce.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-plus-quantifier-004/lit/aab}
+    expect: {status: 404}
+
+  # The pattern criterion reads the very same string as "one or more a".
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-plus-quantifier-004/pat/ab}
+    expect: {status: 200, body: "quantified"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-plus-quantifier-004/pat/aaab}
+    expect: {status: 200, body: "quantified"}
+
+  # One or more, so nought is refused…
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-plus-quantifier-004/pat/b}
+    expect: {status: 404}
+
+  # …and the literal plus, the one request the exact stub was written for, is
+  # the one this stub cannot serve.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-plus-quantifier-004/pat/a+b}
+    expect: {status: 404}

@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-put-replaces-request-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-REQ-URLPATH
+  - B-REQ-METHOD
+wm: verified
+# The steps that check the old criteria no longer match land on the unmatched
+# 404, whose body is the near-miss table WireMock renders and mockulus does not
+# (deviation #2/#18).
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0004-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-replaces-request-001/old"},
+         "response": {"status": 200, "body": "old"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-replaces-request-001/old}
+    expect: {status: 200, body: "old"}
+
+  # A replacement can move a stub: the request half of the document is replaced
+  # as completely as the response half. Both criteria change at once, so the two
+  # negatives below are independent of each other.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0004-4000-8000-000000000001
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/wmv-admin-put-replaces-request-001/new"},
+         "response": {"status": 200, "body": "new"}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-admin-put-replaces-request-001/new}
+    expect: {status: 200, body: "new"}
+
+  # The old path is not served any more. An edit that merged the request objects
+  # instead of replacing them would leave the stub answering here as well, and
+  # the author would have a mock reachable by a URL they thought they had
+  # retired — the kind of leftover that makes a later test pass for the wrong
+  # reason.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-replaces-request-001/old}
+    expect: {status: 404}
+
+  # The old method is gone from the new path too, so the replacement covered
+  # every criterion the previous document set and not only the one that moved.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-replaces-request-001/new}
+    expect: {status: 404}
+
+  # Through all of that it stayed one stub under one id, which is what makes the
+  # two 404s an edit rather than a delete followed by a create.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0004-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0004-4000-8000-000000000001"
+        uuid: "a1000008-0004-4000-8000-000000000001"
+        request: {method: POST, urlPath: /e2e/wmv-admin-put-replaces-request-001/new}
+        response: {status: 200, body: "new"}

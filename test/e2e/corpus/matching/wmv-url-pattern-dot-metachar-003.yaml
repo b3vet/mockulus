@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pattern-dot-metachar-003
+behaviors: [B-REQ-URL, B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The same nine characters — `v1.0` — in the three fields that can carry them.
+  # `url` compares them as text, `urlPattern` compiles them, and the difference
+  # is one dot: version numbers, file extensions and hostnames all put a dot in
+  # a URL, so a stub author who reaches for urlPattern to get one wildcard gets
+  # a second one they did not ask for. The three stubs sit on separate paths so
+  # none can mask another, and every request below names exactly one of them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0011-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-pattern-dot-metachar-003/lit/v1.0"},
+         "response": {"status": 200, "body": "literal", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-url-pattern-dot-metachar-003/lit/v1.0"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0011-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPattern": "/e2e/wmv-url-pattern-dot-metachar-003/pat/v1.0"},
+         "response": {"status": 200, "body": "metachar", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0011-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPattern": "/e2e/wmv-url-pattern-dot-metachar-003/esc/v1\\.0"},
+         "response": {"status": 200, "body": "escaped", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A `url` criterion is text: the dot is a dot and nothing else stands in.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-dot-metachar-003/lit/v1.0}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "literal"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-dot-metachar-003/lit/v1X0}
+    expect: {status: 404}
+
+  # The identical string in urlPattern accepts any single character there, which
+  # is the assertion that the field is compiled rather than compared.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-dot-metachar-003/pat/v1.0}
+    expect: {status: 200, body: "metachar"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-dot-metachar-003/pat/v1X0}
+    expect: {status: 200, body: "metachar"}
+
+  # Any *single* character: the pattern is still anchored and the dot is still
+  # one atom, so two characters do not fit.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-dot-metachar-003/pat/v1XX0}
+    expect: {status: 404}
+
+  # Escaping it in the pattern recovers the literal reading, so an author who
+  # knows about the seam can cross back over it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-dot-metachar-003/esc/v1.0}
+    expect: {status: 200, body: "escaped"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-dot-metachar-003/esc/v1X0}
+    expect: {status: 404}

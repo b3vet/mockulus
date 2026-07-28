@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-path-query-in-criterion-001
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Writing the query into a urlPath is the transcription error a stub author
+  # makes when moving a criterion over from `url`, and the result is a stub that
+  # can never match anything: the subject has had its query removed before the
+  # comparison, so it never contains a `?` for the criterion's own `?` to equal.
+  # The server accepts the registration — this is a stub that is well formed and
+  # useless, not one that is malformed — and the case pins both halves of that.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0016-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-path-query-in-criterion-001/a?z=1"},
+         "response": {"status": 200, "body": "unreachable", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-path-query-in-criterion-001/a?z=1"}
+
+  # The control, and the reason the 404s below mean something: an ordinary
+  # urlPath on the same instance serves the same shape of request.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0016-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-path-query-in-criterion-001/b"},
+         "response": {"status": 200, "body": "reachable", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The request the author meant the first stub to serve.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-path-query-in-criterion-001/a?z=1"}
+    expect: {status: 404}
+
+  # And the request whose path alone equals the criterion's leading portion,
+  # which is what a prefix-matching or query-tolerant reading would serve.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-path-query-in-criterion-001/a}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-path-query-in-criterion-001/b?z=1"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "reachable"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-path-query-in-criterion-001/b}
+    expect: {status: 200, body: "reachable"}

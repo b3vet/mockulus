@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-unmatched-no-transition-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE, B-REQ-HEADERS]
+wm: verified
+# The unmatched steps land on a body that differs by design (deviation #2/#18).
+# The statuses, and every matched body, are still diffed.
+wm_ignore: ["$unmatched-body"]
+# A transition is a consequence of a stub *serving*, not of it being considered.
+# The stub here is gated on the initial state and carries a newScenarioState, so
+# it is a candidate for every request to its path — but it also demands a header,
+# and a request without that header must leave the flow untouched.
+#
+# The failure this rules out is quiet and expensive: a scenario advanced by
+# requests that were answered 404 would leave a suite one step ahead of itself,
+# and the step that finally disagreed would be several calls away from the one
+# that moved it. It is also the natural mistake to make if the state is written
+# where the candidate is chosen rather than where the response is served, since
+# by then the stub has already passed the gate that made it interesting.
+#
+# The probe path reports where the flow is, and is read after every attempt.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0019-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-unmatched-no-transition-001",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "used",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-scenario-unmatched-no-transition-001/gate",
+                     "headers": {"X-Token": {"equalTo": "let-me-in"}}},
+         "response": {"status": 200, "body": "token accepted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        requiredScenarioState: "Started"
+        newScenarioState: "used"
+        request:
+          headers: {X-Token: {equalTo: "let-me-in"}}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0019-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-unmatched-no-transition-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-unmatched-no-transition-001/where"},
+         "response": {"status": 200, "body": "still at the start",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0019-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-unmatched-no-transition-001",
+         "requiredScenarioState": "used",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-unmatched-no-transition-001/where"},
+         "response": {"status": 200, "body": "the token was consumed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The header is absent, so the one stub on the path does not match in full.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/gate}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/where}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "still at the start"
+
+  # A header that is present and wrong is the other way the stub fails, and it
+  # fails later in the evaluation than an absent one.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/gate
+      headers: {X-Token: wrong}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/where}
+    expect: {status: 200, body: "still at the start"}
+
+  # The gate is satisfied by the request that carries the token, and now the
+  # flow moves. Without this step the two above would be equally consistent with
+  # a scenario that never advances at all.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/gate
+      headers: {X-Token: let-me-in}
+    expect: {status: 200, body: "token accepted"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/where}
+    expect: {status: 200, body: "the token was consumed"}
+
+  # The token is single-use because the stub that honours it is gated on the
+  # state it consumed, so the same correct request is now unmatched — and that
+  # unmatched request must not move the flow either.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/gate
+      headers: {X-Token: let-me-in}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-unmatched-no-transition-001/where}
+    expect: {status: 200, body: "the token was consumed"}

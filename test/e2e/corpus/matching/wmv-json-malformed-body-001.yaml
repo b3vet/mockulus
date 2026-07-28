@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-malformed-body-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A body that will not parse is a non-match, never an error and never a
+  # crash — the mock port answers a client that sent nonsense the same way it
+  # answers a client that sent the wrong document. That matters because the body
+  # is attacker-shaped input on a server people run in shared environments, and
+  # because a stub's other criteria must not be able to reach a parse failure.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0023-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-malformed-body-001/doc",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}"}]},
+         "response": {"status": 200, "body": "doc",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control first, so every 404 below is the body's doing rather than a
+  # stub that never matched.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-malformed-body-001/doc
+      body: '{"a":1}'
+    expect: {status: 200, body: "doc"}
+
+  # No body at all.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-malformed-body-001/doc
+      body: ''
+    expect: {status: 404}
+
+  # Whitespace is not a document either, which is the case a parser that
+  # tolerated an empty token stream would let through.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-malformed-body-001/doc
+      body: '   '
+    expect: {status: 404}
+
+  # Truncated mid-document.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-malformed-body-001/doc
+      body: '{"a":1'
+    expect: {status: 404}
+
+  # Unquoted member names are the dialect a lenient parser accepts and strict
+  # JSON does not, so they do not become a second way to satisfy this stub.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-malformed-body-001/doc
+      body: '{a:1}'
+    expect: {status: 404}
+
+  # And a well-formed document of the wrong shape stays an ordinary mismatch.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-malformed-body-001/doc
+      body: '[{"a":1}]'
+    expect: {status: 404}

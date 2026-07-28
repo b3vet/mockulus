@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-scalar-traversal-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A path is a sequence of steps and every step can fail on the kind of node it
+  # lands on, not only on a missing key. Naming a child of a number, or of a
+  # string, is the case where an evaluator either returns nothing or raises —
+  # and raising would turn a mistyped client payload into a 500 instead of a
+  # miss, which is the behavior SPEC §6.7 pins.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0005-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-scalar-traversal-001/deep",
+                     "bodyPatterns": [{"matchesJsonPath": "$.a.b"}]},
+         "response": {"status": 200, "body": "deep",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-traversal-001/deep
+      body: '{"a":{"b":1}}'
+    expect: {status: 200, body: "deep"}
+
+  # A number where an object was expected.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-traversal-001/deep
+      body: '{"a":5}'
+    expect: {status: 404}
+
+  # A string where an object was expected — and one whose text spells the key
+  # being looked for, so a matcher that had degraded to a substring search over
+  # the body would answer 200 here.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-traversal-001/deep
+      body: '{"a":"b"}'
+    expect: {status: 404}
+
+  # A null where an object was expected: the step stops, rather than treating
+  # the null as an empty object with no members.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-traversal-001/deep
+      body: '{"a":null}'
+    expect: {status: 404}
+
+  # The last step naming a key the object does not carry, which is the ordinary
+  # miss the three above have to be distinguished from.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-traversal-001/deep
+      body: '{"a":{"c":1}}'
+    expect: {status: 404}
+
+  # And the whole prefix missing, so nothing about the failure depends on how
+  # far along the path the evaluator got.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-scalar-traversal-001/deep
+      body: '{"z":{"b":1}}'
+    expect: {status: 404}

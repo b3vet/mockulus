@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-anchor-inline-003
+behaviors: [B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Stub authors migrating from a framework that searches rather than
+  # full-matches write their own `^` and `$`, and those patterns have to keep
+  # working once the server adds anchors of its own. A wrapper that stripped the
+  # author's anchors, escaped them, or nested them somewhere they can no longer
+  # be satisfied would turn a working stub into one that never matches — the
+  # silent failure P3 exists to rule out.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0008-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPattern": "^/e2e/wmv-url-anchor-inline-003/x/[0-9]+$"},
+         "response": {"status": 200, "body": "explicit", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: "^/e2e/wmv-url-anchor-inline-003/x/[0-9]+$"}
+
+  # Anchors written per branch, which is where the author's `^`/`$` and the
+  # server's wrapper are most likely to interact badly: the branch anchors have
+  # to hold at the ends of the input, not at the ends of the group.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0008-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPattern": "^/e2e/wmv-url-anchor-inline-003/y$|^/e2e/wmv-url-anchor-inline-003/z$"},
+         "response": {"status": 200, "body": "explicit-alternation", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-inline-003/x/12}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "explicit"
+
+  # The author's anchors and the server's agree rather than cancel: the pattern
+  # is no looser for having been written with them.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-inline-003/x/12/extra}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-inline-003/x/ab}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-inline-003/y}
+    expect: {status: 200, body: "explicit-alternation"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-inline-003/z}
+    expect: {status: 200, body: "explicit-alternation"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-anchor-inline-003/y/1}
+    expect: {status: 404}

@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-array-index-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An index step selects one element and stays definite, which is what
+  # separates it from the wildcard and the slice: what comes back is a node, not
+  # a one-element list. The nested stub is the one that can tell WHICH element
+  # was selected, so the two together pin the index rather than the arity.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0008-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-array-index-001/second",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[1]"}]},
+         "response": {"status": 200, "body": "second",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0008-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-array-index-001/first-sku",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[0].sku",
+                                                           "equalTo": "A"}}]},
+         "response": {"status": 200, "body": "first-sku",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-index-001/second
+      body: '{"items":["a","b"]}'
+    expect: {status: 200, body: "second"}
+
+  # One element short: the index is out of range, and that is a miss rather than
+  # a wrap-around or a clamp to the last element.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-index-001/second
+      body: '{"items":["a"]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-index-001/second
+      body: '{"items":[]}'
+    expect: {status: 404}
+
+  # Indexing something that is not an array selects nothing. An object whose key
+  # is the digit would match if the index had been read as a property name.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-index-001/second
+      body: '{"items":{"1":"b"}}'
+    expect: {status: 404}
+
+  # The nested stub names the first element, and the discriminator is a document
+  # where the value it wants sits at the second index instead: reading any
+  # element rather than the one named would answer 200.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-index-001/first-sku
+      body: '{"items":[{"sku":"A"},{"sku":"B"}]}'
+    expect: {status: 200, body: "first-sku"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-index-001/first-sku
+      body: '{"items":[{"sku":"B"},{"sku":"A"}]}'
+    expect: {status: 404}
+
+  # A one-element array still satisfies an index-0 path, so nothing above turns
+  # on the array being longer than the index.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-index-001/first-sku
+      body: '{"items":[{"sku":"A"}]}'
+    expect: {status: 200, body: "first-sku"}

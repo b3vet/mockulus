@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-priority-absent-is-five-001
+behaviors: [B-STUB-PRIORITY]
+wm: verified
+# Every step is answered by a stub, so nothing is excluded from the diff and the
+# bodies — which name the stub that won — are compared throughout.
+#
+# "Absent priority behaves as 5" is usually asserted by bracketing it between
+# two neighbours, which only pins it to the open interval (4, 6). This case
+# pins the value itself, using the one thing that can distinguish equality from
+# nearness: a tie. If the absent default really is 5, then a stub written
+# `"priority": 5` and a stub with no priority field cannot separate on priority
+# at all, and the insertion-sequence tie-break has to decide between them. Both
+# registration orders are run, because a single order would be explained just as
+# well by "absent sorts below 5" or by "absent sorts above 5".
+steps:
+  # Lane A: the explicit 5 is registered first, the absent one second.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0001-4000-8000-000000000001",
+         "priority": 5,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-absent-is-five-001/a"},
+         "response": {"status": 200, "body": "explicit five",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 5}
+
+  # No priority field at all. The echo below is asserted because the two stubs
+  # have to remain distinguishable in the store — the default is applied when
+  # they are compared, not written into the document on the way in.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0001-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-absent-is-five-001/a"},
+         "response": {"status": 200, "body": "absent priority",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The newer of the two answers, so the two priorities did not separate. A
+  # server that read an absent priority as anything below 5 would answer the
+  # same thing here, which is why lane B exists.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-absent-is-five-001/a}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "absent priority"
+
+  # Lane B: the same pair, registered the other way round.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0001-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-absent-is-five-001/b"},
+         "response": {"status": 200, "body": "absent priority",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0001-4000-8000-000000000004",
+         "priority": 5,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-absent-is-five-001/b"},
+         "response": {"status": 200, "body": "explicit five",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The newer one answers again — and this time it is the explicit 5. Taken with
+  # the lane above, the winner follows registration order in both directions,
+  # which no ordering that put the two on different rungs could produce. The
+  # absent default is 5 exactly.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-absent-is-five-001/b}
+    expect: {status: 200, body: "explicit five"}
+
+  # Lane C is the other half of the claim: the default is a real number in the
+  # comparison, not a marker that loses to anything explicit. The absent-priority
+  # stub is registered first here, so recency is working against it, and it still
+  # outranks a 6 registered afterwards.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0001-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-absent-is-five-001/c"},
+         "response": {"status": 200, "body": "absent priority",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0001-4000-8000-000000000006",
+         "priority": 6,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-absent-is-five-001/c"},
+         "response": {"status": 200, "body": "priority six",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-absent-is-five-001/c}
+    expect: {status: 200, body: "absent priority"}
+
+  # And the loser was live the whole time rather than shadowed out of the
+  # snapshot: removing the stub that outranked it hands it the path.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0001-4000-8000-000000000005}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-absent-is-five-001/c}
+    expect: {status: 200, body: "priority six"}

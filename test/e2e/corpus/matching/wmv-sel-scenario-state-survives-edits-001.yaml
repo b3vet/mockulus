@@ -1,0 +1,143 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-state-survives-edits-001
+behaviors:
+  - B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE
+  - B-ADMIN-MAPPINGS-POST
+  - B-ADMIN-MAPPINGS-ID-DELETE
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# A scenario is defined by the stubs that name it and located by the state
+# stored under that name — two different things with two different lifetimes
+# (SPEC §9.1). Editing the stubs therefore must not move the flow. The
+# temptation to couple them is real: the set of scenarios and their possible
+# states is derived from the snapshot, so an implementation that rebuilds
+# scenarios when the snapshot changes has every opportunity to rebuild their
+# current state along with it.
+#
+# The cost of getting it wrong is paid by exactly the deployments the project is
+# for. Corpus cases share one instance and suites share a mockulus, so mappings
+# are being registered and deleted continuously by work that has nothing to do
+# with any given flow; a scenario that snapped back to Started whenever the
+# snapshot was rebuilt would fail in a way no single suite could reproduce.
+#
+# The flow is advanced once and then read after each of four edits: an unrelated
+# registration, a registration into the scenario itself, a deletion of one of
+# the scenario's own stubs, and a re-registration of it.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0024-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-state-survives-edits-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-survives-edits-001/probe"},
+         "response": {"status": 200, "body": "at the start",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        scenarioName: "wmv-sel-scenario-state-survives-edits-001"
+        requiredScenarioState: "Started"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0024-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-state-survives-edits-001",
+         "requiredScenarioState": "moved",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-survives-edits-001/probe"},
+         "response": {"status": 200, "body": "has moved",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0024-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-state-survives-edits-001",
+         "newScenarioState": "moved",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-state-survives-edits-001/advance"},
+         "response": {"status": 200, "body": "advanced",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-survives-edits-001/probe}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "at the start"
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-state-survives-edits-001/advance}
+    expect: {status: 200, body: "advanced"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-survives-edits-001/probe}
+    expect: {status: 200, body: "has moved"}
+
+  # Edit one: a stub in no scenario at all. It changes the snapshot and nothing
+  # else.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0024-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-survives-edits-001/unrelated"},
+         "response": {"status": 200, "body": "unrelated",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-survives-edits-001/probe}
+    expect: {status: 200, body: "has moved"}
+
+  # Edit two: a stub joining the scenario while the flow is in it. The new stub
+  # gates on the state the flow is already in and takes the path on priority, so
+  # this also asserts that it joins the flow where it is rather than where it
+  # began.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0024-4000-8000-000000000005",
+         "priority": 1,
+         "scenarioName": "wmv-sel-scenario-state-survives-edits-001",
+         "requiredScenarioState": "moved",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-survives-edits-001/probe"},
+         "response": {"status": 200, "body": "has moved, said the new stub",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-survives-edits-001/probe}
+    expect: {status: 200, body: "has moved, said the new stub"}
+
+  # Edit three: one of the scenario's own stubs goes away. It is the newest of
+  # them, so the answer changes back to the stub underneath it — the state has
+  # to be the thing that did not change.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0024-4000-8000-000000000005}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-survives-edits-001/probe}
+    expect: {status: 200, body: "has moved"}
+
+  # Edit four: the stub that defines the initial state is removed and written
+  # again. It is now the newest stub in the scenario and would win the path if
+  # the flow were anywhere near Started; it is not, so it does not.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0024-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0024-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-state-survives-edits-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-state-survives-edits-001/probe"},
+         "response": {"status": 200, "body": "at the start",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-state-survives-edits-001/probe}
+    expect: {status: 200, body: "has moved"}

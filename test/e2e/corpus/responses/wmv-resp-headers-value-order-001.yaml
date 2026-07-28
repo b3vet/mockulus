@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-headers-value-order-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # The values of a repeated header are a sequence, not a set. Set-Cookie is
+  # order-sensitive when two cookies share a name, and Via and Warning are read
+  # as a chain, so a header writer that sorted or de-duplicated the values would
+  # change the message while keeping every value in it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000a-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-value-order-001/ascending"},
+         "response": {"status": 200, "body": "ascending",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Order": ["alpha", "beta", "gamma"]}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers: {X-Order: ["alpha", "beta", "gamma"]}
+
+  # And the same three values written the other way round. The two stubs are
+  # identical apart from the order, so any implementation that does not preserve
+  # it makes them indistinguishable — sorted, they would both read "alpha";
+  # de-duplicated into a set, the joins the differential compares would match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000a-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-value-order-001/descending"},
+         "response": {"status": 200, "body": "descending",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Order": ["gamma", "beta", "alpha"]}}}
+    expect: {status: 201}
+
+  # Header.Get returns the first value, which is where the two orders differ
+  # visibly from the case; the whole sequence is compared by the differential,
+  # which joins the values in the order they arrived.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-value-order-001/ascending}
+    expect:
+      status: 200
+      headers: {X-Order: "alpha"}
+      body: "ascending"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-value-order-001/descending}
+    expect:
+      status: 200
+      headers: {X-Order: "gamma"}
+      body: "descending"
+
+  # Repeated values that are equal to each other are kept, both of them. A
+  # de-duplicating writer would drop one and no ordering assertion would notice,
+  # so this is the step that pins the count rather than the sequence.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000a-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-value-order-001/duplicated"},
+         "response": {"status": 200, "body": "duplicated",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Same": ["twice", "twice"]}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-value-order-001/duplicated}
+    expect:
+      status: 200
+      headers: {X-Same: "twice"}
+      body: "duplicated"

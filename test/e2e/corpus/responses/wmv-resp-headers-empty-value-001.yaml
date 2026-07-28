@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-headers-empty-value-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # A header with an empty value is present with an empty value, which is not
+  # the same message as an absent header — a client testing "is this flag set at
+  # all" reads the two differently. Dropping empty values is the natural thing
+  # for a header writer to do and it silently changes what the mock says.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0008-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-empty-value-001/empty"},
+         "response": {"status": 200, "body": "declared",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Empty": "", "X-Full": "value"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers: {X-Empty: "", X-Full: "value"}
+
+  # The direct assertion can only go so far here: Go's Header.Get returns "" for
+  # a header that is present and empty and for one that is not there at all, so
+  # the X-Empty line below cannot by itself tell the two apart. What can is the
+  # differential — an empty-valued header WireMock sent and mockulus dropped is
+  # reported as a header the oracle sent and we did not.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-empty-value-001/empty}
+    expect:
+      status: 200
+      headers: {X-Full: "value", X-Empty: ""}
+      body: "declared"
+
+  # The control the case turns on: a name that was never declared. Both this and
+  # X-Empty read as "" through Header.Get, and the diff is what separates them —
+  # WireMock sends one of the two and not the other, and so must we.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-empty-value-001/empty}
+    expect:
+      status: 200
+      header_absent: [X-Never-Declared]
+
+  # An empty value inside a repeated header is the sharper form of the same
+  # question: the slot has to be kept, because "a, " and "a" are different
+  # header sets and a client counting values would see one where there are two.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0008-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-empty-value-001/mixed"},
+         "response": {"status": 200, "body": "mixed",
+                      "headers": {"Content-Type": "text/plain", "X-P": ["a", ""]}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-empty-value-001/mixed}
+    expect:
+      status: 200
+      headers: {X-P: "a"}
+      body: "mixed"
+
+  # And a stub with no headers block at all, so none of the above can be
+  # explained by the server emitting these names on every response.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0008-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-empty-value-001/bare"},
+         "response": {"status": 200, "body": "bare"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-empty-value-001/bare}
+    expect:
+      status: 200
+      header_absent: [X-Empty, X-Full, X-P]
+      body: "bare"

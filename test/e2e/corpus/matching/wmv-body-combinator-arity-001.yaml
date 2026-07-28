@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-combinator-arity-001
+behaviors: [B-MATCH-AND-OR-NOT, B-REQ-BODYPATTERNS, B-ERR-10]
+wm: verified
+# This case gives up body comparison rather than only the unmatched 404, because
+# what it asserts is a refusal and the two servers word their refusals
+# differently by design: mockulus answers with the error catalog envelope of
+# Appendix B and WireMock with its own (deviation #14/#21). The status is the
+# claim here — a document that registers on one server and is refused by the
+# other is a mappings file that cannot move between them, and that is what these
+# steps compare. The mockulus envelope itself is still asserted below, against
+# mockulus, so nothing about the refusal goes unchecked.
+wm_ignore: ["$body"]
+steps:
+  # SPEC §5.5 records the arity of `and` and `or` as part of the accepted
+  # surface precisely because the two servers agree on it and the agreement is
+  # worth keeping: a one-operand combinator is harmless to evaluate — it is its
+  # operand — so accepting it would cost nothing at match time and quietly
+  # produce mappings that WireMock refuses.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinator-arity-001/lonely-and",
+                     "bodyPatterns": [{"and": [{"contains": "a"}]}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/and"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinator-arity-001/lonely-or",
+                     "bodyPatterns": [{"or": [{"contains": "a"}]}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/or"}
+
+  # The empty list is the same rule at its other end, and it is worth its own
+  # step: an arity check written as "not exactly one" would let it through, and
+  # an empty `and` is vacuously true — a criterion that matches everything,
+  # which is the most dangerous thing a matcher can silently become.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinator-arity-001/empty-and",
+                     "bodyPatterns": [{"and": []}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/and"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinator-arity-001/empty-or",
+                     "bodyPatterns": [{"or": []}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/or"}
+
+  # Nothing was persisted by any of the four, so the paths they named match
+  # nothing — the difference that matters between "refused" and "accepted and
+  # quietly repaired".
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinator-arity-001/lonely-and, body: "a"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinator-arity-001/empty-and, body: "a"}
+    expect: {status: 404}
+
+  # The control that keeps the four refusals from being about `and` and `or`
+  # being unsupported: two operands register and serve.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0019-4000-8000-000000000001",
+         "name": "two operands are enough",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinator-arity-001/pair",
+                     "bodyPatterns": [{"and": [{"contains": "a"}, {"contains": "b"}]}]},
+         "response": {"status": 200, "body": "pair",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinator-arity-001/pair, body: "ab"}
+    expect: {status: 200, body: "pair"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinator-arity-001/pair, body: "a"}
+    expect: {status: 404}

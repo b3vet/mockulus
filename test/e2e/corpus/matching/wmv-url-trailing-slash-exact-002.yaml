@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-trailing-slash-exact-002
+behaviors: [B-REQ-URL, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `url` compares path and query as one string, so the trailing slash sits in
+  # the middle of the comparison rather than at its end. That is the interesting
+  # position: an implementation that trimmed a trailing slash off the *target*
+  # would leave `/items/?a=1` untouched and still be wrong here, and one that
+  # trimmed it off the path before re-joining the query would collapse these two
+  # stubs into one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0002-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-trailing-slash-exact-002/items/?a=1"},
+         "response": {"status": 200, "body": "slash-query", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-url-trailing-slash-exact-002/items/?a=1"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0002-4000-8000-000000000002",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-trailing-slash-exact-002/items?a=1"},
+         "response": {"status": 200, "body": "bare-query", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Each request reaches exactly one of the two stubs, and the bodies say which.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-trailing-slash-exact-002/items/?a=1"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "slash-query"
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-trailing-slash-exact-002/items?a=1"}
+    expect: {status: 200, body: "bare-query"}
+
+  # Neither stub is a prefix rule: dropping the query leaves a target neither
+  # criterion equals, however close it looks to both.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-exact-002/items/}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-exact-002/items}
+    expect: {status: 404}

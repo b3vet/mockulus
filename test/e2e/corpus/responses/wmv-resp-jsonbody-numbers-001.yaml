@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-jsonbody-numbers-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2, which serves these documents byte for
+# byte as mockulus does. Worth stating what the differential does and does not
+# add: it decodes both bodies and compares them structurally, and every reading
+# below decodes to the same numbers, so the exact-byte assertions are what pin
+# the rendering. The oracle's part is to confirm that the rendering they pin is
+# WireMock's rather than merely ours.
+wm: verified
+steps:
+  # A JSON number is text, and the contract is about what the client reads back.
+  # Decoding this document into IEEE doubles and re-encoding it — which is what
+  # Go's default handling of an untyped JSON value does — answers "1" for 1.0
+  # and "10000000000000000000" for the 20-digit integer. Both are the same
+  # number and a different response, and a client asserting on a payload, or one
+  # whose ids are wider than a double, can tell.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000f-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-numbers-001/numbers"},
+         "response": {"status": 200,
+                      "jsonBody": {"one": 1.0, "big": 10000000000000000001,
+                                   "prec": 0.1000000000000000055511151231257827,
+                                   "int": 42, "neg": -17}}}
+    expect: {status: 201}
+
+  # The trailing ".0" survives on a value that is integral; the 20-digit integer
+  # keeps all twenty digits, the last of which is past what a double can hold
+  # and so is exactly the digit a round trip through one would move; and the
+  # over-precise decimal keeps every digit it was given rather than collapsing
+  # to the shortest text that reads back as the same double.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-numbers-001/numbers}
+    expect:
+      status: 200
+      body: '{"one":1.0,"big":10000000000000000001,"prec":0.1000000000000000055511151231257827,"int":42,"neg":-17}'
+
+  # The control for the reading that a ".0" is simply appended to every number:
+  # an integer stays an integer, inside an array as well as at the top level.
+  # 9007199254740993 is the smallest odd integer a double cannot represent, so a
+  # server that went through one answers 9007199254740992 here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000f-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-numbers-001/integers"},
+         "response": {"status": 200, "jsonBody": [0, -1, 42, 9007199254740993]}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-numbers-001/integers}
+    expect:
+      status: 200
+      body: '[0,-1,42,9007199254740993]'

@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-json-value-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-STUB-REQUEST]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The content matchers are shared surface: SPEC §5.2 lists them once and says
+# they serve in bodyPatterns and as values in queryParameters alike. The claim
+# is easy to half-implement, because the string matchers work on a query
+# parameter without anyone doing anything, while the structural ones only work
+# if the parameter's decoded text is handed to the same matcher a body would
+# have reached. A JSON document travelling as a query parameter is the case that
+# tells the two apart.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000032",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-json-value-001/filter",
+                     "queryParameters": {"filter": {"equalToJson": "{\"a\":1,\"b\":2}"}}},
+         "response": {"status": 200, "body": "json", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-json-value-001/filter?filter=%7B%22a%22%3A1%2C%22b%22%3A2%7D"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "json"
+
+  # Structural equality, not text equality: the members arrive in the other
+  # order and the documents are still the same document. This is the step a
+  # string comparison over the decoded value would fail.
+  - request: {method: GET, path: "/e2e/wmv-query-json-value-001/filter?filter=%7B%22b%22%3A2%2C%22a%22%3A1%7D"}
+    expect: {status: 200, body: "json"}
+
+  # Numbers compare by value, so a different spelling of two is still two.
+  - request: {method: GET, path: "/e2e/wmv-query-json-value-001/filter?filter=%7B%22a%22%3A1%2C%22b%22%3A2.0%7D"}
+    expect: {status: 200, body: "json"}
+
+  # Structural does not mean lenient: a missing member is a mismatch, and so is
+  # a member the expected document never named — equalToJson without
+  # ignoreExtraElements is an equality.
+  - request: {method: GET, path: "/e2e/wmv-query-json-value-001/filter?filter=%7B%22a%22%3A1%7D"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-json-value-001/filter?filter=%7B%22a%22%3A1%2C%22b%22%3A2%2C%22c%22%3A3%7D"}
+    expect: {status: 404}
+
+  # A value that is not JSON at all is a mismatch rather than an error: the
+  # request is answered, with the 404 of a request nothing matched.
+  - request: {method: GET, path: "/e2e/wmv-query-json-value-001/filter?filter=notjson"}
+    expect: {status: 404}

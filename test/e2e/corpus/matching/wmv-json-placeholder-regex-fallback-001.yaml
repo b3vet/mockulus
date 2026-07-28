@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-placeholder-regex-fallback-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The pattern inside ${json-unit.regex} is a Java regex like any other, so it
+  # reaches the same two-engine strategy the `matches` matcher does. A lookahead
+  # is not expressible in RE2, so this stub can only work if the placeholder's
+  # pattern goes through the fallback engine rather than through whichever
+  # engine the JSON comparison happened to be built on.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0019-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-regex-fallback-001/lookahead",
+                     "bodyPatterns": [{"equalToJson": "{\"v\":\"${json-unit.regex}(?=.*\\\\d)[a-z\\\\d]+\"}"}]},
+         "response": {"status": 200, "body": "lookahead",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-fallback-001/lookahead
+      body: '{"v":"ab1"}'
+    expect: {status: 200, body: "lookahead"}
+
+  # The lookahead is the only thing separating these two: both are runs of the
+  # allowed characters, and only one contains a digit. A pattern whose lookahead
+  # had been dropped would accept this.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-fallback-001/lookahead
+      body: '{"v":"abc"}'
+    expect: {status: 404}
+
+  # And the character class still holds, so the acceptance above is not the
+  # lookahead swallowing the whole pattern.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-fallback-001/lookahead
+      body: '{"v":"AB1"}'
+    expect: {status: 404}
+
+  # A backreference is outside the regular languages altogether, which makes it
+  # the sharpest available proof that the second engine is reached from here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0019-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-regex-fallback-001/pair",
+                     "bodyPatterns": [{"equalToJson": "{\"v\":\"${json-unit.regex}(\\\\w+)-\\\\1\"}"}]},
+         "response": {"status": 200, "body": "pair",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-fallback-001/pair
+      body: '{"v":"abc-abc"}'
+    expect: {status: 200, body: "pair"}
+
+  # Only an engine that carries the captured group forward can refuse this.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-fallback-001/pair
+      body: '{"v":"abc-def"}'
+    expect: {status: 404}
+
+  # Equality of the whole group rather than of its first characters.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-fallback-001/pair
+      body: '{"v":"abc-abcd"}'
+    expect: {status: 404}

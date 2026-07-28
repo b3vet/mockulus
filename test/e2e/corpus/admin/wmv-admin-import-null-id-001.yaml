@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-null-id-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-ADMIN-MAPPINGS-POST
+  - B-STUB-ID-UUID
+wm: verified
+# Both servers mint a fresh UUID for these stubs, so the two values can never be
+# equal and the identity fields are excluded from the differential diff. What is
+# under test is that an id *is* assigned and that the document is otherwise the
+# one that was sent — pinned below by shape, on our side, rather than by
+# agreement with an id the oracle drew at random.
+wm_ignore: ["$.id", "$.uuid"]
+steps:
+  # An explicit null is how a serializer that always emits every field writes
+  # "no id" — the shape a client library produces when the caller left the id
+  # unset. It has to mean absent. Read literally it is a value, and the id
+  # validator would reject it or, worse, register a stub under a null identity
+  # that nothing can address afterwards.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": null,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-null-id-001/created"},
+         "response": {"status": 200, "body": "created"}}
+    expect:
+      status: 201
+      # The canonical 36-character lower-case UUIDv4 form, not "some unique
+      # string": the id comes straight back out in /__admin/mappings/{id}, and a
+      # stub whose id is not a UUID could never be handed to WireMock.
+      body_regex: '"id":"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"'
+      body_json_subset:
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-null-id-001/created}
+        response: {status: 200, body: "created"}
+
+  # uuid is the alias of id, and the generated value is echoed under both — a
+  # client reading either spelling has to find the same stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"uuid": null,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-null-id-001/aliased"},
+         "response": {"status": 200, "body": "aliased"}}
+    expect:
+      status: 201
+      body_regex: '"uuid":"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"'
+
+  # Import reads the field the same way, which is the half that matters in
+  # practice: a fixture file written out by a tool carries nulls for everything
+  # the author never set, and importing it must not depend on which fields the
+  # writer happened to omit entirely.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": null,
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-null-id-001/imported"},
+            "response": {"status": 200, "body": "imported"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  # The assigned ids are live registrations and not just echoed decorations: all
+  # three stubs serve. This is the step that would fail against a server that
+  # accepted the null, answered 201, and stored a stub the snapshot builder then
+  # dropped for having no identity.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-null-id-001/created}
+    expect: {status: 200, body: "created"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-null-id-001/aliased}
+    expect: {status: 200, body: "aliased"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-null-id-001/imported}
+    expect: {status: 200, body: "imported"}

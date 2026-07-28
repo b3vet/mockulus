@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-content-type-not-sniffed-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # No Content-Type is emitted unless the stub sets one, and the body form is
+  # not a licence to guess. Content sniffing is the default in Go's net/http, so
+  # this is a header the server has to be stopped from inventing rather than one
+  # it has to be taught to send — and an invented header cannot be removed by
+  # any stub the author could write.
+  #
+  # A body that is JSON text is the temptation for a sniffer that looks at the
+  # bytes...
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000c-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-not-sniffed-001/json-text"},
+         "response": {"status": 200, "body": "{\"looks\":\"like json\"}"}}
+    expect: {status: 201}
+
+  # ...HTML is the temptation for one that looks at the first few bytes, which
+  # is exactly what net/http's DetectContentType does...
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000c-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-not-sniffed-001/html-text"},
+         "response": {"status": 200, "body": "<html><body>hi</body></html>"}}
+    expect: {status: 201}
+
+  # ...and jsonBody is the temptation for one that reasons from the field name
+  # rather than from the bytes. The field says what the payload is; it does not
+  # say what the response claims about itself.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000c-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-not-sniffed-001/json-body"},
+         "response": {"status": 200, "jsonBody": {"looks": "like json"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-not-sniffed-001/json-text}
+    expect:
+      status: 200
+      header_absent: [Content-Type]
+      body: '{"looks":"like json"}'
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-not-sniffed-001/html-text}
+    expect:
+      status: 200
+      header_absent: [Content-Type]
+      body: "<html><body>hi</body></html>"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-not-sniffed-001/json-body}
+    expect:
+      status: 200
+      header_absent: [Content-Type]
+      body: '{"looks":"like json"}'
+
+  # The positive control. The header is absent above because nobody asked for
+  # it, not because the server is unable to send one — and when a stub does ask,
+  # what it asks for wins even where it contradicts the body form outright.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000c-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-not-sniffed-001/declared"},
+         "response": {"status": 200, "jsonBody": {"looks": "like json"},
+                      "headers": {"Content-Type": "text/plain; charset=utf-8"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-not-sniffed-001/declared}
+    expect:
+      status: 200
+      headers: {Content-Type: "text/plain; charset=utf-8"}
+      body: '{"looks":"like json"}'
+
+  # And binary bytes, where a sniffer would reach for application/octet-stream
+  # and where the payload gives it the most to work with: the base64 operand
+  # decodes to a NUL byte, which is the single strongest signal that a body is
+  # not text.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000c-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-content-type-not-sniffed-001/binary"},
+         "response": {"status": 200, "base64Body": "AGEAYg=="}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-content-type-not-sniffed-001/binary}
+    expect:
+      status: 200
+      header_absent: [Content-Type]
+      body: "\0a\0b"

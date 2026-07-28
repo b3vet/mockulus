@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-encoded-space-path-001
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A urlPath criterion is compared against the path as it arrived on the
+  # request line, percent-encoding and all — the path is never decoded first.
+  # The two stubs below are the decoded and encoded spellings of the same
+  # segment, registered on different sub-paths so that one request can only
+  # reach one of them, which turns "is the path decoded?" into a question with
+  # two distinguishable answers rather than one that a 404 could explain away.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0021-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-encoded-space-path-001/enc/a%20b"},
+         "response": {"status": 200, "body": "as-received", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-encoded-space-path-001/enc/a%20b"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0021-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-encoded-space-path-001/dec/a b"},
+         "response": {"status": 200, "body": "decoded", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The criterion written the way the client writes it matches.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-space-path-001/enc/a%20b}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "as-received"
+
+  # The criterion written with the decoded character does not, because the
+  # subject it is compared against still carries the escape. A stub author who
+  # spells a space as a space has written a stub that never matches, and it is
+  # better for that to be pinned than discovered.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-space-path-001/dec/a%20b}
+    expect: {status: 404}
+
+  # The escape is text, not a wildcard: a different escape in the same position
+  # is a different path.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-space-path-001/enc/a%21b}
+    expect: {status: 404}

@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-nested-not-001
+behaviors: [B-MATCH-AND-OR-NOT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `not` takes a matcher, and a matcher is anything in the content-matcher
+  # table — including another `not`. Nesting is the cheapest way to prove the
+  # combinator really recurses rather than reaching for a fixed leaf one level
+  # down: the two stubs below carry the same operand and must answer every
+  # request in opposite directions.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0019-4000-8000-000000000001",
+         "name": "one negation",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-nested-not-001/single",
+                     "headers": {"X-Env": {"not": {"equalTo": "prod"}}}},
+         "response": {"status": 200, "body": "single",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0019-4000-8000-000000000002",
+         "name": "two negations",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-nested-not-001/double",
+                     "headers": {"X-Env": {"not": {"not": {"equalTo": "prod"}}}}},
+         "response": {"status": 200, "body": "double",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      # The nesting survives the round trip, so what is stored is a tree rather
+      # than whatever leaf the parser found at the bottom of it.
+      body_json_subset:
+        request:
+          headers:
+            X-Env:
+              not:
+                not: {equalTo: "prod"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-nested-not-001/single
+      headers: {X-Env: "dev"}
+    expect: {status: 200, body: "single"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-nested-not-001/single
+      headers: {X-Env: "prod"}
+    expect: {status: 404}
+
+  # The double negation is the plain matcher again. An implementation that
+  # collapsed the nesting to a single `not`, or that stopped at the outermost
+  # one, answers these two the other way round.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-nested-not-001/double
+      headers: {X-Env: "prod"}
+    expect: {status: 200, body: "double"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-nested-not-001/double
+      headers: {X-Env: "dev"}
+    expect: {status: 404}

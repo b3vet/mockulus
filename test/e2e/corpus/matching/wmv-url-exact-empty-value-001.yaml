@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-exact-empty-value-001
+behaviors: [B-REQ-URL, B-REQ-QUERYPARAMETERS, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `?flag` and `?flag=` are the same parameter to a query-parameter criterion —
+  # both are present-with-empty-string, neither is ever absent (SPEC §5.2, and
+  # url-criteria-queryparameters-empty-002 pins it). To `url` they are two
+  # different strings, because `url` never parses the query at all. This case is
+  # that contrast written out: the same two requests, told apart by one
+  # mechanism and not by the other. An implementation that reached for its
+  # parsed query index to answer a `url` criterion would collapse the first two
+  # stubs into one and could not produce both bodies below.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0018-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-exact-empty-value-001/f?flag"},
+         "response": {"status": 200, "body": "bare-marker", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-url-exact-empty-value-001/f?flag"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0018-4000-8000-000000000002",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-exact-empty-value-001/f?flag="},
+         "response": {"status": 200, "body": "empty-value", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0018-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-exact-empty-value-001/g",
+                     "queryParameters": {"flag": {"equalTo": ""}}},
+         "response": {"status": 200, "body": "parameter", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            flag: {equalTo: ""}
+
+  # Two spellings, two stubs, two bodies: `url` distinguishes them.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-empty-value-001/f?flag"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "bare-marker"
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-empty-value-001/f?flag="}
+    expect: {status: 200, body: "empty-value"}
+
+  # The same two spellings, one stub, one body: the parameter criterion does
+  # not distinguish them.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-empty-value-001/g?flag"}
+    expect: {status: 200, body: "parameter"}
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-empty-value-001/g?flag="}
+    expect: {status: 200, body: "parameter"}
+
+  # And the parameter criterion is still a criterion: no parameter is not the
+  # empty string, so the stub does not serve a query-less request.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-exact-empty-value-001/g}
+    expect: {status: 404}

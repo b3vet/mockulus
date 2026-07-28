@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-decode-delimiters-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-MATCH-EQUALTO-CASEINSENSITIVE]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The characters that structure a query are also legal inside a value once they
+# are escaped, and one of them is legal inside a value even unescaped. Splitting
+# the query on every occurrence of `&`, `=` or `?` — the shortest parser a
+# person writes — gets each of the steps below wrong in a different way.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000006",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-delimiters-001/amp",
+                     "queryParameters": {"q": {"equalTo": "a&b"}}},
+         "response": {"status": 200, "body": "amp", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000007",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-delimiters-001/eq",
+                     "queryParameters": {"q": {"equalTo": "a=b"}}},
+         "response": {"status": 200, "body": "eq", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000008",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-decode-delimiters-001/qmark",
+                     "queryParameters": {"q": {"equalTo": "a?b"}}},
+         "response": {"status": 200, "body": "qmark", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # An escaped ampersand is part of the value, not the start of the next
+  # parameter: the split into parameters happens before any decoding.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-delimiters-001/amp?q=a%26b"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "amp"
+
+  # The control that gives that step its meaning: written unescaped, the same
+  # character does separate two parameters, so `q` is only "a" and the criterion
+  # fails. Decoding before splitting would make these two requests identical.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-delimiters-001/amp?q=a&b="}
+    expect: {status: 404}
+
+  - request: {method: GET, path: "/e2e/wmv-query-decode-delimiters-001/eq?q=a%3Db"}
+    expect: {status: 200, body: "eq"}
+
+  # Only the FIRST `=` of a parameter separates its name from its value, so an
+  # unescaped one inside the value needs no escaping at all and means the same
+  # thing as the escaped spelling above.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-delimiters-001/eq?q=a=b"}
+    expect: {status: 200, body: "eq"}
+
+  - request: {method: GET, path: "/e2e/wmv-query-decode-delimiters-001/qmark?q=a%3Fb"}
+    expect: {status: 200, body: "qmark"}
+
+  # And only the first `?` of the request target ends the path, so a second one
+  # is an ordinary character in the query.
+  - request: {method: GET, path: "/e2e/wmv-query-decode-delimiters-001/qmark?q=a?b"}
+    expect: {status: 200, body: "qmark"}

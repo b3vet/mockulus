@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-status-bodyless-001
+behaviors:
+  - B-RESP-STATUS
+  - B-RESP-HEADERS
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+wm: verified
+steps:
+  # A 204 and a 304 carry no payload by protocol, whatever the stub asked for.
+  # Every stub here declares a body precisely so the drop is observable: the
+  # question is not whether the author wrote one but what the client receives.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0002-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-bodyless-001/no-content"},
+         "response": {"status": 204, "body": "written but unsendable",
+                      "headers": {"Content-Type": "application/json", "X-Kept": "yes"}}}
+    expect:
+      status: 201
+      # Stored as written: the drop happens on the wire, not at registration, so
+      # a client reading the mapping back still sees what it submitted.
+      body_json_subset:
+        response: {status: 204, body: "written but unsendable"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0002-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-bodyless-001/not-modified"},
+         "response": {"status": 304, "body": "written but unsendable",
+                      "headers": {"ETag": "\"v1\"", "X-Kept": "yes"}}}
+    expect: {status: 201}
+
+  # The interesting half is what survives: the headers are not collateral. A
+  # conditional-request client reads the validator off a 304 and nothing else,
+  # so dropping ETag along with the body would make the status useless.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-bodyless-001/not-modified}
+    expect:
+      status: 304
+      headers: {ETag: '"v1"', X-Kept: "yes"}
+      body: ""
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-bodyless-001/no-content}
+    expect:
+      status: 204
+      headers: {Content-Type: application/json, X-Kept: "yes"}
+      body: ""
+
+  # 205 is the control that stops this from reading as "3-digit codes in the
+  # 2xx/3xx range lose their bodies". Reset Content has no such rule, so the
+  # very same declaration arrives intact — which is what makes the two steps
+  # above a statement about 204 and 304 rather than about body handling.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0002-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-bodyless-001/reset"},
+         "response": {"status": 205, "body": "written but unsendable",
+                      "headers": {"X-Kept": "yes"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-bodyless-001/reset}
+    expect:
+      status: 205
+      headers: {X-Kept: "yes"}
+      body: "written but unsendable"
+
+  # And the same bytes on an ordinary 200, so the empty bodies above cannot be
+  # explained by the payload itself being unservable.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0002-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-bodyless-001/ok"},
+         "response": {"status": 200, "body": "written but unsendable",
+                      "headers": {"X-Kept": "yes"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-bodyless-001/ok}
+    expect:
+      status: 200
+      body: "written but unsendable"

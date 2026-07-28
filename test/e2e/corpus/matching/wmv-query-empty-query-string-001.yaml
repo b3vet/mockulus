@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-empty-query-string-001
+behaviors: [B-MATCH-ABSENT, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A request target ending in a bare `?` has a query string that is there and
+# empty, which is a third thing next to "no query" and "a query with an empty
+# value". Clients emit it whenever they build a URL by concatenation and the
+# parameter list turns out to be empty. It must contribute no parameters at all:
+# a parser that split the empty query on `&` and kept the one empty element it
+# gets back would invent a parameter with an empty name, and one that carried
+# that element over to the criterion being tested would defeat `absent`.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000035",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-empty-query-string-001/absent",
+                     "queryParameters": {"flag": {"absent": true}}},
+         "response": {"status": 200, "body": "absent", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            flag: {absent: true}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000036",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-empty-query-string-001/empty",
+                     "queryParameters": {"flag": {"equalTo": ""}}},
+         "response": {"status": 200, "body": "empty", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The bare `?` and no query at all are the same request as far as the
+  # parameters go.
+  - request: {method: GET, path: "/e2e/wmv-query-empty-query-string-001/absent?"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "absent"
+  - request: {method: GET, path: /e2e/wmv-query-empty-query-string-001/absent}
+    expect: {status: 200, body: "absent"}
+
+  # And `?flag=` is not: it is the parameter, present, holding nothing.
+  - request: {method: GET, path: "/e2e/wmv-query-empty-query-string-001/absent?flag="}
+    expect: {status: 404}
+
+  # Read from the other side, with a criterion that demands the empty string: a
+  # query string that is empty does not supply one.
+  - request: {method: GET, path: "/e2e/wmv-query-empty-query-string-001/empty?"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-empty-query-string-001/empty?flag="}
+    expect: {status: 200, body: "empty"}

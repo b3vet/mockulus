@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-priority-numeric-not-lexical-001
+behaviors: [B-STUB-PRIORITY]
+wm: verified
+# Every step is served, so every body is diffed and each body names its own
+# priority.
+#
+# "Priority ascending" is a numeric comparison over the signed range, and the
+# three ways that gets implemented wrongly all survive the usual single-digit
+# fixtures. The five values here are chosen so that each wrong comparator picks a
+# different winner from the right one:
+#
+#   numeric        -50 < -2 < 9 < 10 < 100          (the contract)
+#   lexicographic  "-2" < "-50" < "10" < "100" < "9"
+#   by magnitude   -2 < 9 < 10 < -50 < 100
+#   unsigned       9 < 10 < 100 < -50 < -2
+#
+# The first request separates all four, and the walk down the ladder separates
+# numeric from lexicographic a second time — 9 against 10 and 100, where a
+# string comparison inverts the digits. Registration runs from strongest to
+# weakest, so the insertion tie-break argues against the winner at every rung
+# and cannot be mistaken for the reason.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0009-4000-8000-000000000001",
+         "priority": -50,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-numeric-not-lexical-001/rung"},
+         "response": {"status": 200, "body": "minus fifty",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: -50}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0009-4000-8000-000000000002",
+         "priority": -2,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-numeric-not-lexical-001/rung"},
+         "response": {"status": 200, "body": "minus two",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: -2}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0009-4000-8000-000000000003",
+         "priority": 9,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-numeric-not-lexical-001/rung"},
+         "response": {"status": 200, "body": "nine",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0009-4000-8000-000000000004",
+         "priority": 10,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-numeric-not-lexical-001/rung"},
+         "response": {"status": 200, "body": "ten",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0009-4000-8000-000000000005",
+         "priority": 100,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-numeric-not-lexical-001/rung"},
+         "response": {"status": 200, "body": "one hundred",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 100}
+
+  # The most negative value, although it is the oldest stub on the path.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-numeric-not-lexical-001/rung}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "minus fifty"
+
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0009-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-numeric-not-lexical-001/rung}
+    expect: {status: 200, body: "minus two"}
+
+  # The rung a string comparison gets wrong: with only 9, 10 and 100 left, "10"
+  # sorts before "9" and a lexicographic ordering answers "ten" here.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0009-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-numeric-not-lexical-001/rung}
+    expect: {status: 200, body: "nine"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0009-4000-8000-000000000003}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-numeric-not-lexical-001/rung}
+    expect: {status: 200, body: "ten"}
+
+  # And the weakest of the five was matching all along, which is what makes the
+  # four answers above statements about the ordering rather than about which
+  # stubs were live.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0009-4000-8000-000000000004}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-numeric-not-lexical-001/rung}
+    expect: {status: 200, body: "one hundred"}

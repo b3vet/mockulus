@@ -1,0 +1,160 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-winner-transitions-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE, B-STUB-PRIORITY]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# When two stubs in one scenario match the same request and declare different
+# newScenarioState values, exactly one of those transitions may happen: the one
+# belonging to the stub that actually served. A candidate that lost the
+# precedence comparison is not a stub that "nearly served" — it must leave no
+# trace at all, or a suite driving one flow would find another flow's state
+# machine moved underneath it.
+#
+# The answer body says which stub served; where the flow ended up says which
+# transition fired. Those are two independent observations, and a case that made
+# only the first would pass against an implementation that applied every
+# matching candidate's transition. The two lanes are a control pair — the same
+# four stubs, the priorities exchanged — so each lane's answer is attributable
+# to the numbers rather than to the order the stubs were written in.
+steps:
+  # Lane A. Both stubs are gated on the initial state and both would match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000001",
+         "priority": 9,
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-a",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "moved by the weak stub",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/a/step"},
+         "response": {"status": 200, "body": "weak served",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        requiredScenarioState: "Started"
+        newScenarioState: "moved by the weak stub"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000002",
+         "priority": 1,
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-a",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "moved by the strong stub",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/a/step"},
+         "response": {"status": 200, "body": "strong served",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The probe reads the state back through the only surface that matters — which
+  # stub answers — with one stub per candidate destination, so the two possible
+  # transitions give visibly different answers.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-a",
+         "requiredScenarioState": "moved by the strong stub",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/a/where"},
+         "response": {"status": 200, "body": "the strong stub moved it",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000004",
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-a",
+         "requiredScenarioState": "moved by the weak stub",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/a/where"},
+         "response": {"status": 200, "body": "the weak stub moved it",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-winner-transitions-001/a/step}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "strong served"
+
+  # One transition, and it is the winner's. An implementation that walked the
+  # candidates applying transitions as it went would land on whichever it
+  # visited last and answer the other line here.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-winner-transitions-001/a/where}
+    expect: {status: 200, body: "the strong stub moved it"}
+
+  # Lane B: the same four stubs in a scenario of their own, with the two
+  # priorities exchanged. Without this the lane above would be equally well
+  # explained by "the last registered transition wins".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000005",
+         "priority": 1,
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-b",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "moved by the weak stub",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/b/step"},
+         "response": {"status": 200, "body": "weak served",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000006",
+         "priority": 9,
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-b",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "moved by the strong stub",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/b/step"},
+         "response": {"status": 200, "body": "strong served",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000007",
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-b",
+         "requiredScenarioState": "moved by the strong stub",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/b/where"},
+         "response": {"status": 200, "body": "the strong stub moved it",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0012-4000-8000-000000000008",
+         "scenarioName": "wmv-sel-scenario-winner-transitions-001-b",
+         "requiredScenarioState": "moved by the weak stub",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-winner-transitions-001/b/where"},
+         "response": {"status": 200, "body": "the weak stub moved it",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The stub carrying the "weak served" body now holds the strongest number, so
+  # it serves — and its transition, not the other one, is the one that took.
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-winner-transitions-001/b/step}
+    expect: {status: 200, body: "weak served"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-winner-transitions-001/b/where}
+    expect: {status: 200, body: "the weak stub moved it"}
+
+  # And the two lanes did not touch each other: lane A is still where its own
+  # winner put it, which is what makes each lane's probe an answer about its own
+  # scenario.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-winner-transitions-001/a/where}
+    expect: {status: 200, body: "the strong stub moved it"}

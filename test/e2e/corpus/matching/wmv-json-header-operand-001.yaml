@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-header-operand-001
+behaviors:
+  - B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS
+  - B-REQ-HEADERS
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The content matchers are one vocabulary used in several positions, so
+  # equalToJson is available wherever a header criterion is — over a JSON
+  # document carried in a header, which is how tracing and context propagation
+  # baggage usually travels. The flags come along with it: an implementation
+  # that wired equalToJson only into bodyPatterns would fail this stub outright,
+  # and one that wired it in without its options would refuse the first request.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0026-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-json-header-operand-001/ctx",
+                     "headers": {"X-Context": {"equalToJson": "{\"tenant\":\"acme\"}",
+                                               "ignoreExtraElements": true}}},
+         "response": {"status": 200, "body": "ctx",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-json-header-operand-001/ctx
+      headers: {X-Context: '{"tenant":"acme","trace":"abc"}'}
+    expect: {status: 200, body: "ctx"}
+
+  # Structural equality reaches the header value too: reordered members and
+  # incidental whitespace are not part of the document.
+  - request:
+      method: GET
+      path: /e2e/wmv-json-header-operand-001/ctx
+      headers: {X-Context: '{ "trace":"abc", "tenant":"acme" }'}
+    expect: {status: 200, body: "ctx"}
+
+  # A different value is a mismatch...
+  - request:
+      method: GET
+      path: /e2e/wmv-json-header-operand-001/ctx
+      headers: {X-Context: '{"tenant":"other"}'}
+    expect: {status: 404}
+
+  # ...a header that is not JSON is a mismatch rather than an error...
+  - request:
+      method: GET
+      path: /e2e/wmv-json-header-operand-001/ctx
+      headers: {X-Context: 'acme'}
+    expect: {status: 404}
+
+  # ...and an absent header satisfies no value matcher at all.
+  - request:
+      method: GET
+      path: /e2e/wmv-json-header-operand-001/ctx
+    expect: {status: 404}

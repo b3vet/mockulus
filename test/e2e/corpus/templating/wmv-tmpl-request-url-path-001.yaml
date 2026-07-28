@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-url-path-001
+behaviors: [B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # `url` and `path` are the two accessors a stub author reaches for first and
+  # the two that are easiest to confuse, because on a request without a query
+  # they are the same string. This stub renders both from one request so the
+  # difference is visible rather than assumed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0002-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-url-path-001/resource"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "url={{request.url}} path={{request.path}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # With a query string the two diverge: `url` is path plus query as received,
+  # `path` stops at the question mark. A model that fed the same string to both
+  # renders a line where the two halves are equal, which is exactly what the
+  # next step alone would have accepted.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-url-path-001/resource?tier=gold
+    expect:
+      status: 200
+      body: "url=/e2e/wmv-tmpl-request-url-path-001/resource?tier=gold path=/e2e/wmv-tmpl-request-url-path-001/resource"
+
+  # And without one they agree — which is what makes the step above an
+  # assertion about the query rather than about a suffix somebody appends.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-url-path-001/resource
+    expect:
+      status: 200
+      body: "url=/e2e/wmv-tmpl-request-url-path-001/resource path=/e2e/wmv-tmpl-request-url-path-001/resource"
+
+  # The stub matched on `urlPath`, so it answers whatever query arrives. This
+  # request carries one the stub never mentions, and the rendered `url` still
+  # has to carry it: the template reads the request as received, not the
+  # criteria that selected the stub.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-url-path-001/resource?unknown=1
+    expect:
+      status: 200
+      body: "url=/e2e/wmv-tmpl-request-url-path-001/resource?unknown=1 path=/e2e/wmv-tmpl-request-url-path-001/resource"
+
+  # The control, on the accessor most likely to be mistaken for a server-side
+  # substitution: without the transformer the path is not resolved either.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0002-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-url-path-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "url={{request.url}} path={{request.path}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-url-path-001/literal?tier=gold
+    expect:
+      status: 200
+      body: "url={{request.url}} path={{request.path}}"

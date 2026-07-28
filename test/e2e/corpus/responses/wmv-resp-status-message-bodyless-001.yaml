@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-status-message-bodyless-001
+behaviors:
+  - B-RESP-STATUSMESSAGE
+  - B-RESP-STATUS
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2: both servers put the phrase on the
+# status line and send no bytes after the headers for either response below.
+# The phrase itself is invisible to the replay and is asserted directly.
+wm: verified
+steps:
+  # A phrase on a status that carries no payload. The hand-written path of
+  # deviation #7 exists to place a reason phrase, and its most obvious failure
+  # mode is a framing mistake: a body length written for a body that must not
+  # exist leaves the client waiting for bytes that never come.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0004-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-bodyless-001/no-content"},
+         "response": {"status": 204, "statusMessage": "Nothing Here At All",
+                      "headers": {"X-Kept": "yes"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {status: 204, statusMessage: "Nothing Here At All"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-bodyless-001/no-content}
+    expect:
+      status: 204
+      status_message: "Nothing Here At All"
+      headers: {X-Kept: "yes"}
+      body: ""
+
+  # The other way to end up with no bytes: a status that permits a body, and a
+  # stub that declares an empty one. A response that owes the client zero bytes
+  # is a different case from one that owes it none by protocol, and the phrase
+  # has to survive both.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0004-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-bodyless-001/empty"},
+         "response": {"status": 500, "statusMessage": "Internal Server Error Of Our Own",
+                      "body": ""}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-bodyless-001/empty}
+    expect:
+      status: 500
+      status_message: "Internal Server Error Of Our Own"
+      body: ""
+
+  # The control: the same phrase over a response that does carry bytes. Without
+  # it, "the body is empty" would be satisfied by a path that never manages to
+  # write a body at all, and the two steps above would prove nothing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0004-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-message-bodyless-001/full"},
+         "response": {"status": 500, "statusMessage": "Internal Server Error Of Our Own",
+                      "body": "and here is the detail",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-message-bodyless-001/full}
+    expect:
+      status: 500
+      status_message: "Internal Server Error Of Our Own"
+      headers: {Content-Type: text/plain}
+      body: "and here is the detail"

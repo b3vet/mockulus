@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-single-pass-001
+behaviors: [B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # Rendering is one pass over the template, not a loop to a fixed point. That
+  # distinction only becomes visible when a value the request supplied looks
+  # like template syntax itself — and a mock server is exactly where that
+  # happens, because the payloads it is handed are other people's fixtures.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0020-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-single-pass-001/echo"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Echo": "{{request.query.tpl}}"},
+                      "body": "fromquery=[{{request.query.tpl}}] frombody=[{{request.body}}] real={{request.method}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The query and the payload both carry an expression the engine would resolve
+  # if it read them. Both come back as the characters that arrived, while
+  # `real` — an expression that was in the template all along — resolves. That
+  # pairing is the whole assertion: the same text is data in one place and
+  # source in the other, and what decides which is where it came from.
+  #
+  # Getting this wrong is not a cosmetic bug. A second pass over rendered
+  # output turns any caller who can put braces in a request into someone who
+  # can run helpers on the server.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-single-pass-001/echo?tpl=%7B%7Brequest.method%7D%7D
+      headers: {Content-Type: text/plain}
+      body: "{{request.url}}"
+    expect:
+      status: 200
+      headers: {X-Echo: "{{request.method}}"}
+      body: "fromquery=[{{request.method}}] frombody=[{{request.url}}] real=POST"
+
+  # The header carries the same value, because a second pass confined to the
+  # body would still be a second pass.
+
+  # A request whose values are ordinary text, so the step above is a statement
+  # about the braces rather than about a stub that renders nothing.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-single-pass-001/echo?tpl=plain
+      headers: {Content-Type: text/plain}
+      body: "payload"
+    expect:
+      status: 200
+      headers: {X-Echo: "plain"}
+      body: "fromquery=[plain] frombody=[payload] real=POST"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0020-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-single-pass-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "fromquery=[{{request.query.tpl}}] real={{request.method}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-single-pass-001/literal?tpl=plain
+      headers: {Content-Type: text/plain}
+      body: "payload"
+    expect:
+      status: 200
+      body: "fromquery=[{{request.query.tpl}}] real={{request.method}}"

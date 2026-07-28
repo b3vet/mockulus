@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-jsonpath-collection-001
+behaviors: [B-TPL-JSONPATH, B-TPL-IF-UNLESS-EACH-WITH-LOOKUP]
+wm: verified
+steps:
+  # A path expression that selects more than one node has to come back as a
+  # collection, or the block helpers cannot be composed with it — and composing
+  # them is the whole reason a mock server templates at all: a response whose
+  # shape follows the request's list.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0013-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-jsonpath-collection-001/lines"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "size={{size (jsonPath request.body '$.items')}} skus=[{{#each (jsonPath request.body '$.items[*].sku')}}{{@index}}:{{this}};{{/each}}] joined={{join (jsonPath request.body '$.xs') '|'}} with=[{{#with (jsonPath request.body '$.who')}}{{name}}/{{city}}{{/with}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `size` and `skus` read the same list two ways, so a selection consumed once
+  # and left empty for the second reader shows up as a count that disagrees
+  # with the elements next to it.
+  #
+  # The wildcard step is the sharp one: `$.items[*].sku` has to collect one
+  # field out of every element, in order. An engine that returned the elements
+  # themselves renders objects here, and one that stopped at the first renders
+  # a single entry — both of which pass an assertion phrased as "contains A1".
+  #
+  # `with` pushes a selected object as a scope, which is what lets a stub echo
+  # a nested part of the request without naming its path twice.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonpath-collection-001/lines
+      headers: {Content-Type: application/json}
+      body: '{"items": [{"sku": "A1"}, {"sku": "B2"}], "xs": ["a", "b", "c"], "who": {"name": "ada", "city": "london"}}'
+    expect:
+      status: 200
+      body: "size=2 skus=[0:A1;1:B2;] joined=a|b|c with=[ada/london]"
+
+  # The empty document is the case that turns a rendered list into invalid
+  # JSON: an empty selection has to produce no iterations at all, not one blank
+  # one, and its size has to be 0 rather than the 1 an implementation reports
+  # when it wraps a single absent node in a list.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonpath-collection-001/lines
+      headers: {Content-Type: application/json}
+      body: '{"items": [], "xs": [], "who": {"name": "ada", "city": "london"}}'
+    expect:
+      status: 200
+      body: "size=0 skus=[] joined= with=[ada/london]"
+
+  # `with` unchanged across both requests is what keeps the step above an
+  # assertion about the empty lists rather than about an empty render.
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0013-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-jsonpath-collection-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "size={{size (jsonPath request.body '$.items')}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonpath-collection-001/literal
+      headers: {Content-Type: application/json}
+      body: '{"items": [{"sku": "A1"}]}'
+    expect:
+      status: 200
+      body: "size={{size (jsonPath request.body '$.items')}}"

@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-base64-invalid-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2: it answers 422 to both documents
+# below, with the same envelope and the same code 10.
+wm: verified
+# Two ignores, for two different reasons.
+#
+# $unmatched-body covers the steps that check nothing was persisted, where the
+# 404 body is deviation #2/#18.
+#
+# $.errors gives up the *detail* of the rejection, and only that. Both servers
+# refuse these stubs with a 422 carrying an errors array, which is the claim
+# this case makes and which the status comparison still checks on every step.
+# What is not comparable is what the array says: WireMock reports Jackson's
+# message and points at /response, while mockulus reports its own catalogue
+# entry and points at /response/base64Body. The pointer granularity and the
+# wording are ours by design (§14, Appendix B), so requiring them to match would
+# assert that our error catalogue is Jackson's.
+wm_ignore: ["$unmatched-body", "$.errors"]
+steps:
+  # An operand that is not base64 at all cannot be turned into bytes, and a
+  # response whose body cannot be built is not a response. Refusing at
+  # registration is what makes the failure the author's to fix: accepted here,
+  # the stub would fail at serve time, on somebody else's test run, with the
+  # stack trace pointing at whichever request happened to hit it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0014-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-base64-invalid-001/garbage"},
+         "response": {"status": 200, "base64Body": "!!!not base64!!!"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/base64Body"}
+
+  # The rejection is total: nothing was written, so the path is unmatched rather
+  # than serving a stub that half-registered.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-base64-invalid-001/garbage}
+    expect: {status: 404}
+
+  # The near miss, and the reason this is not just a test of obvious rubbish.
+  # base64url spells the last two characters '-' and '_' where standard base64
+  # spells them '+' and '/', so this operand is a perfectly good encoding of
+  # three bytes in the wrong alphabet. Both servers read the standard alphabet
+  # and refuse it; a decoder that quietly accepted either would answer bytes the
+  # author did not write, and would answer different bytes from WireMock for the
+  # same stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0014-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-base64-invalid-001/urlsafe"},
+         "response": {"status": 200, "base64Body": "-_8="}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-base64-invalid-001/urlsafe}
+    expect: {status: 404}
+
+  # The control, and the thing that makes the two rejections above mean
+  # something: the same three bytes in the standard alphabet register and serve.
+  # Without it, "base64Body is rejected" would be indistinguishable from
+  # "base64Body is not supported".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0014-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-base64-invalid-001/standard"},
+         "response": {"status": 200, "base64Body": "cGx1cyBhbmQgc2xhc2g="}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-base64-invalid-001/standard}
+    expect:
+      status: 200
+      body: "plus and slash"

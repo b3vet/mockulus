@@ -1,0 +1,134 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-null-definiteness-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design: WireMock
+# renders a near-miss table there and mockulus deliberately does not (deviation
+# #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Three stubs over the same key, differing only in how the expression reaches
+  # it. $.v names a single node; $..v and $.* cannot know in advance how many
+  # nodes they will find and so answer with a list of hits. The distinction is
+  # invisible in every document except the ones below, which is exactly why an
+  # implementation that always returns a list — or always returns a node —
+  # passes a casual test suite and gets these wrong (SPEC §6.7).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0001-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-null-definiteness-001/definite",
+                     "bodyPatterns": [{"matchesJsonPath": "$.v"}]},
+         "response": {"status": 200, "body": "definite",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0001-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-null-definiteness-001/descend",
+                     "bodyPatterns": [{"matchesJsonPath": "$..v"}]},
+         "response": {"status": 200, "body": "descend",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0001-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-null-definiteness-001/wildcard",
+                     "bodyPatterns": [{"matchesJsonPath": "$.*"}]},
+         "response": {"status": 200, "body": "wildcard",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A present, non-null value satisfies all three spellings. Everything below is
+  # read against this: the three stubs agree until the value is null.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/definite
+      body: '{"v":"x"}'
+    expect: {status: 200, body: "definite"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/descend
+      body: '{"v":"x"}'
+    expect: {status: 200, body: "descend"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/wildcard
+      body: '{"v":"x"}'
+    expect: {status: 200, body: "wildcard"}
+
+  # The asymmetry. A definite path hands back the node it selected, and a null
+  # node is not a match. The other two hand back a one-element list, and a list
+  # holding a null is not empty — so the same document answers differently
+  # depending on how the expression was written.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/definite
+      body: '{"v":null}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/descend
+      body: '{"v":null}'
+    expect: {status: 200, body: "descend"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/wildcard
+      body: '{"v":null}'
+    expect: {status: 200, body: "wildcard"}
+
+  # The null rule is about the result, not about the data reachable from it: a
+  # key named something else leaves the deep scan with nothing to list, while
+  # the wildcard still lists that key's null value.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/descend
+      body: '{"w":null}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/wildcard
+      body: '{"w":null}'
+    expect: {status: 200, body: "wildcard"}
+
+  # The deep scan finds the key at a depth the definite path never reaches,
+  # which separates "selects nothing" from "selects a null" one more time.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/definite
+      body: '{"a":{"v":null}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/descend
+      body: '{"a":{"v":null}}'
+    expect: {status: 200, body: "descend"}
+
+  # And with nothing to select at all, every spelling refuses. Without these the
+  # steps above would also pass for an implementation that answered "no" to any
+  # document it could not make sense of.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/definite
+      body: '{}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/descend
+      body: '{}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-null-definiteness-001/wildcard
+      body: '{}'
+    expect: {status: 404}

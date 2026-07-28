@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-combinators-nested-001
+behaviors: [B-MATCH-AND-OR-NOT, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A combinator's operands are matchers, and a combinator is a matcher, so one
+  # nests inside another. That is worth pinning rather than assuming: an
+  # implementation that read the operand list as a flat list of leaf criteria —
+  # which is all the single-level cases ever ask of it — would refuse this stub
+  # at registration or, worse, evaluate the inner document as an unknown and
+  # silently drop it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0013-4000-8000-000000000001",
+         "name": "or over an and",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinators-nested-001/or-of-and",
+                     "bodyPatterns": [{"or": [{"and": [{"contains": "a"},
+                                                       {"contains": "b"}]},
+                                              {"equalTo": "z"}]}]},
+         "response": {"status": 200, "body": "or-of-and",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0013-4000-8000-000000000002",
+         "name": "and over an and",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinators-nested-001/and-of-and",
+                     "bodyPatterns": [{"and": [{"and": [{"contains": "a"},
+                                                        {"contains": "b"}]},
+                                               {"contains": "c"}]}]},
+         "response": {"status": 200, "body": "and-of-and",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Three operands, because "at least two" is a floor rather than a count and an
+  # implementation that took the first two and stopped would answer the third
+  # branch below 404.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0013-4000-8000-000000000003",
+         "name": "or over three operands",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinators-nested-001/or-three",
+                     "bodyPatterns": [{"or": [{"equalTo": "a"},
+                                              {"equalTo": "b"},
+                                              {"equalTo": "c"}]}]},
+         "response": {"status": 200, "body": "or-three",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The inner conjunction satisfied.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-of-and, body: "ab"}
+    expect: {status: 200, body: "or-of-and"}
+
+  # Half of the inner conjunction is not the inner conjunction, and it is not
+  # the other branch either. Both of these would match if the nesting had been
+  # flattened into a single `or`.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-of-and, body: "a"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-of-and, body: "b"}
+    expect: {status: 404}
+
+  # The outer alternative, which is reachable without the inner one holding.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-of-and, body: "z"}
+    expect: {status: 200, body: "or-of-and"}
+
+  # It is an equality, so a body that merely starts with it does not satisfy it.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-of-and, body: "zz"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/and-of-and, body: "abc"}
+    expect: {status: 200, body: "and-of-and"}
+
+  # Each of the three operands dropped in turn — two of them live in the inner
+  # document and one in the outer, so a nesting that lost either level shows up
+  # here as a 200.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/and-of-and, body: "ab"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/and-of-and, body: "ac"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/and-of-and, body: "bc"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-three, body: "a"}
+    expect: {status: 200, body: "or-three"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-three, body: "b"}
+    expect: {status: 200, body: "or-three"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-three, body: "c"}
+    expect: {status: 200, body: "or-three"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-nested-001/or-three, body: "d"}
+    expect: {status: 404}

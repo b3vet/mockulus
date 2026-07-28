@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-math-request-001
+behaviors: [B-TPL-MATH-NUMBER, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # templating-math-001 pins the operators against literal operands. The
+  # interesting case for a mock server is the other one: everything a request
+  # carries is characters, so arithmetic on a request value only works if the
+  # helper reads the digits out of the model rather than refusing anything that
+  # is not already a number. That coercion is load-bearing — a stub totalling
+  # two query parameters is the canonical templated response.
+  #
+  # Every quotient below divides exactly and every operand is whole. That is a
+  # deliberate restriction: the two engines disagree about what a division that
+  # does not come out even should render, so a case pinning one would be
+  # asserting a divergence rather than the contract.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0017-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-math-request-001/total"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "sum={{math request.query.a '+' request.query.b}} diff={{math request.query.a '-' request.query.b}} prod={{math request.query.a 'x' request.query.b}} quot={{math request.query.a '/' request.query.b}} mod={{math request.query.a '%' request.query.b}} nested={{math (math request.query.a 'x' 2) '+' request.query.b}} fromjson={{math (jsonPath request.body '$.n') '+' 1}} fromhdr={{math request.headers.X-Count 'x' 3}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Three operands from three parts of the request — a query parameter, a
+  # selected JSON value and a header — because each reaches the helper as a
+  # different kind of model value, and a coercion written for one of them
+  # leaves the other two rendering an error or a zero.
+  #
+  # The operands are chosen so no two operators could be transposed and still
+  # produce this line, and `nested` renders a subexpression: an inner call
+  # evaluated as text would concatenate rather than multiply, and 18 is what
+  # separates the two.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-math-request-001/total?a=8&b=2
+      headers: {Content-Type: application/json, X-Count: "5"}
+      body: '{"n": 41}'
+    expect:
+      status: 200
+      body: "sum=10 diff=6 prod=16 quot=4 mod=0 nested=18 fromjson=42 fromhdr=15"
+
+  # A second request, so none of the eight is a constant. `fromjson` is
+  # computed from a JSON zero here, which is the value a coercion that treated
+  # "missing" and "zero" alike would render identically to an absent field —
+  # and 1 is what tells them apart.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-math-request-001/total?a=9&b=3
+      headers: {Content-Type: application/json, X-Count: "2"}
+      body: '{"n": 0}'
+    expect:
+      status: 200
+      body: "sum=12 diff=6 prod=27 quot=3 mod=0 nested=21 fromjson=1 fromhdr=6"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0017-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-math-request-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "sum={{math request.query.a '+' request.query.b}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-math-request-001/literal?a=8&b=2
+      headers: {Content-Type: application/json}
+      body: '{"n": 41}'
+    expect:
+      status: 200
+      body: "sum={{math request.query.a '+' request.query.b}}"

@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-method-001
+behaviors: [B-RESP-TRANSFORMERS, B-REQ-METHOD]
+wm: verified
+steps:
+  # One stub on `ANY`, so the method is free to vary while everything else the
+  # matcher looks at stays fixed. A stub registered per method would prove only
+  # that three stubs exist; this one has to read the method off the request it
+  # is answering.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0001-4000-8000-000000000001",
+         "request": {"method": "ANY", "urlPath": "/e2e/wmv-tmpl-request-method-001/echo"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "method={{request.method}} scheme={{request.scheme}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Three requests, three bodies, one stub. A model built once at registration
+  # — or a rendered body cached on the compiled stub — answers all three with
+  # whichever method arrived first, and no single-request assertion could see
+  # it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-tmpl-request-method-001/echo}
+    expect: {status: 200, body: "method=GET scheme=http"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-tmpl-request-method-001/echo}
+    expect: {status: 200, body: "method=POST scheme=http"}
+
+  # DELETE is here rather than a second body-bearing method because the method
+  # has to reach the template from the request line, not from anything about
+  # the payload.
+  - request: {port: mock, method: DELETE, path: /e2e/wmv-tmpl-request-method-001/echo}
+    expect: {status: 200, body: "method=DELETE scheme=http"}
+
+  # `scheme` stays "http" across all three, which is the point of carrying it:
+  # it is the one field of the model that must NOT move with the request, so a
+  # renderer that had started echoing the method into every slot fails here.
+
+  # The control. The same body, the same request, one field of the stub
+  # document removed — and the braces come back as text.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0001-4000-8000-000000000002",
+         "request": {"method": "ANY", "urlPath": "/e2e/wmv-tmpl-request-method-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "method={{request.method}} scheme={{request.scheme}}"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-tmpl-request-method-001/literal}
+    expect:
+      status: 200
+      body: "method={{request.method}} scheme={{request.scheme}}"

@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-contains-nonascii-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+#
+# Non-ASCII characters are written as escapes so the case says which code points
+# it means rather than trusting a font and an editor to agree.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A one-character operand outside ASCII. U+00E9 is two bytes in UTF-8 and the
+  # first of them, 0xC3, leads a whole neighbourhood of other letters — U+00E7
+  # among them. A substring search that compared bytes without keeping the
+  # character boundary would find the operand's lead byte inside a different
+  # letter and answer the second step below 200.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0008-4000-8000-000000000001",
+         "name": "contains a multi-byte operand",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-contains-nonascii-001/accent",
+                     "bodyPatterns": [{"contains": "\u00e9"}]},
+         "response": {"status": 200, "body": "accent",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-contains-nonascii-001/accent
+      body: "caf\u00e9"
+    expect: {status: 200, body: "accent"}
+
+  # U+00E7 shares its lead byte with U+00E9 and differs in the second. This is
+  # the step a byte-wise search gets wrong.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-contains-nonascii-001/accent
+      body: "gar\u00e7on"
+    expect: {status: 404}
+
+  # And the unaccented letter is not the accented one, which is the ordinary
+  # control: the 404 above is about the second byte, not about the operand
+  # being unmatchable.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-contains-nonascii-001/accent
+      body: "cafe"
+    expect: {status: 404}

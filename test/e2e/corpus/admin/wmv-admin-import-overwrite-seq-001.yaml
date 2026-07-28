@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-overwrite-seq-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+wm: verified
+steps:
+  # Two stubs on one path at equal priority, oldest first, so the newer one
+  # serves it. That order is what the overwrites below must leave alone.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0014-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-seq-001/lane"},
+         "response": {"status": 200, "body": "older-v1"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0014-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-seq-001/lane"},
+         "response": {"status": 200, "body": "newer-v1"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-seq-001/lane}
+    expect: {status: 200, body: "newer-v1"}
+
+  # OVERWRITE replaces the older stub in place. Re-importing a fixture file
+  # after editing one mapping in it is the everyday case, and it must not
+  # repoint traffic: an import that deleted and re-added would make this stub
+  # the newest on the path and change which one answers, with nothing in either
+  # document to show for it.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0014-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-seq-001/lane"},
+            "response": {"status": 200, "body": "older-v2"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-seq-001/lane}
+    expect: {status: 200, body: "newer-v1"}
+
+  # The replacement did happen, which is what stops the step above from also
+  # passing against an import that quietly did nothing at all.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0014-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0014-4000-8000-000000000001"
+        uuid: "a1000008-0014-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-overwrite-seq-001/lane}
+        response: {status: 200, body: "older-v2"}
+
+  # The symmetric half: overwriting the winner does not demote it either, so the
+  # preservation is of each stub's own place and not of "whatever was there
+  # first". The served answer follows the new content immediately.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0014-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-overwrite-seq-001/lane"},
+            "response": {"status": 200, "body": "newer-v2"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-seq-001/lane}
+    expect: {status: 200, body: "newer-v2"}
+
+  # With the winner gone the older stub serves — carrying the edit it received
+  # while it was losing, which is the other half of "the import changed content,
+  # not position".
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0014-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-overwrite-seq-001/lane}
+    expect: {status: 200, body: "older-v2"}

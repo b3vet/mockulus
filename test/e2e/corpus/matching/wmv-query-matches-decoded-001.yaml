@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-matches-decoded-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A regex over a query parameter is applied to the decoded value and has to
+# match the whole of it. The character class here admits letters and spaces and
+# nothing else, which makes a single stub answer both questions: a percent
+# escape left undecoded would put a `%` in front of the pattern, and a search
+# rather than a full match would forgive the trailing digit.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000024",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-matches-decoded-001/letters",
+                     "queryParameters": {"q": {"matches": "[a-z ]+"}}},
+         "response": {"status": 200, "body": "letters", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            q: {matches: "[a-z ]+"}
+
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=hello"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "letters"
+
+  # Both wire spellings of the space are admitted, because by the time the
+  # pattern runs there is a space there and nothing else.
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=hello+world"}
+    expect: {status: 200, body: "letters"}
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=hello%20world"}
+    expect: {status: 200, body: "letters"}
+
+  # An escaped plus decodes to a character the class does not admit, so this is
+  # a refusal on the decoded value — and it is also the step that shows the two
+  # above were not passing merely because `%` and `+` happened to be tolerated.
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=hello%2Bworld"}
+    expect: {status: 404}
+
+  # The pattern is anchored to the whole value, so a satisfying prefix is not
+  # enough. A one-sided anchor would pass one of these two and not the other.
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=hello1"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=1hello"}
+    expect: {status: 404}
+
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=Hello"}
+    expect: {status: 404}
+
+  # And the regex is offered every value of a repeated parameter, like any other
+  # matcher: the one that satisfies it need not be the first.
+  - request: {method: GET, path: "/e2e/wmv-query-matches-decoded-001/letters?q=1&q=hello"}
+    expect: {status: 200, body: "letters"}

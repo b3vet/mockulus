@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-optin-helpers-001
+behaviors: [B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # templating-optin-001 pins the opt-in against plain interpolation. The
+  # sharper form of the same question is a body full of helper calls and block
+  # constructs, because that is the payload most likely to arrive by accident:
+  # a fixture captured from a service that templates its own responses, or a
+  # document describing a template to a client.
+  #
+  # This document and the one below differ in exactly one field.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0023-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-optin-helpers-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Sum": "{{math 2 '+' 2}}"},
+                      "body": "sum={{math 2 '+' 2}} picked={{jsonPath request.body '$.x'}} block={{#if request.query.tier}}gold{{/if}}"}}
+    expect: {status: 201}
+
+  # Nothing runs. The arithmetic is not evaluated, the path expression is not
+  # applied to the payload, and the block is not taken — in the header as well
+  # as in the body. An engine that treated a helper call as evidence of intent
+  # would rewrite this fixture into an answer its author never wrote.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-optin-helpers-001/literal?tier=gold
+      headers: {Content-Type: application/json}
+      body: '{"x": 1}'
+    expect:
+      status: 200
+      headers: {X-Sum: "{{math 2 '+' 2}}"}
+      body: "sum={{math 2 '+' 2}} picked={{jsonPath request.body '$.x'}} block={{#if request.query.tier}}gold{{/if}}"
+
+  # The same document with the transformer named. Every construct resolves,
+  # which is what makes the step above a statement about the opt-in rather than
+  # about a body nothing could have rendered.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0023-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-optin-helpers-001/rendered"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Sum": "{{math 2 '+' 2}}"},
+                      "body": "sum={{math 2 '+' 2}} picked={{jsonPath request.body '$.x'}} block={{#if request.query.tier}}gold{{/if}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-optin-helpers-001/rendered?tier=gold
+      headers: {Content-Type: application/json}
+      body: '{"x": 1}'
+    expect:
+      status: 200
+      headers: {X-Sum: "4"}
+      body: "sum=4 picked=1 block=gold"
+
+  # And the block's other branch, so `block=gold` above is a branch that was
+  # taken rather than text that survived.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-optin-helpers-001/rendered
+      headers: {Content-Type: application/json}
+      body: '{"x": 2}'
+    expect:
+      status: 200
+      headers: {X-Sum: "4"}
+      body: "sum=4 picked=2 block="

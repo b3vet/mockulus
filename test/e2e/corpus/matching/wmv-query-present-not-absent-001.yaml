@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-present-not-absent-001
+behaviors: [B-MATCH-ABSENT, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `{"not": {"absent": true}}` is the supported spelling of "this parameter must
+# be there, whatever it says" — `{"absent": false}` is rejected at registration
+# instead of being coerced (deviation #23). What makes the query flavour worth
+# its own case is that a query has three spellings of presence and only one of
+# absence, so the criterion has to hold for `?trace=1`, `?trace=` and a bare
+# `?trace` alike while still failing when the parameter is simply not there.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000017",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-present-not-absent-001/present",
+                     "queryParameters": {"trace": {"not": {"absent": true}}}},
+         "response": {"status": 200, "body": "present", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            trace: {not: {absent: true}}
+
+  - request: {method: GET, path: "/e2e/wmv-query-present-not-absent-001/present?trace=1"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "present"
+
+  # A parameter bound to the empty string is present. Inferring absence from an
+  # empty value is the shortcut this step exists to refuse.
+  - request: {method: GET, path: "/e2e/wmv-query-present-not-absent-001/present?trace="}
+    expect: {status: 200, body: "present"}
+
+  # And so is a parameter written with no `=` at all, which carries the empty
+  # string too (SPEC §5.2).
+  - request: {method: GET, path: "/e2e/wmv-query-present-not-absent-001/present?trace"}
+    expect: {status: 200, body: "present"}
+
+  # The one shape that is absence.
+  - request: {method: GET, path: /e2e/wmv-query-present-not-absent-001/present}
+    expect: {status: 404}
+
+  # Another parameter being present says nothing about this one, so the
+  # criterion is per name rather than "the query is non-empty".
+  - request: {method: GET, path: "/e2e/wmv-query-present-not-absent-001/present?other=1"}
+    expect: {status: 404}
+
+  # A repeated parameter is still a present one.
+  - request: {method: GET, path: "/e2e/wmv-query-present-not-absent-001/present?trace=1&trace=2"}
+    expect: {status: 200, body: "present"}

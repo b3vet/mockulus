@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-priority-over-reinsertion-001
+behaviors: [B-STUB-PRIORITY, B-ADMIN-MAPPINGS-ID-DELETE, B-ADMIN-MAPPINGS-POST]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# §5.3 orders by priority first and sequence second, and the two keys are only
+# distinguishable when they disagree. The usual way to make them disagree is to
+# register the strong stub first, which leaves the weak stub newer by one place.
+# This case pushes the disagreement as far as it goes: the weak stub is deleted
+# and registered again, so by the last comparison it is the newest mapping in
+# the whole deployment and the strong stub has not moved since the beginning.
+# An implementation that compared the two keys in the wrong order, or that let a
+# late arrival short-circuit the comparison, is wrong here by the widest margin
+# the two keys can be made to differ by.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0006-4000-8000-000000000001",
+         "priority": 1,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-over-reinsertion-001/lane"},
+         "response": {"status": 200, "body": "strong",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 1}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0006-4000-8000-000000000002",
+         "priority": 9,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-over-reinsertion-001/lane"},
+         "response": {"status": 200, "body": "weak",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset: {priority: 9}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-over-reinsertion-001/lane}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "strong"
+
+  # The weak stub goes away and comes straight back, unchanged apart from where
+  # it now sits in the insertion order.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0006-4000-8000-000000000002}
+    expect: {status: 200}
+
+  # With it gone the strong stub is the only candidate, which is what turns the
+  # step after the re-registration into an assertion about precedence rather than
+  # about the delete having worked.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-over-reinsertion-001/lane}
+    expect: {status: 200, body: "strong"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0006-4000-8000-000000000002",
+         "priority": 9,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-priority-over-reinsertion-001/lane"},
+         "response": {"status": 200, "body": "weak, and newest",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Nothing about being newest helps a stub that is outranked.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-over-reinsertion-001/lane}
+    expect: {status: 200, body: "strong"}
+
+  # And the body proves the re-registered document is the one in the snapshot,
+  # not a stale copy of the one that was deleted: it answers with the text only
+  # the second registration carried.
+  - admin: {method: DELETE, path: /__admin/mappings/a100000a-0006-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-priority-over-reinsertion-001/lane}
+    expect: {status: 200, body: "weak, and newest"}

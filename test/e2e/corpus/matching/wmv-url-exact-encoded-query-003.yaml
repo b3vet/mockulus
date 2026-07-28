@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-exact-encoded-query-003
+behaviors: [B-REQ-URL, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `a%20b`, `a+b` and `a%2Bb` are three spellings of two values, and a query
+  # parser resolves them to two. `url` is not a query parser: it compares the
+  # target as it arrived, so all three stay distinct and a stub written against
+  # one of them refuses the other two. That is the property a client library
+  # change breaks — swap the encoder and every `url` stub in the suite stops
+  # matching — so it is worth having a case that says so out loud.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0020-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-exact-encoded-query-003/q?v=a%20b"},
+         "response": {"status": 200, "body": "percent-space", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-url-exact-encoded-query-003/q?v=a%20b"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0020-4000-8000-000000000002",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-exact-encoded-query-003/q?v=a+b"},
+         "response": {"status": 200, "body": "plus-space", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The two spellings a form encoder treats as one value select different stubs.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-encoded-query-003/q?v=a%20b"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "percent-space"
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-encoded-query-003/q?v=a+b"}
+    expect: {status: 200, body: "plus-space"}
+
+  # The third spelling is a genuinely different value — an encoded plus is a
+  # plus — and it reaches neither stub. It is the control that stops the two
+  # steps above from being explained by a server that had simply stopped
+  # decoding: such a server must still refuse this one.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-encoded-query-003/q?v=a%2Bb"}
+    expect: {status: 404}

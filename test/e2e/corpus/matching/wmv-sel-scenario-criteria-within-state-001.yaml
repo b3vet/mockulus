@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-criteria-within-state-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE, B-REQ-HEADERS, B-STUB-PRIORITY]
+wm: verified
+# Every step is served, so every body is diffed.
+#
+# A scenario state usually gets one stub in the corpus, which leaves it looking
+# like a switch that selects a response. It is not: the gate narrows the
+# candidate set and the ordinary criteria and precedence rules then select
+# inside it, exactly as they would if the scenario were not there.
+#
+# Four stubs share one path here, two per state, and within each state they are
+# told apart by a header. Both halves have to hold at once for the transcript to
+# come out right — a server that let the gate pick the stub would ignore the
+# header, and one that let the header pick it would ignore the state — and each
+# of the four answers names the single stub that satisfies both.
+steps:
+  # Before the flow moves: the header-bearing stub is the stronger of the pair.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0020-4000-8000-000000000001",
+         "priority": 1,
+         "scenarioName": "wmv-sel-scenario-criteria-within-state-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-scenario-criteria-within-state-001/desk",
+                     "headers": {"X-Role": {"equalTo": "agent"}}},
+         "response": {"status": 200, "body": "agent, before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        priority: 1
+        requiredScenarioState: "Started"
+        request:
+          headers: {X-Role: {equalTo: "agent"}}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0020-4000-8000-000000000002",
+         "priority": 9,
+         "scenarioName": "wmv-sel-scenario-criteria-within-state-001",
+         "requiredScenarioState": "Started",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-scenario-criteria-within-state-001/desk"},
+         "response": {"status": 200, "body": "guest, before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # And the same pair for the state after, so that neither state can borrow the
+  # other's answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0020-4000-8000-000000000003",
+         "priority": 1,
+         "scenarioName": "wmv-sel-scenario-criteria-within-state-001",
+         "requiredScenarioState": "after",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-scenario-criteria-within-state-001/desk",
+                     "headers": {"X-Role": {"equalTo": "agent"}}},
+         "response": {"status": 200, "body": "agent, after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0020-4000-8000-000000000004",
+         "priority": 9,
+         "scenarioName": "wmv-sel-scenario-criteria-within-state-001",
+         "requiredScenarioState": "after",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-scenario-criteria-within-state-001/desk"},
+         "response": {"status": 200, "body": "guest, after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0020-4000-8000-000000000005",
+         "scenarioName": "wmv-sel-scenario-criteria-within-state-001",
+         "newScenarioState": "after",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-criteria-within-state-001/advance"},
+         "response": {"status": 200, "body": "advanced",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # In the initial state the header decides between the two eligible stubs. The
+  # two stubs gated on `after` are the newest on the path, so a server that
+  # skipped the gate would answer one of those here.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-scenario-criteria-within-state-001/desk
+      headers: {X-Role: agent}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "agent, before"
+
+  # Without the header the stronger stub does not match, so selection walks past
+  # it to the weaker one in the same state — not to the header-bearing stub of
+  # the other state, which is the mistake a gate applied after the criteria
+  # would make.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-criteria-within-state-001/desk}
+    expect: {status: 200, body: "guest, before"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-criteria-within-state-001/advance}
+    expect: {status: 200, body: "advanced"}
+
+  # The same two requests, one state later, and the header still decides — the
+  # gate changed which pair is eligible and nothing else about the selection.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-scenario-criteria-within-state-001/desk
+      headers: {X-Role: agent}
+    expect: {status: 200, body: "agent, after"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-criteria-within-state-001/desk}
+    expect: {status: 200, body: "guest, after"}
+
+  # A header value neither stub claims falls through to the open stub of the
+  # current state, which is the same walk an ungated path would do.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-sel-scenario-criteria-within-state-001/desk
+      headers: {X-Role: auditor}
+    expect: {status: 200, body: "guest, after"}

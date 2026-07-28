@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-seq-vs-recreate-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-ADMIN-MAPPINGS-POST
+  - B-ADMIN-MAPPINGS-ID-DELETE
+wm: verified
+steps:
+  # The setup both halves of the case share: two stubs on one path, the newer
+  # one serving it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0015-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-seq-vs-recreate-001/lane"},
+         "response": {"status": 200, "body": "older-v1"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0015-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-seq-vs-recreate-001/lane"},
+         "response": {"status": 200, "body": "newer"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-seq-vs-recreate-001/lane}
+    expect: {status: 200, body: "newer"}
+
+  # First half: replace the older stub through import. It keeps its place.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0015-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-seq-vs-recreate-001/lane"},
+            "response": {"status": 200, "body": "older-v2"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-seq-vs-recreate-001/lane}
+    expect: {status: 200, body: "newer"}
+
+  # Second half — the control, and the reason this case exists next to the plain
+  # preservation one. Spelling the same edit as a delete and a create *is* a new
+  # registration, and it does take the newest place, so the mechanism the import
+  # declined to use is demonstrably available. Without this the case would pass
+  # just as well against a server that had no insertion order at all.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0015-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0015-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-seq-vs-recreate-001/lane"},
+         "response": {"status": 200, "body": "older-v3"}}
+    expect: {status: 201}
+
+  # Same id, same path, same equal priority, a different way of getting the new
+  # document in — and now it wins. The two halves differ in nothing else, so the
+  # difference in the answer is exactly the `seq` preservation the import
+  # promises.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-seq-vs-recreate-001/lane}
+    expect: {status: 200, body: "older-v3"}

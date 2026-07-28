@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-codecs-request-001
+behaviors: [B-TPL-BASE64-URLENCODE, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # templating-base64-urlencode-001 pins the two codecs against literal
+  # operands. This case gives them request values instead, which is the form
+  # every real stub uses and the one where the operand is not a string the
+  # engine already had: a query parameter reaches the helper through the
+  # request model, and a model that handed it over as anything other than plain
+  # characters shows up as a different encoding.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0015-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-codecs-request-001/echo"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "enc={{urlEncode request.query.q}} dec={{urlEncode request.query.e decode=true}} b64={{base64 request.query.tier}} rt={{base64 (base64 request.query.tier) decode=true}} bodyb64={{base64 request.body}} hdr={{base64 request.headers.X-Trace}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `q` arrives percent-encoded on the wire and reaches the template decoded,
+  # so `enc` re-encoding it is the round trip that pins where decoding happens:
+  # a model that handed the raw characters over renders "a%2520b%252Fc" here,
+  # and one that decoded twice renders a bare slash.
+  #
+  # `e` is encoded twice on the wire, so its model value still carries a
+  # percent sequence and `decode=true` has something left to do. Without that
+  # the decode option is asserted against a value that was already decoded and
+  # a helper ignoring the option passes.
+  #
+  # `rt` is the base64 round trip on a request value, and `bodyb64`/`hdr` are
+  # the other two places a value can come from. All three matter because the
+  # model represents a header and a query parameter as something richer than a
+  # string, and a helper that stringified them differently from the way the
+  # body prints them would encode a different operand.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-codecs-request-001/echo?q=a%20b%2Fc&e=a%252Fb&tier=go-ld
+      headers: {Content-Type: text/plain, X-Trace: "tr-1"}
+      body: "ping-payload"
+    expect:
+      status: 200
+      body: "enc=a+b%2Fc dec=a/b b64=Z28tbGQ= rt=go-ld bodyb64=cGluZy1wYXlsb2Fk hdr=dHItMQ=="
+
+  # A second request, so none of the six is a constant. Both encoded values are
+  # a length that pads here where the first request's were lengths that did
+  # not, and `q` arrives with a plus rather than a percent sequence — the other
+  # spelling of a space in a query string, which a decoder built only for
+  # percent escapes leaves as a literal plus.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-codecs-request-001/echo?q=x+y&e=b%25201&tier=gold
+      headers: {Content-Type: text/plain, X-Trace: "tr-2"}
+      body: "pongs"
+    expect:
+      status: 200
+      body: "enc=x+y dec=b 1 b64=Z29sZA== rt=gold bodyb64=cG9uZ3M= hdr=dHItMg=="
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0015-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-codecs-request-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "b64={{base64 request.query.tier}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-codecs-request-001/literal?tier=go-ld
+      headers: {Content-Type: text/plain}
+      body: "ping-payload"
+    expect:
+      status: 200
+      body: "b64={{base64 request.query.tier}}"

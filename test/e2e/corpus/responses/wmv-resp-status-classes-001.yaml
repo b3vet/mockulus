@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-status-classes-001
+behaviors:
+  - B-RESP-STATUS
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2: every status below reaches the wire
+# unchanged on both servers, and so does every header, including the ones a
+# framework is most tempted to manage on the application's behalf.
+wm: verified
+# One step is a deliberate miss, and the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A 405 is the status a framework is most likely to synthesise for itself, and
+  # `Allow` the header it is most likely to compute. Both belong to the stub
+  # here: the mock exists so a client can be shown the answer its author chose.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0001-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-classes-001/notallowed"},
+         "response": {"status": 405, "body": "nope",
+                      "headers": {"Allow": "GET, HEAD", "Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response: {status: 405, headers: {Allow: "GET, HEAD"}}
+
+  # A status whose IANA phrase differs by a word between Go and Jetty, which is
+  # exactly why the claim here is about the code and the payload rather than
+  # about the reason phrase: the phrase is the server's until a stub names one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0001-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-classes-001/legal"},
+         "response": {"status": 451, "body": "legal",
+                      "headers": {"Link": "<https://example.com/policy>; rel=\"blocked-by\"",
+                                  "Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The retry advice on a 503 is the stub's too. A server that dropped it would
+  # leave a client's back-off path untestable, which is one of the two or three
+  # things people stand a mock server up for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0001-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-classes-001/busy"},
+         "response": {"status": 503, "body": "busy",
+                      "headers": {"Retry-After": "120", "Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # And a status outside the range any library has a constant for, to rule out
+  # the reading that only well-known codes survive.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0001-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-status-classes-001/teapot"},
+         "response": {"status": 418, "body": "short and stout",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-classes-001/notallowed}
+    expect:
+      status: 405
+      headers: {Allow: "GET, HEAD", Content-Type: text/plain}
+      body: "nope"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-classes-001/legal}
+    expect:
+      status: 451
+      headers: {Link: '<https://example.com/policy>; rel="blocked-by"'}
+      body: "legal"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-classes-001/busy}
+    expect:
+      status: 503
+      headers: {Retry-After: "120"}
+      body: "busy"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-classes-001/teapot}
+    expect:
+      status: 418
+      body: "short and stout"
+
+  # The control that keeps the four above from being a coincidence: none of
+  # these statuses is what the instance answers by default. An unregistered
+  # sibling path is a 404, so the 405 came from the stub rather than from the
+  # server's own opinion about the method.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-classes-001/unregistered}
+    expect: {status: 404}
+
+  # A second control from the other direction: the headers each stub declared
+  # stay on that stub. Retry-After belongs to the 503 and to nothing else, so a
+  # header set leaking across the snapshot shows up here rather than in a
+  # deployment three months from now.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-status-classes-001/teapot}
+    expect:
+      status: 418
+      header_absent: [Retry-After, Allow, Link]

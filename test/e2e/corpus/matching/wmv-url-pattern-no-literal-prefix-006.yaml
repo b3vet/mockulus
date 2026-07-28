@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pattern-no-literal-prefix-006
+behaviors: [B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Pattern stubs are prefiltered by the leading literal text every match must
+  # start with (SPEC §6.3), which makes the patterns that have no such text the
+  # ones the prefilter can silently lose. A stub skipped by the prefilter is
+  # never evaluated at all, so the symptom is a 404 that looks exactly like a
+  # pattern that did not match — the failure mode is invisible unless a case
+  # writes the patterns where the prefix is empty and asserts they still serve.
+
+  # Nothing at all is required at the start: `.*` can consume any prefix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0014-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPattern": ".*/e2e/wmv-url-pattern-no-literal-prefix-006/tail"},
+         "response": {"status": 200, "body": "leading-star", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: ".*/e2e/wmv-url-pattern-no-literal-prefix-006/tail"}
+
+  # Two possible starts, so no single string is required either — the same hole
+  # reached through a group rather than a closure.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0014-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPattern": "(?:/e2e/wmv-url-pattern-no-literal-prefix-006/one|/e2e/wmv-url-pattern-no-literal-prefix-006/two)/tail"},
+         "response": {"status": 200, "body": "branching", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The closure matching nothing, which is the case a prefilter reading the
+  # pattern left to right is most likely to get right by accident.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-no-literal-prefix-006/tail}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "leading-star"
+
+  # The closure earning its keep: a prefilter that had decided this stub starts
+  # with `/e2e/…` would still find that text here, so the assertion is about the
+  # pattern being evaluated rather than about the prefix being absent.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-no-literal-prefix-006/x/e2e/wmv-url-pattern-no-literal-prefix-006/tail}
+    expect: {status: 200, body: "leading-star"}
+
+  # Both branches of the group serve, so neither was dropped.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-no-literal-prefix-006/one/tail}
+    expect: {status: 200, body: "branching"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-no-literal-prefix-006/two/tail}
+    expect: {status: 200, body: "branching"}
+
+  # And a third branch was not invented: the group is a closed alternation, not
+  # a wildcard segment. Without this step a stub that had degraded to "anything
+  # ending in /tail" would pass every assertion above.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-no-literal-prefix-006/three/tail}
+    expect: {status: 404}

@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-dot-segment-002
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Dot segments are the other half of the normalization question: a resolver
+  # would rewrite `/a/../b` to `/b` before anyone looked at it, and a matching
+  # engine that compares the target as received would not. The distinction is
+  # worth an assertion because it decides whether a client can reach a stub by a
+  # path the stub's author never wrote — the traversal shape of the same bug.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0025-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-dot-segment-002/a/../b"},
+         "response": {"status": 200, "body": "dot-segments-kept", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-dot-segment-002/a/../b"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0025-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-dot-segment-002/b"},
+         "response": {"status": 200, "body": "resolved-target", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The unresolved path reaches the stub written with it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-dot-segment-002/a/../b}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "dot-segments-kept"
+
+  # And the resolved one reaches the other. A server that resolved would answer
+  # both of these with the same body.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-dot-segment-002/b}
+    expect: {status: 200, body: "resolved-target"}
+
+  # The single-dot form is a third distinct path, claimed by neither stub.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-dot-segment-002/./b}
+    expect: {status: 404}

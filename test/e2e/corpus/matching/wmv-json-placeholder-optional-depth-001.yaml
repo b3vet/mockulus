@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-placeholder-optional-depth-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Two ${json-unit.ignore-element} members, one nested and one at the root, so
+  # the optionality has to be a property of the member rather than of the top
+  # level. The document around them stays strict, which is what separates this
+  # from ignoreExtraElements: the stub names exactly which members it will do
+  # without.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0018-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-optional-depth-001/optional",
+                     "bodyPatterns": [{"equalToJson": "{\"o\":{\"a\":1,\"b\":\"${json-unit.ignore-element}\"},\"p\":\"${json-unit.ignore-element}\"}"}]},
+         "response": {"status": 200, "body": "optional",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Both optional members absent at once.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"o":{"a":1}}'
+    expect: {status: 200, body: "optional"}
+
+  # Both present, holding values of unrelated types — including a whole subtree
+  # under the root-level one.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"o":{"a":1,"b":"anything"},"p":{"deep":[1,2]}}'
+    expect: {status: 200, body: "optional"}
+
+  # One of each, so neither placeholder's answer depends on the other's.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"o":{"a":1,"b":null}}'
+    expect: {status: 200, body: "optional"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"o":{"a":1},"p":0}'
+    expect: {status: 200, body: "optional"}
+
+  # The required sibling inside the nested object is still required: making one
+  # member optional must not make its object's contents optional.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"o":{"b":7}}'
+    expect: {status: 404}
+
+  # And the object holding the optional member is itself required, so the
+  # optionality does not climb.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"p":1}'
+    expect: {status: 404}
+
+  # Nor is it a licence for members the stub never named: this is not
+  # ignoreExtraElements by another spelling.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"o":{"a":1},"q":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-optional-depth-001/optional
+      body: '{"o":{"a":1,"c":1}}'
+    expect: {status: 404}

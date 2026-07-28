@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-trailing-slash-pattern-003
+behaviors: [B-REQ-URLPATHPATTERN, B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A stub author who wants both spellings of a path has to ask for both, and
+  # `/?` is how: an optional slash inside a fully anchored pattern. The exact
+  # criterion below is the control that gives that its meaning — the two stubs
+  # differ only in which of the two mechanisms states the path.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0003-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/wmv-url-trailing-slash-pattern-003/both/?"},
+         "response": {"status": 200, "body": "both", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPathPattern: "/e2e/wmv-url-trailing-slash-pattern-003/both/?"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0003-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-trailing-slash-pattern-003/one"},
+         "response": {"status": 200, "body": "one", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-pattern-003/both}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "both"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-pattern-003/both/}
+    expect: {status: 200, body: "both"}
+
+  # `?` makes the slash optional, not the tail after it: the pattern is still
+  # anchored at the end, so anything past the slash is a non-match.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-pattern-003/both/extra}
+    expect: {status: 404}
+
+  # And optional in that one position only — it does not become a wildcard
+  # separator that a longer literal segment can satisfy.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-pattern-003/bothx}
+    expect: {status: 404}
+
+  # The control: an exact urlPath admits exactly the one spelling it was
+  # written with, which is why the pattern above has to be written at all.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-pattern-003/one}
+    expect: {status: 200, body: "one"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-trailing-slash-pattern-003/one/}
+    expect: {status: 404}

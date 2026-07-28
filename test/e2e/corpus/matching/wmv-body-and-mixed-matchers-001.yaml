@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-and-mixed-matchers-001
+behaviors:
+  - B-MATCH-AND-OR-NOT
+  - B-MATCH-CONTAINS-DOESNOTCONTAIN
+  - B-MATCH-MATCHES-DOESNOTMATCH
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An `and` whose operands are three different kinds of matcher — a substring
+  # test, a regular expression and a negative substring test. Same-kind operands
+  # leave one bug invisible: a combinator that compiled its operands through a
+  # single matcher path would still answer correctly as long as every operand
+  # took that path. Each of the three bodies below fails exactly one of the
+  # three operands and satisfies the other two, so a combinator that dropped any
+  # one of them answers that body 200.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0012-4000-8000-000000000001",
+         "name": "and over three kinds of matcher",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-and-mixed-matchers-001/all",
+                     "bodyPatterns": [{"and": [{"contains": "a"},
+                                               {"matches": "[a-z]+"},
+                                               {"doesNotContain": "z"}]}]},
+         "response": {"status": 200, "body": "all",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control carrying only the first operand, so the 404s below can be
+  # attributed to the operand that rejects each body rather than to the body
+  # being unmatchable.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0012-4000-8000-000000000002",
+         "name": "the first operand alone",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-and-mixed-matchers-001/first-only",
+                     "bodyPatterns": [{"contains": "a"}]},
+         "response": {"status": 200, "body": "first-only",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-and-mixed-matchers-001/all, body: "abc"}
+    expect: {status: 200, body: "all"}
+
+  # Rejected by the doesNotContain operand only.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-and-mixed-matchers-001/all, body: "abz"}
+    expect: {status: 404}
+
+  # Rejected by the regular expression only — the digit is outside the class,
+  # and `matches` is anchored, so the whole body has to be lower-case letters.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-and-mixed-matchers-001/all, body: "ab1"}
+    expect: {status: 404}
+
+  # Rejected by the contains operand only.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-and-mixed-matchers-001/all, body: "bcd"}
+    expect: {status: 404}
+
+  # The control accepts the two bodies the other operands rejected, and rejects
+  # the one they accepted, which is the pattern that shows each 404 above came
+  # from a different operand.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-and-mixed-matchers-001/first-only, body: "abz"}
+    expect: {status: 200, body: "first-only"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-and-mixed-matchers-001/first-only, body: "ab1"}
+    expect: {status: 200, body: "first-only"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-and-mixed-matchers-001/first-only, body: "bcd"}
+    expect: {status: 404}

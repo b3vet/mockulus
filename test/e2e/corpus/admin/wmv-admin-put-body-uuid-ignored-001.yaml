@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-put-body-uuid-ignored-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-STUB-ID-UUID
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0006-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-body-uuid-ignored-001/x"},
+         "response": {"status": 200, "body": "x-v1"}}
+    expect: {status: 201}
+
+  # The replacement names a different identity, and spells it `uuid` rather than
+  # `id`. The two spellings are aliases of one field, so the rule that the path
+  # wins cannot be a property of the string "id": a handler that only knew to
+  # ignore the `id` key would rename the stub here, and the client would be left
+  # holding an id that addresses nothing.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0006-4000-8000-000000000001
+      body: |
+        {"uuid": "a1000008-0006-4000-8000-000000000099",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-body-uuid-ignored-001/x"},
+         "response": {"status": 200, "body": "x-v2"}}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0006-4000-8000-000000000001"
+        uuid: "a1000008-0006-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-put-body-uuid-ignored-001/x}
+        response: {status: 200, body: "x-v2"}
+
+  # The edit landed under the path id, so the body id was ignored rather than
+  # the whole call being treated as a mismatch.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0006-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0006-4000-8000-000000000001"
+        uuid: "a1000008-0006-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-put-body-uuid-ignored-001/x}
+        response: {status: 200, body: "x-v2"}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0006-4000-8000-000000000099}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # The stronger form of the previous step, on the surface a bug would live on:
+  # if the PUT had honoured the body's uuid — even by leaving a second index
+  # entry behind — that identity would now be taken and this create would be
+  # refused 422 code 109. A 201 is only reachable if the ignored uuid was never
+  # written anywhere.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"uuid": "a1000008-0006-4000-8000-000000000099",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-body-uuid-ignored-001/y"},
+         "response": {"status": 200, "body": "y-fresh"}}
+    expect:
+      status: 201
+      body_json:
+        id: "a1000008-0006-4000-8000-000000000099"
+        uuid: "a1000008-0006-4000-8000-000000000099"
+        request: {method: GET, urlPath: /e2e/wmv-admin-put-body-uuid-ignored-001/y}
+        response: {status: 200, body: "y-fresh"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-body-uuid-ignored-001/y}
+    expect: {status: 200, body: "y-fresh"}

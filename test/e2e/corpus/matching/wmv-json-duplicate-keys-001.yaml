@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-duplicate-keys-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # JSON says nothing binding about a repeated member name, so every parser
+  # picks a rule and clients that concatenate fragments produce such bodies by
+  # accident. Whichever rule holds, a stub's verdict has to follow it
+  # consistently: the two requests below carry the same two values under the
+  # same name in the two possible orders, and they must not both match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0025-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-duplicate-keys-001/doc",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":2}"}]},
+         "response": {"status": 200, "body": "doc",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-duplicate-keys-001/doc
+      body: '{"a":2}'
+    expect: {status: 200, body: "doc"}
+
+  # The last occurrence is the member's value, so the expected 2 is found.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-duplicate-keys-001/doc
+      body: '{"a":1,"a":2}'
+    expect: {status: 200, body: "doc"}
+
+  # And the same two values the other way round are a mismatch, which is what
+  # makes the step above an assertion about the rule rather than about a parser
+  # that happens to keep whichever value it saw with the expected one.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-duplicate-keys-001/doc
+      body: '{"a":2,"a":1}'
+    expect: {status: 404}
+
+  # A repeated member is not two members: the document has one `a`, so nothing
+  # here counts as an extra element that a strict comparison would refuse.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-duplicate-keys-001/doc
+      body: '{"a":2,"a":2}'
+    expect: {status: 200, body: "doc"}

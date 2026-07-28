@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-matches-complement-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-MATCH-ABSENT, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The same pattern under both spellings, and every body sent to both stubs. Over
+# a present body the two answers must be opposite; over an absent one both hold,
+# because there is no value for the pattern to match. Stating the negative form
+# as its own criterion rather than as `not matches` is what makes that last row
+# expressible at all.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000a-4000-8000-000000000001",
+         "name": "matches digits",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-matches-complement-001/positive",
+                     "bodyPatterns": [{"matches": "[0-9]+"}]},
+         "response": {"status": 200, "body": "positive",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000a-4000-8000-000000000002",
+         "name": "doesNotMatch digits",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-matches-complement-001/negative",
+                     "bodyPatterns": [{"doesNotMatch": "[0-9]+"}]},
+         "response": {"status": 200, "body": "negative",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/positive, body: "123"}
+    expect: {status: 200, body: "positive"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/negative, body: "123"}
+    expect: {status: 404}
+
+  # "12a" is where the full-match rule and the complement meet. The pattern does
+  # not match the whole body, so the positive form fails and the negative form
+  # holds — and it holds even though the body plainly contains digits, which is
+  # what a search-style doesNotMatch would have refused.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/positive, body: "12a"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/negative, body: "12a"}
+    expect: {status: 200, body: "negative"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/positive, body: "abc"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/negative, body: "abc"}
+    expect: {status: 200, body: "negative"}
+
+  # The row that is not a complement: an absent body satisfies neither the
+  # pattern nor its negation by inversion — it satisfies the negative form
+  # because a subject that is not there cannot match anything.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/positive}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-matches-complement-001/negative}
+    expect: {status: 200, body: "negative"}

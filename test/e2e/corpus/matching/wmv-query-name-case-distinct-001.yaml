@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-name-case-distinct-001
+behaviors: [B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Query parameter names are case-sensitive where header names are not, and the
+# interesting consequence is not that the wrong spelling misses — it is that two
+# spellings in one request are two separate parameters rather than one repeated
+# one. Any-of then has a smaller set of values to work with, so a server that
+# folded parameter names to match the header rule would answer the third step
+# below 200 on the strength of a value belonging to a different parameter.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000031",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-name-case-distinct-001/tag",
+                     "queryParameters": {"tag": {"equalTo": "a"}}},
+         "response": {"status": 200, "body": "lower", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-name-case-distinct-001/tag?tag=a"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "lower"
+
+  - request: {method: GET, path: "/e2e/wmv-query-name-case-distinct-001/tag?Tag=a"}
+    expect: {status: 404}
+
+  # The load-bearing step: the operand is in the query, under the other
+  # spelling, and `tag` holds "b" alone. Folding the names would pool the two
+  # values and find the operand.
+  - request: {method: GET, path: "/e2e/wmv-query-name-case-distinct-001/tag?Tag=a&tag=b"}
+    expect: {status: 404}
+
+  # The same two values with the spellings exchanged, which now match — so the
+  # refusal above is about which parameter holds which value, not about the
+  # request carrying a capitalised name at all.
+  - request: {method: GET, path: "/e2e/wmv-query-name-case-distinct-001/tag?Tag=b&tag=a"}
+    expect: {status: 200, body: "lower"}
+
+  - request: {method: GET, path: "/e2e/wmv-query-name-case-distinct-001/tag?TAG=a&tag=a"}
+    expect: {status: 200, body: "lower"}

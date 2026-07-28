@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pattern-optional-query-001
+behaviors: [B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Because urlPattern's subject is the whole target, a pattern that describes
+  # only a path silently refuses every request that carries a query — and that
+  # is the single most common way a urlPattern stub is written wrong. The
+  # supported spelling for "query optional" is an optional group covering the
+  # `?` and everything after it, and it has to keep working: it is the migration
+  # path off the mistake, and there is no stub field that does it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0009-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/wmv-url-pattern-optional-query-001/items(\\?.*)?"},
+         "response": {"status": 200, "body": "tolerant", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: "/e2e/wmv-url-pattern-optional-query-001/items(\\?.*)?"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0009-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPattern": "/e2e/wmv-url-pattern-optional-query-001/strict"},
+         "response": {"status": 200, "body": "strict", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-optional-query-001/items}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "tolerant"
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-pattern-optional-query-001/items?a=1"}
+    expect: {status: 200, body: "tolerant"}
+
+  # The group covers the whole query however long it is, because `.` spans the
+  # separators too — a pattern that had to enumerate parameters would break on
+  # the second one.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-pattern-optional-query-001/items?a=1&b=2"}
+    expect: {status: 200, body: "tolerant"}
+
+  # Tolerating the query is not tolerating anything: the group begins at a
+  # literal `?`, so extra path is still refused.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-optional-query-001/items/extra}
+    expect: {status: 404}
+
+  # The control that makes the group observable — the same shape of pattern
+  # without it refuses the request the tolerant stub accepted.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-optional-query-001/strict}
+    expect: {status: 200, body: "strict"}
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-pattern-optional-query-001/strict?a=1"}
+    expect: {status: 404}

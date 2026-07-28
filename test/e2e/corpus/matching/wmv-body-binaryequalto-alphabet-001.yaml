@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-binaryequalto-alphabet-001
+behaviors: [B-MATCH-BINARYEQUALTO, B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Two stubs carrying the same eight characters as their operand, one under
+  # binaryEqualTo and one under equalTo. The operand is base64, so the two
+  # matchers read it as different things: binaryEqualTo decodes it, equalTo does
+  # not. Registering both and sending both bodies to both is what turns "the
+  # operand is base64" into an assertion — each stub matches exactly the body
+  # the other refuses, so neither a decode that never happened nor a decode
+  # applied to the wrong matcher can pass.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000d-4000-8000-000000000001",
+         "name": "the operand decoded",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-binaryequalto-alphabet-001/decoded",
+                     "bodyPatterns": [{"binaryEqualTo": "aGVsbG8="}]},
+         "response": {"status": 200, "body": "decoded",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000d-4000-8000-000000000002",
+         "name": "the same characters taken literally",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-binaryequalto-alphabet-001/literal",
+                     "bodyPatterns": [{"equalTo": "aGVsbG8="}]},
+         "response": {"status": 200, "body": "literal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The decoded bytes.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-alphabet-001/decoded, body: "hello"}
+    expect: {status: 200, body: "decoded"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-alphabet-001/literal, body: "hello"}
+    expect: {status: 404}
+
+  # The operand's own spelling. A binaryEqualTo that had quietly degraded into a
+  # string comparison would answer this 200, and it is the only body that tells
+  # that degradation apart from a working implementation.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-alphabet-001/decoded, body: "aGVsbG8="}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-binaryequalto-alphabet-001/literal, body: "aGVsbG8="}
+    expect: {status: 200, body: "literal"}

@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-root-expression-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The root on its own is a path with no steps, and it is worth pinning because
+  # it is the shortest expression a stub can carry and the one where a compiler
+  # is most likely to take a special branch. What it selects is the whole
+  # document, so the bare form's emptiness rule applies to the document itself:
+  # this stub reads as "any JSON body that says something".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0007-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-root-expression-001/any",
+                     "bodyPatterns": [{"matchesJsonPath": "$"}]},
+         "response": {"status": 200, "body": "any",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-root-expression-001/any
+      body: '{"a":1}'
+    expect: {status: 200, body: "any"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-root-expression-001/any
+      body: '[1]'
+    expect: {status: 200, body: "any"}
+
+  # The empty document of either shape is a present but empty collection, and
+  # the emptiness rule does not stop applying because the collection happens to
+  # be the root.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-root-expression-001/any
+      body: '{}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-root-expression-001/any
+      body: '[]'
+    expect: {status: 404}
+
+  # And a request with no body at all has no document to select from, which
+  # keeps "any JSON body that says something" from quietly becoming "any
+  # request".
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-root-expression-001/any
+    expect: {status: 404}

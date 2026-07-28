@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-headers-name-case-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # Header names are case-insensitive on the wire, and a stub written by hand
+  # spells them however its author felt. A lower-case content-type has to be the
+  # Content-Type of the response and not a second, unrelated header sitting
+  # beside the one the server would otherwise emit.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0009-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-name-case-001/lower"},
+         "response": {"status": 200, "body": "col1,col2",
+                      "headers": {"content-type": "text/csv", "x-lower": "l", "X-MiXeD": "m"}}}
+    expect:
+      status: 201
+      # The spelling the author chose survives registration. Canonicalising the
+      # names in the stored mapping would rewrite a document the client can read
+      # back and diff against the one it sent.
+      body_json_subset:
+        response:
+          headers: {content-type: "text/csv", x-lower: "l", X-MiXeD: "m"}
+
+  # Found under any spelling, because the lookup is case-insensitive in both
+  # directions. The Content-Type assertion is the one that matters: it is the
+  # header the server has an opinion of its own about, so a lower-case
+  # declaration that failed to register as the response's content type would
+  # leave the response either untyped or typed by something else.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-name-case-001/lower}
+    expect:
+      status: 200
+      headers: {Content-Type: "text/csv", X-Lower: "l", x-mixed: "m"}
+      body: "col1,col2"
+
+  # The control: a name that differs from a declared one by more than case is a
+  # different header, and is absent. Without this the case would be satisfied by
+  # a lookup that ignored the name altogether.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-name-case-001/lower}
+    expect:
+      status: 200
+      header_absent: [X-Lowered, X-Mixe, Content-Types]
+
+  # Case folding is not a matter of degree, so the same rule has to hold for a
+  # name written in full upper case — and for Content-Type in particular, which
+  # is the header the server has an opinion of its own about. A comparison
+  # written against the canonical spelling would let CONTENT-TYPE through as an
+  # ordinary custom header and leave the response with no content type at all,
+  # or with a sniffed one the author never wrote.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0009-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headers-name-case-001/shouting"},
+         "response": {"status": 200, "body": "row1,row2",
+                      "headers": {"CONTENT-TYPE": "text/csv", "X-SHOUTED": "yes"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headers-name-case-001/shouting}
+    expect:
+      status: 200
+      headers: {Content-Type: "text/csv", x-shouted: "yes"}
+      header_absent: [X-Shouting]
+      body: "row1,row2"

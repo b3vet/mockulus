@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-get-id-roundtrip-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-ADMIN-MAPPINGS-POST
+  - B-STUB-NAME
+  - B-STUB-METADATA
+  - B-STUB-PRIORITY
+  - B-RESP-HEADERS
+wm: verified
+steps:
+  # A document exercising every optional top-level field at once, so the
+  # read-back below is a claim about the whole envelope rather than about the
+  # two or three fields a stub usually carries.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0023-4000-8000-000000000001",
+         "name": "the whole document",
+         "priority": 7,
+         "persistent": true,
+         "metadata": {"suite": "wmv-admin-get-id-roundtrip-001",
+                      "tags": ["admin", "roundtrip"],
+                      "nested": {"depth": 2}},
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-admin-get-id-roundtrip-001/doc"},
+         "response": {"status": 202, "body": "accepted",
+                      "headers": {"X-One": "1", "Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json:
+        id: "a1000008-0023-4000-8000-000000000001"
+        uuid: "a1000008-0023-4000-8000-000000000001"
+        name: "the whole document"
+        priority: 7
+        persistent: true
+        metadata:
+          suite: "wmv-admin-get-id-roundtrip-001"
+          tags: ["admin", "roundtrip"]
+          nested: {depth: 2}
+        request: {method: POST, urlPath: /e2e/wmv-admin-get-id-roundtrip-001/doc}
+        response:
+          status: 202
+          body: "accepted"
+          headers: {X-One: "1", Content-Type: "text/plain"}
+
+  # The read-back has to be the same document the create echoed, field for
+  # field, and not a summary or a re-derivation. A client that registers a stub
+  # and then reads it — the shape every "assert my mocks are what I think they
+  # are" step takes — would otherwise be comparing two different renderings of
+  # one stub and could not tell a difference in the store from a difference in
+  # the serializer. The arbitrary metadata survives with its nesting and its
+  # array intact, which is what "arbitrary JSON, stored and returned" has to
+  # mean if find-by-metadata is to be worth anything.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0023-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0023-4000-8000-000000000001"
+        uuid: "a1000008-0023-4000-8000-000000000001"
+        name: "the whole document"
+        priority: 7
+        persistent: true
+        metadata:
+          suite: "wmv-admin-get-id-roundtrip-001"
+          tags: ["admin", "roundtrip"]
+          nested: {depth: 2}
+        request: {method: POST, urlPath: /e2e/wmv-admin-get-id-roundtrip-001/doc}
+        response:
+          status: 202
+          body: "accepted"
+          headers: {X-One: "1", Content-Type: "text/plain"}
+
+  # And the document describes a stub that actually serves, so the round-trip is
+  # of the thing that was compiled into the snapshot rather than of a copy kept
+  # aside for the admin API to read back.
+  - request: {port: mock, method: POST, path: /e2e/wmv-admin-get-id-roundtrip-001/doc}
+    expect:
+      status: 202
+      headers: {X-One: "1", Content-Type: "text/plain"}
+      body: "accepted"

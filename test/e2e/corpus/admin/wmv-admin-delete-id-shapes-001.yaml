@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-delete-id-shapes-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-DELETE
+  - B-ADMIN-MAPPINGS-ID-GET
+wm: verified
+# The step showing the deleted stub stops matching is an unmatched request,
+# whose body is the near-miss table WireMock renders and mockulus does not
+# (deviation #2/#18).
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0012-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-delete-id-shapes-001/doomed"},
+         "response": {"status": 200, "body": "still here"}}
+    expect: {status: 201}
+
+  # A successful delete answers 200 with an empty JSON *object*, not an empty
+  # body. The distinction is the point of this case: a client that parses the
+  # admin API's answers uniformly gets a document here and nothing at all one
+  # step below, and both are correct.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0012-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json: {}
+
+  # The second delete of the same id is the other shape: a bare 404 carrying no
+  # body and no Content-Type. Answering it 200 would be friendlier and wrong — a
+  # teardown step that quietly succeeds against a stub another runner already
+  # removed hides the collision it exists to surface.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0012-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # A read of the same id agrees, so the two verbs report the same absence in
+  # the same shape rather than each inventing one.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0012-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # An id that never existed is indistinguishable from one that was deleted,
+  # which is what stops the admin API leaking the history of a shared
+  # deployment to whoever probes it.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0012-4000-8000-0000000000ff}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # And the delete was a real one: the snapshot was rebuilt in the same admin
+  # call, so the stub stops matching immediately rather than at the next reload.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-delete-id-shapes-001/doomed}
+    expect: {status: 404}

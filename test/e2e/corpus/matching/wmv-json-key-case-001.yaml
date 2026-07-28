@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-key-case-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Header names are case-insensitive and JSON member names are not, so a
+  # matcher layer that shares its lookup with the header index would quietly
+  # make them so here. equalToJson takes no caseInsensitive option, and both
+  # halves of a member — the name and a string value — are compared exactly.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0028-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-key-case-001/strict",
+                     "bodyPatterns": [{"equalToJson": "{\"Key\":\"Value\"}"}]},
+         "response": {"status": 200, "body": "strict",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-key-case-001/strict
+      body: '{"Key":"Value"}'
+    expect: {status: 200, body: "strict"}
+
+  # The name differing only in case is a different member...
+  - request:
+      method: POST
+      path: /e2e/wmv-json-key-case-001/strict
+      body: '{"key":"Value"}'
+    expect: {status: 404}
+
+  # ...and the value differing only in case is a different value.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-key-case-001/strict
+      body: '{"Key":"value"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-key-case-001/strict
+      body: '{"KEY":"VALUE"}'
+    expect: {status: 404}
+
+  # Under ignoreExtraElements the failure changes shape but not its answer: a
+  # member whose name differs in case is an unexpected member, so the flag
+  # forgives it and the expected member is then simply missing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0028-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-key-case-001/relaxed",
+                     "bodyPatterns": [{"equalToJson": "{\"Key\":\"Value\"}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "relaxed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-key-case-001/relaxed
+      body: '{"key":"Value"}'
+    expect: {status: 404}
+
+  # Both spellings present is the sharpest form of it: the expected name is
+  # there, the other is extra, and only a case-folding lookup could be confused
+  # about which value it found.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-key-case-001/relaxed
+      body: '{"key":"other","Key":"Value"}'
+    expect: {status: 200, body: "relaxed"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-key-case-001/relaxed
+      body: '{"Key":"other","key":"Value"}'
+    expect: {status: 404}

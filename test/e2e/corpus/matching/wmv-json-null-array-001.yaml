@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-null-array-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A null inside an array is where "null means nothing is there" does the most
+  # damage: an implementation that skipped nulls while walking the array would
+  # shorten it, and the length assertions below are what catch that.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0003-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-array-001/ordered",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[null,1]}"}]},
+         "response": {"status": 200, "body": "ordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/ordered
+      body: '{"xs":[null,1]}'
+    expect: {status: 200, body: "ordered"}
+
+  # A null occupies its position like any other element, so swapping it with its
+  # neighbour is a different array.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/ordered
+      body: '{"xs":[1,null]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/ordered
+      body: '{"xs":[null,null]}'
+    expect: {status: 404}
+
+  # And it takes up a slot, so an array holding only the null is short.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/ordered
+      body: '{"xs":[null]}'
+    expect: {status: 404}
+
+  # With ignoreArrayOrder the null is paired rather than positioned, which is
+  # the same relaxation the other element gets and no more.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0003-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-array-001/unordered",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[null,1]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "unordered",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/unordered
+      body: '{"xs":[1,null]}'
+    expect: {status: 200, body: "unordered"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/unordered
+      body: '{"xs":[null,1]}'
+    expect: {status: 200, body: "unordered"}
+
+  # The null still has to be answered by a null: nothing else pairs with it.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/unordered
+      body: '{"xs":[1,1]}'
+    expect: {status: 404}
+
+  # Nulls are counted like any other repeated element, so two expected nulls
+  # need two actual ones. An implementation that treated null as a single
+  # sentinel rather than as a value would let one stand in for both.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0003-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-array-001/pair",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[null,null]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "pair",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/pair
+      body: '{"xs":[null,null]}'
+    expect: {status: 200, body: "pair"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/pair
+      body: '{"xs":[null,1]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-array-001/pair
+      body: '{"xs":[null]}'
+    expect: {status: 404}

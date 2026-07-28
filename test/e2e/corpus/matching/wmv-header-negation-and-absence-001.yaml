@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-negation-and-absence-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-MATCH-AND-OR-NOT, B-MATCH-ABSENT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# There are two ways to write "this header must not say prod" — the dedicated
+# negative matcher and `not` over the positive one — and over a header that is
+# present they are the same criterion. They part company over a header that is
+# not there, because a negative criterion has to decide what "no value at all"
+# means, and the two spellings reach that decision by different routes. The
+# third stub is the spelling that leaves nothing to decide.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0025-4000-8000-000000000001",
+         "name": "the dedicated negative matcher",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-negation-and-absence-001/dedicated",
+                     "headers": {"X-Env": {"doesNotContain": "prod"}}},
+         "response": {"status": 200, "body": "dedicated",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0025-4000-8000-000000000002",
+         "name": "the positive matcher under a not",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-negation-and-absence-001/combinator",
+                     "headers": {"X-Env": {"not": {"contains": "prod"}}}},
+         "response": {"status": 200, "body": "combinator",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0025-4000-8000-000000000003",
+         "name": "negation guarded by a presence requirement",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-negation-and-absence-001/guarded",
+                     "headers": {"X-Env": {"and": [{"not": {"absent": true}},
+                                                   {"not": {"contains": "prod"}}]}}},
+         "response": {"status": 200, "body": "guarded",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Over a value that carries the excluded text all three refuse, which is the
+  # baseline that makes them comparable at all.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-negation-and-absence-001/dedicated
+      headers: {X-Env: "prod-eu"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-negation-and-absence-001/combinator
+      headers: {X-Env: "prod-eu"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-negation-and-absence-001/guarded
+      headers: {X-Env: "prod-eu"}
+    expect: {status: 404}
+
+  # Over a value that does not, all three admit.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-negation-and-absence-001/dedicated
+      headers: {X-Env: "dev"}
+    expect: {status: 200, body: "dedicated"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-negation-and-absence-001/combinator
+      headers: {X-Env: "dev"}
+    expect: {status: 200, body: "combinator"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-negation-and-absence-001/guarded
+      headers: {X-Env: "dev"}
+    expect: {status: 200, body: "guarded"}
+
+  # The missing header is where the three spellings have to be told apart. The
+  # dedicated negative matcher admits it: there is no value there that carries
+  # the excluded text.
+  - request: {method: GET, path: /e2e/wmv-header-negation-and-absence-001/dedicated}
+    expect: {status: 200, body: "dedicated"}
+
+  # `not` over the positive matcher reaches the same answer from the other
+  # direction — the positive criterion is unsatisfied, and the negation of that
+  # holds — so "not containing prod" does not imply the header was ever sent.
+  - request: {method: GET, path: /e2e/wmv-header-negation-and-absence-001/combinator}
+    expect: {status: 200, body: "combinator"}
+
+  # Which leaves the guarded spelling as the only one that means "present and
+  # not prod", and it is the one a stub author usually wanted.
+  - request: {method: GET, path: /e2e/wmv-header-negation-and-absence-001/guarded}
+    expect: {status: 404}

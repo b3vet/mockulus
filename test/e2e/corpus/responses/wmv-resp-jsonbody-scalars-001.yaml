@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-jsonbody-scalars-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # jsonBody is a JSON *value*, not a JSON object, and every value is legal.
+  # A string is the case that separates the two readings: served as a value it
+  # carries its quotes, because a bare word is not a JSON document — an
+  # implementation that reached for the string and wrote it out as the body
+  # would answer five bytes here where the contract calls for seven.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000e-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-scalars-001/string"},
+         "response": {"status": 200, "jsonBody": "hello"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-scalars-001/string}
+    expect:
+      status: 200
+      body: '"hello"'
+
+  # A top-level array, which is what most collection endpoints answer with.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000e-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-scalars-001/array"},
+         "response": {"status": 200, "jsonBody": [1, "two", {"k": true}, [3]]}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-scalars-001/array}
+    expect:
+      status: 200
+      body: '[1,"two",{"k":true},[3]]'
+
+  # A bare number and a bare boolean, which are the values most likely to be
+  # mistaken for "no body was set" by a check written as a truthiness test:
+  # false and 0 are both perfectly good JSON documents.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000e-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-scalars-001/zero"},
+         "response": {"status": 200, "jsonBody": 0}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-scalars-001/zero}
+    expect:
+      status: 200
+      body: "0"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000e-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-scalars-001/false"},
+         "response": {"status": 200, "jsonBody": false}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-scalars-001/false}
+    expect:
+      status: 200
+      body: "false"
+
+  # The empty object is the control for all of the above: it is the shape a
+  # server falls back to when it cannot make sense of the value it was given, so
+  # a case whose answers were all "{}" would look identical to a broken one.
+  # Here it is the answer only because it is what the stub asked for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-000e-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-scalars-001/empty"},
+         "response": {"status": 200, "jsonBody": {}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-scalars-001/empty}
+    expect:
+      status: 200
+      body: "{}"

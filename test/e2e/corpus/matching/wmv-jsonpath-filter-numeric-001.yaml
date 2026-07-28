@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-filter-numeric-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The ordering operators compare numbers as numbers, which is the one thing a
+  # filter cannot get away with doing textually: "9" sorts after "11" as text
+  # and before it as a number, and the boundary steps below are chosen so that a
+  # lexical comparison answers differently on each stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0010-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-numeric-001/above",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.price > 10)]"}]},
+         "response": {"status": 200, "body": "above",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0010-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-numeric-001/at-least",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.price >= 10)]"}]},
+         "response": {"status": 200, "body": "at-least",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0010-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-numeric-001/below",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.price < 10)]"}]},
+         "response": {"status": 200, "body": "below",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A two-digit price against a one-digit bound. Compared as text "11" sorts
+  # before "10" and this would be a miss.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/above
+      body: '{"items":[{"price":5},{"price":11}]}'
+    expect: {status: 200, body: "above"}
+
+  # The boundary belongs to >= and not to >, which is the whole difference
+  # between the first two stubs.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/above
+      body: '{"items":[{"price":10}]}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/at-least
+      body: '{"items":[{"price":10}]}'
+    expect: {status: 200, body: "at-least"}
+
+  # The same value written as a decimal is the same number, so the boundary does
+  # not move with the client's serialisation.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/at-least
+      body: '{"items":[{"price":10.0}]}'
+    expect: {status: 200, body: "at-least"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/above
+      body: '{"items":[{"price":9}]}'
+    expect: {status: 404}
+
+  # A fractional price below the bound: the comparison is over values, so a
+  # decimal is ordered against an integer without either being rounded first.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/below
+      body: '{"items":[{"price":9.5}]}'
+    expect: {status: 200, body: "below"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/below
+      body: '{"items":[{"price":10.5}]}'
+    expect: {status: 404}
+
+  # One element inside the bound is enough however many are outside it, and an
+  # element missing the compared key simply fails its own comparison rather than
+  # abandoning the evaluation.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/above
+      body: '{"items":[{"other":1},{"price":50}]}'
+    expect: {status: 200, body: "above"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-numeric-001/above
+      body: '{"items":[{"other":1}]}'
+    expect: {status: 404}

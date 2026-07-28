@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-number-scale-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Zero and trailing zeros are where a decimal comparison and a floating-point
+  # one part company: a decimal type distinguishes 1.500 from 1.5 by scale and
+  # signs a negative zero, while the value they both denote is the same number.
+  # Equality here is by value, so scale and the sign of zero are not part of it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0005-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-number-scale-001/doc",
+                     "bodyPatterns": [{"equalToJson": "{\"z\":0,\"t\":1.500}"}]},
+         "response": {"status": 200, "body": "scale",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":0,"t":1.500}'
+    expect: {status: 200, body: "scale"}
+
+  # Negative zero is zero, and the trailing zero the expected document carries
+  # is not something the request has to reproduce.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":-0,"t":1.5}'
+    expect: {status: 200, body: "scale"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":0e0,"t":1.5000}'
+    expect: {status: 200, body: "scale"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":0.0,"t":15e-1}'
+    expect: {status: 200, body: "scale"}
+
+  # Which does not make the comparison approximate: one digit further out is a
+  # different value.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":0,"t":1.5000001}'
+    expect: {status: 404}
+
+  # Nor does zero become the other things a language calls falsy.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":false,"t":1.5}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":null,"t":1.5}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-number-scale-001/doc
+      body: '{"z":"0","t":1.5}'
+    expect: {status: 404}

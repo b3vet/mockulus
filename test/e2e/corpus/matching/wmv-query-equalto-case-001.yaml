@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-equalto-case-001
+behaviors: [B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Query parameter values are case-sensitive by default, as header values are,
+# and the `caseInsensitive` modifier is the only thing that relaxes them. The
+# last two steps are the ones worth having: the modifier lives inside the
+# matcher while any-of lives outside it, so a relaxed matcher still has to be
+# offered every value of a repeated parameter rather than only the first.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000020",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-equalto-case-001/exact",
+                     "queryParameters": {"tenant": {"equalTo": "AcMe"}}},
+         "response": {"status": 200, "body": "exact", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000021",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-equalto-case-001/ci",
+                     "queryParameters": {"tenant": {"equalTo": "AcMe", "caseInsensitive": true}}},
+         "response": {"status": 200, "body": "ci", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            tenant: {equalTo: "AcMe", caseInsensitive: true}
+
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/exact?tenant=AcMe"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "exact"
+
+  # The default is the strict one. This is what the modifier exists to change,
+  # and without these two steps its presence on the other stub proves nothing.
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/exact?tenant=acme"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/exact?tenant=ACME"}
+    expect: {status: 404}
+
+  # Parameter names were already case-sensitive; showing the same query with a
+  # value that only differs in case succeed under the relaxed stub is what
+  # attributes the refusals above to the value rather than to the name.
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/ci?tenant=acme"}
+    expect: {status: 200, body: "ci"}
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/ci?tenant=ACME"}
+    expect: {status: 200, body: "ci"}
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/ci?tenant=AcMe"}
+    expect: {status: 200, body: "ci"}
+
+  # Case is all it relaxes: the value still has to be the same text.
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/ci?tenant=acmex"}
+    expect: {status: 404}
+
+  # The relaxed matcher is applied to each value of a repeated parameter, so the
+  # satisfying value need not be first — and the strict matcher is too, which is
+  # what shows the earlier refusals were never about presence.
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/ci?tenant=other&tenant=ACME"}
+    expect: {status: 200, body: "ci"}
+  - request: {method: GET, path: "/e2e/wmv-query-equalto-case-001/exact?tenant=acme&tenant=AcMe"}
+    expect: {status: 200, body: "exact"}

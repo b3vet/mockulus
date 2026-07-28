@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-document-shape-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # One expression, one wanted value, and a family of documents that spell the
+  # same thing differently. Every step here would pass for an evaluator that
+  # searched the raw body for the key's text instead of walking the structure —
+  # except the ones where the text is present and the node is not, which is what
+  # the case is built around.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001b-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-document-shape-001/b",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.b",
+                                                           "equalTo": "real"}}]},
+         "response": {"status": 200, "body": "b",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"b":"real"}'
+    expect: {status: 200, body: "b"}
+
+  # A string value that spells a whole member of its own. Text inside a string
+  # is data, so the decoy must not be mistaken for the key the path names.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"a":"\"b\": \"decoy\"","b":"real"}'
+    expect: {status: 200, body: "b"}
+
+  # The same decoy without the real member present, which is the half that
+  # actually distinguishes a structural walk from a search.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"a":"\"b\": \"real\""}'
+    expect: {status: 404}
+
+  # A nested member of the same name, sitting before the root's own. `$.b` names
+  # the root's member and nothing else.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"a":{"b":"decoy"},"b":"real"}'
+    expect: {status: 200, body: "b"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"a":{"b":"real"}}'
+    expect: {status: 404}
+
+  # Whitespace between the tokens changes nothing about the document.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: "{ \"a\" : [ 1 , 2 ] , \"b\" : \"real\" }"
+    expect: {status: 200, body: "b"}
+
+  # An escaped backslash ending a value: read one character too far and the
+  # closing quote is swallowed, and the rest of the document shifts by one
+  # member.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"a":"\\","b":"real"}'
+    expect: {status: 200, body: "b"}
+
+  # The wanted value spelled with an escape, so the comparison is against the
+  # string the document means rather than against the bytes it arrived as.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"b":"re\u0061l"}'
+    expect: {status: 200, body: "b"}
+
+  # And the same escape decoding to something else, which keeps the step above
+  # from passing merely because escapes are being ignored.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-document-shape-001/b
+      body: '{"b":"re\u0062l"}'
+    expect: {status: 404}

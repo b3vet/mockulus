@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-blocks-scope-001
+behaviors: [B-TPL-IF-UNLESS-EACH-WITH-LOOKUP, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # `#with` and `lookup` are the two ways a template reaches into a map, and
+  # they answer different questions: `#with` names the map once and reads
+  # several keys out of it, `lookup` reads one key that is only known at
+  # request time. A stub echoing part of a payload wants the first; a stub
+  # whose caller says which field to echo wants the second.
+  #
+  # The three scopes here come from three different parts of the model, so a
+  # `#with` implemented for one shape of container is caught by the others.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0019-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-blocks-scope-001/profile"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "query=[{{#with request.query}}{{tier}}/{{region}}{{/with}}] headers=[{{#with request.headers}}{{X-Trace}}{{/with}}] body=[{{#with (jsonPath request.body '$.who')}}{{name}}/{{city}}{{/with}}] picked={{lookup request.query request.headers.X-Key}} branch={{#unless request.query.region}}no-region{{else}}has-region{{/unless}} outside=[{{tier}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `outside` is the control on the scope itself: `{{tier}}` resolves inside
+  # the `#with` and has to resolve to nothing at the top level. Without it a
+  # template engine that had flattened the whole request model into the root
+  # context would render both, and every `#with` in the corpus would be
+  # decoration.
+  #
+  # `picked` reaches a query parameter through a key carried in a header, so
+  # neither operand is a constant the template chose.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-blocks-scope-001/profile?tier=gold&region=eu
+      headers: {Content-Type: application/json, X-Trace: "tr-1", X-Key: "tier"}
+      body: '{"who": {"name": "ada", "city": "london"}}'
+    expect:
+      status: 200
+      body: "query=[gold/eu] headers=[tr-1] body=[ada/london] picked=gold branch=has-region outside=[]"
+
+  # The same stub with `region` gone. Inside the scope the missing key renders
+  # as nothing and the `#unless` takes its other branch — the pair that makes
+  # this a statement about the request rather than about the template. Every
+  # other value moves too, so nothing here is a constant the first request
+  # could not have told apart from a rendering.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-blocks-scope-001/profile?tier=silver
+      headers: {Content-Type: application/json, X-Trace: "tr-2", X-Key: "tier"}
+      body: '{"who": {"name": "grace", "city": "york"}}'
+    expect:
+      status: 200
+      body: "query=[silver/] headers=[tr-2] body=[grace/york] picked=silver branch=no-region outside=[]"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0019-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-blocks-scope-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "query=[{{#with request.query}}{{tier}}{{/with}}] picked={{lookup request.query 'tier'}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-blocks-scope-001/literal?tier=gold
+      headers: {Content-Type: application/json}
+      body: '{"who": {"name": "ada"}}'
+    expect:
+      status: 200
+      body: "query=[{{#with request.query}}{{tier}}{{/with}}] picked={{lookup request.query 'tier'}}"

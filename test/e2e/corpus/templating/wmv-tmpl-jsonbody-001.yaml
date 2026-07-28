@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-jsonbody-001
+behaviors: [B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # `jsonBody` carries the response as a document rather than as text, which is
+  # how most recorded fixtures are written. The transformer has to reach into
+  # it: a stub that had to give up `jsonBody` to template anything would push
+  # every author back to escaping their payload into a string.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0011-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-jsonbody-001/order"},
+         "response": {"status": 200,
+                      "jsonBody": {"tier": "{{request.query.tier}}",
+                                   "count": "{{jsonPath request.body '$.n'}}",
+                                   "nested": {"method": "{{request.method}}"},
+                                   "fixed": "constant"},
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `nested` is the one that earns the case: rendering only the top level of a
+  # document is a plausible implementation and answers this request correctly
+  # in every other field. `fixed` is the opposite control — a value with no
+  # braces has to come through untouched, since a document walked by a renderer
+  # that reserialised every string would be a different document.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonbody-001/order?tier=gold
+      headers: {Content-Type: application/json}
+      body: '{"n": 7}'
+    expect:
+      status: 200
+      body_json:
+        tier: "gold"
+        count: "7"
+        nested: {method: "POST"}
+        fixed: "constant"
+
+  # A second request through the same stub, so every rendered field moves and
+  # the untemplated one does not.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonbody-001/order?tier=silver
+      headers: {Content-Type: application/json}
+      body: '{"n": 2}'
+    expect:
+      status: 200
+      body_json:
+        tier: "silver"
+        count: "2"
+        nested: {method: "POST"}
+        fixed: "constant"
+
+  # The control. A recorded fixture that happens to contain braces — a
+  # Handlebars template someone captured, a payload from a system that uses the
+  # same syntax — is served as the document it is.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0011-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-jsonbody-001/literal"},
+         "response": {"status": 200,
+                      "jsonBody": {"tier": "{{request.query.tier}}",
+                                   "nested": {"method": "{{request.method}}"}}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonbody-001/literal?tier=gold
+      headers: {Content-Type: application/json}
+      body: '{"n": 7}'
+    expect:
+      status: 200
+      body_json:
+        tier: "{{request.query.tier}}"
+        nested: {method: "{{request.method}}"}

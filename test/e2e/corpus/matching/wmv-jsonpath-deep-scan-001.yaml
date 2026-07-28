@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-deep-scan-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A deep scan says nothing about where the key is, only that it is somewhere,
+  # which is what a stub reaches for when the client's envelope may change shape
+  # between versions. Both forms are registered because the interesting property
+  # — that the hits from several depths are gathered into one list and the inner
+  # matcher is applied across all of them — is only observable through the
+  # nested form.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000d-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-deep-scan-001/anywhere",
+                     "bodyPatterns": [{"matchesJsonPath": "$..sku"}]},
+         "response": {"status": 200, "body": "anywhere",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-000d-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-deep-scan-001/wanted",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$..sku",
+                                                           "equalTo": "B"}}]},
+         "response": {"status": 200, "body": "wanted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The key at the root, where no descent is needed at all.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/anywhere
+      body: '{"sku":"A"}'
+    expect: {status: 200, body: "anywhere"}
+
+  # …and the same key buried under an object and an array, which must be the
+  # same answer or the expression would be about depth rather than about the key.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/anywhere
+      body: '{"order":{"lines":[{"sku":"A"}]}}'
+    expect: {status: 200, body: "anywhere"}
+
+  # A document where the name appears only as text: the scan looks at keys, and
+  # a matcher that had degraded to searching the body would answer 200.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/anywhere
+      body: '{"order":{"note":"sku"}}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/anywhere
+      body: '{"order":{}}'
+    expect: {status: 404}
+
+  # The nested form over the gathered hits: one of the two lines carries the
+  # wanted value.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/wanted
+      body: '{"order":{"lines":[{"sku":"A"},{"sku":"B"}]}}'
+    expect: {status: 200, body: "wanted"}
+
+  # The hits are gathered across depths before the inner matcher runs, so a
+  # value found at the root and a value found three levels down are equally
+  # eligible. An implementation that stopped at the first hit would refuse this.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/wanted
+      body: '{"sku":"A","order":{"lines":[{"sku":"B"}]}}'
+    expect: {status: 200, body: "wanted"}
+
+  # Hits that all fail the inner matcher are a miss, which is what stops the
+  # steps above from passing on the strength of the key merely existing.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/wanted
+      body: '{"order":{"lines":[{"sku":"A"},{"sku":"C"}]}}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-deep-scan-001/wanted
+      body: '{"order":{"lines":[]}}'
+    expect: {status: 404}

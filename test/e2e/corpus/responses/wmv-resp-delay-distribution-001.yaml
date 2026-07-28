@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-delay-distribution-001
+behaviors:
+  - B-RESP-DELAYDISTRIBUTION
+  - B-RESP-FIXEDDELAYMILLISECONDS
+  - B-STUB-RESPONSE
+wm: verified
+steps:
+  # A uniform draw between two bounds is the distribution people reach for to
+  # make a client's timeout budget non-deterministic. As with the fixed delay,
+  # what a corpus case asserts is the response rather than the elapsed time: the
+  # draw happens per request, so this is the shape where a value sampled once at
+  # snapshot build — or a bad draw producing a negative wait — would show up as
+  # a response that never arrives.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0017-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-delay-distribution-001/uniform"},
+         "response": {"status": 200, "body": "drawn uniformly",
+                      "headers": {"Content-Type": "text/plain"},
+                      "delayDistribution": {"type": "uniform", "lower": 5, "upper": 25}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          delayDistribution: {type: uniform, lower: 5, upper: 25}
+
+  # Asked for twice, because the draw is per request: a second call has to
+  # answer the same response, whatever the second sample was.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-distribution-001/uniform}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "drawn uniformly"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-distribution-001/uniform}
+    expect:
+      status: 200
+      body: "drawn uniformly"
+
+  # Lognormal is the other distribution WireMock takes, and it is parameterised
+  # differently — median and sigma rather than bounds — so accepting one says
+  # nothing about the other. Its tail is unbounded above, which is exactly why
+  # the parameters here are small: the case asserts the answer, and an answer
+  # that arrives after the runner's own timeout is no answer at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0017-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-delay-distribution-001/lognormal"},
+         "response": {"status": 200, "body": "drawn lognormally",
+                      "headers": {"Content-Type": "text/plain"},
+                      "delayDistribution": {"type": "lognormal", "median": 20, "sigma": 0.3}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          delayDistribution: {type: lognormal, median: 20, sigma: 0.3}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-distribution-001/lognormal}
+    expect:
+      status: 200
+      body: "drawn lognormally"
+
+  # The two delay fields are additive rather than exclusive (§12.4): a stub may
+  # carry both, and the response is the sum of the fixed part and the drawn one.
+  # A reading of the spec in which one field replaces the other would be
+  # invisible in the payload — which is why the assertion here is that both
+  # fields survive registration and that the response still arrives intact, and
+  # why the arithmetic itself is the perf suite's to check.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0017-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-delay-distribution-001/both"},
+         "response": {"status": 200, "body": "fixed plus drawn",
+                      "headers": {"Content-Type": "text/plain"},
+                      "fixedDelayMilliseconds": 20,
+                      "delayDistribution": {"type": "uniform", "lower": 1, "upper": 5}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          fixedDelayMilliseconds: 20
+          delayDistribution: {type: uniform, lower: 1, upper: 5}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-distribution-001/both}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "fixed plus drawn"
+
+  # The control: the same response with neither field. Every assertion above is
+  # about a payload arriving unharmed, and this is the stub that shows what
+  # unharmed looks like when nothing delayed it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0017-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-delay-distribution-001/none"},
+         "response": {"status": 200, "body": "fixed plus drawn",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-delay-distribution-001/none}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "fixed plus drawn"

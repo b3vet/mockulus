@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-type-boundaries-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The same operand registered strict and relaxed, because the claim being
+  # tested is that ignoreExtraElements relaxes membership and nothing else. A
+  # type change at an expected position is not an extra element, so the relaxed
+  # stub has to refuse every document the strict one refuses here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0008-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-type-boundaries-001/strict",
+                     "bodyPatterns": [{"equalToJson": "{\"v\":{\"k\":1}}"}]},
+         "response": {"status": 200, "body": "strict",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0008-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-type-boundaries-001/relaxed",
+                     "bodyPatterns": [{"equalToJson": "{\"v\":{\"k\":1}}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "relaxed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/strict
+      body: '{"v":{"k":1}}'
+    expect: {status: 200, body: "strict"}
+
+  # The control that the relaxed stub is relaxed at all, so the refusals below
+  # are about the type rather than about a stub that never matches.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/relaxed
+      body: '{"v":{"k":1,"x":9}}'
+    expect: {status: 200, body: "relaxed"}
+
+  # A one-element array holding the expected object is not the object. This is
+  # the shape a client produces when a field's cardinality changes, and it must
+  # not quietly keep matching.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/strict
+      body: '{"v":[{"k":1}]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/relaxed
+      body: '{"v":[{"k":1}]}'
+    expect: {status: 404}
+
+  # A JSON document carried as a string is a string. An implementation that
+  # re-parsed strings looking for nested JSON would match this, and would then
+  # answer differently for every client that double-encodes a payload.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/strict
+      body: '{"v":"{\"k\":1}"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/relaxed
+      body: '{"v":"{\"k\":1}"}'
+    expect: {status: 404}
+
+  # An absent object and a nulled one are both mismatches under either stub.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/strict
+      body: '{"v":null}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/relaxed
+      body: '{"v":null}'
+    expect: {status: 404}
+
+  # And inside the object the leaf's type is part of the comparison too.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/relaxed
+      body: '{"v":{"k":"1"}}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-type-boundaries-001/relaxed
+      body: '{"v":{"k":true}}'
+    expect: {status: 404}

@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-response-headers-001
+behaviors: [B-RESP-HEADERS, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # Header values are templated as well as bodies, and that is not decoration:
+  # the `Location` of a created resource depends on what was asked for and does
+  # not appear in the body at all, so a stub that could only template the body
+  # would need a separate mapping per destination.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0010-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-response-headers-001/created"},
+         "response": {"status": 201,
+                      "headers": {"Content-Type": "text/plain",
+                                  "Location": "https://example.test/t/{{request.query.tier}}",
+                                  "X-Tier": "{{upper request.query.tier}}",
+                                  "X-Sum": "{{math request.query.a '+' request.query.b}}"},
+                      "body": "created",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Three headers doing three different things. `Location` interpolates,
+  # `X-Tier` runs a helper, and `X-Sum` runs arithmetic on two request values —
+  # so a build that templated header values as plain substitution passes the
+  # first and fails the other two.
+  #
+  # The body is a constant on purpose: a header that had quietly been filled
+  # from the rendered body would still look right if both carried the same
+  # expression.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-response-headers-001/created?tier=gold&a=7&b=5
+    expect:
+      status: 201
+      headers:
+        Location: "https://example.test/t/gold"
+        X-Tier: "GOLD"
+        X-Sum: "12"
+      body: "created"
+
+  # A second request moves every header at once, which is what separates
+  # rendering per request from a value computed when the stub was registered.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-response-headers-001/created?tier=silver&a=1&b=2
+    expect:
+      status: 201
+      headers:
+        Location: "https://example.test/t/silver"
+        X-Tier: "SILVER"
+        X-Sum: "3"
+
+  # The control, and the reason it matters more for headers than for bodies: a
+  # `Location` carrying braces is a URL no client can follow rather than a body
+  # someone reads, so an implementation that templated headers unconditionally
+  # would break exactly the stubs that never asked for it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0010-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-response-headers-001/literal"},
+         "response": {"status": 201,
+                      "headers": {"Content-Type": "text/plain",
+                                  "Location": "https://example.test/t/{{request.query.tier}}",
+                                  "X-Tier": "{{upper request.query.tier}}"},
+                      "body": "created"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-response-headers-001/literal?tier=gold
+    expect:
+      status: 201
+      headers:
+        Location: "https://example.test/t/{{request.query.tier}}"
+        X-Tier: "{{upper request.query.tier}}"
+      body: "created"

@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-array-document-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A body whose root is an array is the shape a batch endpoint receives, and
+  # every step of a path then starts one level higher than the object case the
+  # rest of this corpus is written around. The three stubs are the three ways to
+  # reach into such a document: by position, across all of it, and by name at
+  # any depth.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001c-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-array-document-001/first",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$[0].sku",
+                                                           "equalTo": "A"}}]},
+         "response": {"status": 200, "body": "first",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001c-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-array-document-001/any",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$[*].sku",
+                                                           "equalTo": "B"}}]},
+         "response": {"status": 200, "body": "any",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001c-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-array-document-001/somewhere",
+                     "bodyPatterns": [{"matchesJsonPath": "$..sku"}]},
+         "response": {"status": 200, "body": "somewhere",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/first
+      body: '[{"sku":"A"},{"sku":"B"}]'
+    expect: {status: 200, body: "first"}
+
+  # The position is the position in the root array, so the same two elements
+  # reversed are a miss.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/first
+      body: '[{"sku":"B"},{"sku":"A"}]'
+    expect: {status: 404}
+
+  # The wildcard reads across the whole root, so it accepts both orders — the
+  # pair with the step above is what separates the two expressions.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/any
+      body: '[{"sku":"A"},{"sku":"B"}]'
+    expect: {status: 200, body: "any"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/any
+      body: '[{"sku":"B"},{"sku":"A"}]'
+    expect: {status: 200, body: "any"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/any
+      body: '[{"sku":"A"},{"sku":"C"}]'
+    expect: {status: 404}
+
+  # An empty root array selects nothing however the path is spelled.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/first
+      body: '[]'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/any
+      body: '[]'
+    expect: {status: 404}
+
+  # A deep scan does not care that the root is an array, which is the property
+  # that makes it the resilient spelling: it finds the key under an object root…
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/somewhere
+      body: '{"sku":"A"}'
+    expect: {status: 200, body: "somewhere"}
+
+  # …and under an array root, and inside an array nested in one.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/somewhere
+      body: '[{"sku":"A"}]'
+    expect: {status: 200, body: "somewhere"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/somewhere
+      body: '[[{"sku":"A"}]]'
+    expect: {status: 200, body: "somewhere"}
+
+  # A positional path over an object root selects nothing, so the first stub is
+  # about arrays specifically rather than about "the first thing in the body".
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-array-document-001/first
+      body: '{"sku":"A"}'
+    expect: {status: 404}

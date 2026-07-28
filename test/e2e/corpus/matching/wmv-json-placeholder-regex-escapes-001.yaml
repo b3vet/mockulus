@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-placeholder-regex-escapes-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A pattern with backslash escapes passes through two JSON layers on its way
+  # in when the operand is written as an escaped string, and through one when
+  # the operand is written inline. Both spellings have to arrive at the same
+  # pattern, or a client's answer would depend on how its serializer chose to
+  # carry the operand — so the same \d{3}-[A-Z]{2} is registered twice.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0020-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-regex-escapes-001/escaped",
+                     "bodyPatterns": [{"equalToJson": "{\"sku\":\"${json-unit.regex}\\\\d{3}-[A-Z]{2}\"}"}]},
+         "response": {"status": 200, "body": "escaped",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0020-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-regex-escapes-001/inline",
+                     "bodyPatterns": [{"equalToJson": {"sku": "${json-unit.regex}\\d{3}-[A-Z]{2}"}}]},
+         "response": {"status": 200, "body": "inline",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/escaped
+      body: '{"sku":"123-AB"}'
+    expect: {status: 200, body: "escaped"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/inline
+      body: '{"sku":"123-AB"}'
+    expect: {status: 200, body: "inline"}
+
+  # The quantifier is a quantifier: two digits is not three. A pattern that had
+  # lost a backslash on the way in would read \d as a literal d and refuse the
+  # accepted request above, so this is the negative that pins the count rather
+  # than the escaping.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/escaped
+      body: '{"sku":"12-AB"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/inline
+      body: '{"sku":"12-AB"}'
+    expect: {status: 404}
+
+  # The class is case-sensitive...
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/escaped
+      body: '{"sku":"123-ab"}'
+    expect: {status: 404}
+
+  # ...and the match is still a full match, so a value that merely contains the
+  # pattern is refused by both spellings.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/escaped
+      body: '{"sku":"x123-AB"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/inline
+      body: '{"sku":"x123-AB"}'
+    expect: {status: 404}
+
+  # A literal backslash in the *data* is reachable the same way, and is the
+  # other half of the escaping question: here the pattern asks for one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0020-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-placeholder-regex-escapes-001/backslash",
+                     "bodyPatterns": [{"equalToJson": "{\"p\":\"${json-unit.regex}a\\\\\\\\b\"}"}]},
+         "response": {"status": 200, "body": "backslash",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/backslash
+      body: '{"p":"a\\b"}'
+    expect: {status: 200, body: "backslash"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-placeholder-regex-escapes-001/backslash
+      body: '{"p":"ab"}'
+    expect: {status: 404}

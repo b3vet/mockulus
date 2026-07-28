@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pattern-question-quantifier-002
+behaviors: [B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `?` is the one character that means something to both the URL grammar and
+  # the regex grammar, and in a urlPattern the regex wins: it is a quantifier on
+  # the atom before it, never the start of the query. An implementation that
+  # split the pattern on `?` to decide which half to match against the path and
+  # which against the query — a plausible way to reach urlPathPattern's
+  # behavior — would read this pattern as "path /…/ab, query c" and answer every
+  # one of the four requests below the other way round.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0010-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPattern": "/e2e/wmv-url-pattern-question-quantifier-002/ab?c"},
+         "response": {"status": 200, "body": "quantifier", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: "/e2e/wmv-url-pattern-question-quantifier-002/ab?c"}
+
+  # The `b` is optional, so both spellings of the path match.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-question-quantifier-002/ac}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "quantifier"
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-question-quantifier-002/abc}
+    expect: {status: 200, body: "quantifier"}
+
+  # Optional means nought or one, so a second `b` is a non-match — the control
+  # that stops "quantifier" from being read as "wildcard".
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pattern-question-quantifier-002/abbc}
+    expect: {status: 404}
+
+  # And the target that spells the `?` out is precisely the one the pattern
+  # cannot match, because the pattern has no literal `?` in it at all.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-pattern-question-quantifier-002/ab?c"}
+    expect: {status: 404}

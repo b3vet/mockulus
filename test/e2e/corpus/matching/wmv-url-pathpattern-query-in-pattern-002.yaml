@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-pathpattern-query-in-pattern-002
+behaviors: [B-REQ-URLPATHPATTERN, B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The same mistake as wmv-url-path-query-in-criterion-001 in the regex field,
+  # where it is harder to see: the pattern is valid, it compiles, it registers,
+  # and the `\?` in it can never be satisfied because the subject stops at the
+  # query. The pair below is the whole difference between the two pattern
+  # fields, stated with one operand: byte for byte the same regex, reachable
+  # through urlPattern and unreachable through urlPathPattern.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0017-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/wmv-url-pathpattern-query-in-pattern-002/p/[a-z]+\\?trace=true"},
+         "response": {"status": 200, "body": "path-pattern", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          urlPathPattern: "/e2e/wmv-url-pathpattern-query-in-pattern-002/p/[a-z]+\\?trace=true"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0017-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/wmv-url-pathpattern-query-in-pattern-002/u/[a-z]+\\?trace=true"},
+         "response": {"status": 200, "body": "url-pattern", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The request the pattern describes exactly, refused because the field it was
+  # written in never sees the half after the `?`.
+  - request:
+      port: mock
+      method: GET
+      path: "/e2e/wmv-url-pathpattern-query-in-pattern-002/p/abc?trace=true"
+    expect: {status: 404}
+
+  # Nor is the query part treated as optional decoration once it cannot match:
+  # the path alone does not satisfy a pattern that still requires it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pathpattern-query-in-pattern-002/p/abc}
+    expect: {status: 404}
+
+  # The identical pattern in the field whose subject includes the query serves
+  # the identical request, which is what makes the two 404s above a statement
+  # about the subject rather than about the regex.
+  - request:
+      port: mock
+      method: GET
+      path: "/e2e/wmv-url-pathpattern-query-in-pattern-002/u/abc?trace=true"
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "url-pattern"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-pathpattern-query-in-pattern-002/u/abc}
+    expect: {status: 404}

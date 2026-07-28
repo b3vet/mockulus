@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-contains-json-text-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `contains` over a JSON body is a text search and nothing more. It is worth
+  # a case because it looks like a cheap equalToJson and is used as one: the
+  # operand below reads as "the document has a member a whose value is 1", and
+  # the four bodies after it are the four ways that reading is wrong. A stub
+  # author who wants the structural question has equalToJson and
+  # matchesJsonPath; the risk here is a stub that appears to work until a client
+  # changes its serializer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0009-4000-8000-000000000001",
+         "name": "contains a fragment of JSON text",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-contains-json-text-001/fragment",
+                     "bodyPatterns": [{"contains": "\"a\":1"}]},
+         "response": {"status": 200, "body": "fragment",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-json-text-001/fragment, body: '{"a":1}'}
+    expect: {status: 200, body: "fragment"}
+
+  # One space after the colon — a difference no JSON parser can see — and the
+  # criterion stops holding. This is the whole hazard in one step.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-json-text-001/fragment, body: '{"a": 1}'}
+    expect: {status: 404}
+
+  # Member order is invisible to the search, so a document that happens to
+  # serialize the member later still matches. The text search is neither
+  # stricter nor looser than the structural comparison — it is answering a
+  # different question.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-json-text-001/fragment, body: '{"b":2,"a":1}'}
+    expect: {status: 200, body: "fragment"}
+
+  # The value is 10, not 1, and the criterion holds anyway: the operand ends
+  # mid-number and text has no notion of where a number ends. Under
+  # equalToJson this document is a mismatch, which is exactly the divergence
+  # the case exists to make visible.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-json-text-001/fragment, body: '{"a":10}'}
+    expect: {status: 200, body: "fragment"}
+
+  # 1.0 equals 1 numerically and equalToJson treats them as equal, but the text
+  # still begins with the operand, so this one matches for a reason that has
+  # nothing to do with that equality.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-json-text-001/fragment, body: '{"a":1.0}'}
+    expect: {status: 200, body: "fragment"}
+
+  # Member names are case-sensitive in JSON and in the text search alike, so
+  # the two agree here — the control that keeps the case from reading as
+  # "the text search matches everything".
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-contains-json-text-001/fragment, body: '{"A":1}'}
+    expect: {status: 404}

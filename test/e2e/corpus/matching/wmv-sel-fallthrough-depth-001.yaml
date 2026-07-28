@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-fallthrough-depth-001
+behaviors: [B-STUB-PRIORITY, B-REQ-HEADERS, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The last step lands on a 404 whose body differs by design: WireMock renders a
+# near-miss table there and mockulus deliberately does not (deviation #2/#18).
+# Every other body, and every status, is still diffed.
+wm_ignore: ["$unmatched-body"]
+# §5.3 says selection walks the ordered candidates and takes the first that
+# matches in full, which means a stub whose criteria fail must not stop the
+# walk. A two-stub case shows the walk can take one step. This one gives it a
+# three-rung ladder, registered strongest first so that recency argues against
+# the winner every time, and drives each rung with a request that fails exactly
+# the criteria above it — so the transcript reads as the walk itself rather than
+# as four separate lookups.
+#
+# An engine that stopped at the first candidate would answer 404 to three of the
+# four requests; one that restarted the walk per criterion, or that scored
+# candidates instead of ordering them, would pick a different rung for at least
+# one of them.
+steps:
+  # Rung 1: the narrowest, and the strongest number.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0008-4000-8000-000000000001",
+         "priority": 1,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-fallthrough-depth-001/tier",
+                     "headers": {"X-Tier": {"equalTo": "gold"}},
+                     "queryParameters": {"region": {"equalTo": "eu"}}},
+         "response": {"status": 200, "body": "gold in eu",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        priority: 1
+        request:
+          headers: {X-Tier: {equalTo: "gold"}}
+          queryParameters: {region: {equalTo: "eu"}}
+
+  # Rung 2 drops the query criterion.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0008-4000-8000-000000000002",
+         "priority": 2,
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-sel-fallthrough-depth-001/tier",
+                     "headers": {"X-Tier": {"equalTo": "gold"}}},
+         "response": {"status": 200, "body": "gold anywhere",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Rung 3 drops the header too, and is the last thing on this path.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0008-4000-8000-000000000003",
+         "priority": 3,
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-fallthrough-depth-001/tier"},
+         "response": {"status": 200, "body": "anyone",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # All three match: the walk stops on the first rung.
+  - request:
+      port: mock
+      method: GET
+      path: "/e2e/wmv-sel-fallthrough-depth-001/tier?region=eu"
+      headers: {X-Tier: gold}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "gold in eu"
+
+  # The query criterion fails and the header one holds, so the walk takes one
+  # step. The rung it lands on is the one whose criteria are all satisfied, not
+  # the one that failed by the smallest margin.
+  - request:
+      port: mock
+      method: GET
+      path: "/e2e/wmv-sel-fallthrough-depth-001/tier?region=us"
+      headers: {X-Tier: gold}
+    expect: {status: 200, body: "gold anywhere"}
+
+  # The header fails while the query still matches, which fails both of the
+  # rungs above the last: the walk takes two steps in one request rather than
+  # stopping where the first failure was.
+  - request:
+      port: mock
+      method: GET
+      path: "/e2e/wmv-sel-fallthrough-depth-001/tier?region=eu"
+      headers: {X-Tier: silver}
+    expect: {status: 200, body: "anyone"}
+
+  # A header that is absent rather than wrong is the other way the upper rungs
+  # fail, and it must not read as a wildcard.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-fallthrough-depth-001/tier}
+    expect: {status: 200, body: "anyone"}
+
+  # The bottom rung is a catch-all for one path and not for the deployment, so a
+  # sibling path falls off the end of the walk. Without this the three answers
+  # above would be consistent with a stub that matches anything.
+  - request:
+      port: mock
+      method: GET
+      path: "/e2e/wmv-sel-fallthrough-depth-001/other?region=eu"
+      headers: {X-Tier: gold}
+    expect: {status: 404}

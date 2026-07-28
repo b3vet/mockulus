@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-conjunction-keys-001
+behaviors:
+  - B-REQ-QUERYPARAMETERS
+  - B-MATCH-ABSENT
+  - B-MATCH-CONTAINS-DOESNOTCONTAIN
+  - B-MATCH-MATCHES-DOESNOTMATCH
+  - B-STUB-REQUEST
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Four criteria of four different kinds on one parameter set, three of them
+# demanding a value and the fourth demanding that no value exists. Each of the
+# refusals below changes exactly one parameter from the request that matched,
+# which is what "every specified criterion must match" (SPEC §5.3) means when
+# all the criteria live on the same side of the request.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000025",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-conjunction-keys-001/report",
+                     "queryParameters": {"tenant": {"equalTo": "acme"},
+                                         "format": {"matches": "csv|json"},
+                                         "tag": {"contains": "beta"},
+                                         "debug": {"absent": true}}},
+         "response": {"status": 200, "body": "report", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            tenant: {equalTo: "acme"}
+            format: {matches: "csv|json"}
+            tag: {contains: "beta"}
+            debug: {absent: true}
+
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=acme&format=csv&tag=beta-1"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "report"
+
+  # The same four parameters written in a different order. Criteria are keyed by
+  # name, so nothing about the request changed.
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?format=csv&tag=beta-1&tenant=acme"}
+    expect: {status: 200, body: "report"}
+
+  # One parameter changed per step, three times over.
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=other&format=csv&tag=beta-1"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=acme&format=xml&tag=beta-1"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=acme&format=csv&tag=alpha-1"}
+    expect: {status: 404}
+
+  # Nothing changed and a parameter was added, which is a refusal only because
+  # one of the criteria is about a parameter that must not be there. Ignoring
+  # unmentioned parameters — the correct treatment of `extra` below — must not
+  # extend to a parameter the stub did mention.
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=acme&format=csv&tag=beta-1&debug=1"}
+    expect: {status: 404}
+
+  # And a parameter nothing in the stub names really is ignored.
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=acme&format=csv&tag=beta-1&extra=9"}
+    expect: {status: 200, body: "report"}
+
+  # A criterion demanding a value is not satisfied by the parameter's absence,
+  # so leaving one out fails just as changing it did.
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=acme&format=csv"}
+    expect: {status: 404}
+
+  # The other alternative of the regex, and a substring found in the middle
+  # rather than at the front — the two criteria proving they are what they claim
+  # rather than equality in disguise.
+  - request: {method: GET, path: "/e2e/wmv-query-conjunction-keys-001/report?tenant=acme&format=json&tag=xbetax"}
+    expect: {status: 200, body: "report"}

@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-null-extra-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A null-valued member is a member. Clients that build request bodies from a
+  # struct emit one for every optional field they left unset, so whether those
+  # count as extra elements decides whether such a client can match a stub at
+  # all — and an implementation that dropped nulls while parsing would answer
+  # both of the first two steps the same way.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0002-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-extra-001/strict",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}"}]},
+         "response": {"status": 200, "body": "strict",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0002-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-extra-001/relaxed",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "relaxed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Unexpected and null, so it is refused without the flag...
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-extra-001/strict
+      body: '{"a":1,"b":null}'
+    expect: {status: 404}
+
+  # ...and forgiven with it, exactly as an unexpected member holding a value is.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-extra-001/relaxed
+      body: '{"a":1,"b":null}'
+    expect: {status: 200, body: "relaxed"}
+
+  # Nulls at depth inside an unexpected member are covered by the same licence.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-extra-001/relaxed
+      body: '{"a":1,"b":{"c":null,"d":[null]}}'
+    expect: {status: 200, body: "relaxed"}
+
+  # The flag forgives members the expected document never named; it does not
+  # forgive one it did name. A stub expecting an explicit null therefore still
+  # requires the field to arrive, which is the assertion a client that omits
+  # empty fields would break.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0002-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-null-extra-001/expects-null",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1,\"b\":null}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "expects-null",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-extra-001/expects-null
+      body: '{"a":1,"b":null,"c":2}'
+    expect: {status: 200, body: "expects-null"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-extra-001/expects-null
+      body: '{"a":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-null-extra-001/expects-null
+      body: '{"a":1,"b":2}'
+    expect: {status: 404}

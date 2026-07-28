@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-case-pattern-002
+behaviors: [B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A URL pattern is compiled case-sensitively, and the way to get the other
+  # behavior is the inline flag rather than a stub field. That matters for the
+  # wrapper of SPEC §6.6: the pattern is wrapped in `\A(?:…)\z` with `(?s)` in
+  # front, and a wrapper that put the author's pattern anywhere other than
+  # inside a group starting at the flag's position would either leak the flag
+  # onto nothing or drop it entirely. The two stubs here differ only by that
+  # flag, so the pair reports which.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0005-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPattern": "/e2e/wmv-url-case-pattern-002/s/[a-z]+"},
+         "response": {"status": 200, "body": "sensitive", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: "/e2e/wmv-url-case-pattern-002/s/[a-z]+"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0005-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPattern": "(?i)/e2e/wmv-url-case-pattern-002/i/[a-z]+"},
+         "response": {"status": 200, "body": "insensitive", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-pattern-002/s/abc}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "sensitive"
+
+  # The default: the character class means what it says, so upper case is
+  # outside it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-pattern-002/s/ABC}
+    expect: {status: 404}
+
+  # With the flag, the same class covers both, and the flag reaches the whole
+  # remainder of the pattern rather than only the atom after it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-pattern-002/i/abc}
+    expect: {status: 200, body: "insensitive"}
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-pattern-002/i/ABC}
+    expect: {status: 200, body: "insensitive"}
+
+  # Still a pattern and still anchored: case-insensitivity is not permissiveness
+  # about anything else.
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-case-pattern-002/i/ABC9}
+    expect: {status: 404}

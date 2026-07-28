@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-gate-alone-404-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE]
+wm: verified
+# The unmatched steps land on a body that differs by design: WireMock renders a
+# near-miss table on an unmatched request and mockulus deliberately does not
+# (deviation #2/#18). The statuses, and every matched body, are still diffed.
+wm_ignore: ["$unmatched-body"]
+# A gated stub whose state does not hold is non-matching, and every other case
+# in the slice observes that through a second stub picking the request up. This
+# one takes the second stub away. The gated stub is alone on its path, so when
+# the gate does not hold there is nothing behind it and the request is unmatched
+# — a plain 404, the same one an unregistered path gets.
+#
+# That is worth pinning on its own because the tempting implementations of a
+# failed gate are not 404: serving the stub anyway with a warning, or holding
+# the request until the state arrives, or answering some scenario-specific
+# error. It is also the shape a suite meets first, when it forgets the call that
+# arms the flow, so the answer it gets there decides whether it goes looking for
+# a missing stub or a missing step.
+#
+# The gate is then driven both ways, because a case that only opens it would
+# equally support "the first request warms the scenario up".
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0013-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-gate-alone-404-001",
+         "requiredScenarioState": "open",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-gate-alone-404-001/vault"},
+         "response": {"status": 200, "body": "the vault is open",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        scenarioName: "wmv-sel-scenario-gate-alone-404-001"
+        requiredScenarioState: "open"
+
+  # Started is not "open", and there is nothing else on the path.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gate-alone-404-001/vault}
+    expect: {status: 404}
+
+  # Repeating it makes the same answer: a refused request does not creep the
+  # scenario forward, so the flow cannot be walked by knocking.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gate-alone-404-001/vault}
+    expect: {status: 404}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0013-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-gate-alone-404-001",
+         "newScenarioState": "open",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-gate-alone-404-001/unlock"},
+         "response": {"status": 200, "body": "unlocked",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-gate-alone-404-001/unlock}
+    expect: {status: 200, body: "unlocked"}
+
+  # The same request that was unmatched twice is now served by a stub that has
+  # not changed, which is the whole claim: the 404 above was the gate and not a
+  # registration that failed.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gate-alone-404-001/vault}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "the vault is open"
+
+  # It has no newScenarioState, so reading it repeatedly leaves the flow where
+  # it is.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gate-alone-404-001/vault}
+    expect: {status: 200, body: "the vault is open"}
+
+  # And the gate closes again when the state moves on, so it is a condition
+  # evaluated per request rather than a latch the first success releases.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0013-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-gate-alone-404-001",
+         "newScenarioState": "shut",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-gate-alone-404-001/lock"},
+         "response": {"status": 200, "body": "locked",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-gate-alone-404-001/lock}
+    expect: {status: 200, body: "locked"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-gate-alone-404-001/vault}
+    expect: {status: 404}

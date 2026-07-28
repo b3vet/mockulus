@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-combinators-demorgan-001
+behaviors: [B-MATCH-AND-OR-NOT, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Two stubs stating the same criterion two ways: `not(a and b)` and
+  # `(not a) or (not b)`. They are equal only if the three combinators really
+  # are the boolean operations they are named after — a `not` that inverted
+  # something other than its operand's verdict, or an `and` that stopped at its
+  # first operand, breaks the identity on at least one of the four bodies below.
+  # Every body is sent to both stubs, so the assertion is the agreement rather
+  # than either stub's answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0014-4000-8000-000000000001",
+         "name": "not over a conjunction",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinators-demorgan-001/negated-and",
+                     "bodyPatterns": [{"not": {"and": [{"contains": "a"},
+                                                       {"contains": "b"}]}}]},
+         "response": {"status": 200, "body": "negated-and",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-0014-4000-8000-000000000002",
+         "name": "a disjunction of negations",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-combinators-demorgan-001/or-of-nots",
+                     "bodyPatterns": [{"or": [{"not": {"contains": "a"}},
+                                              {"not": {"contains": "b"}}]}]},
+         "response": {"status": 200, "body": "or-of-nots",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Both operands hold, so both spellings refuse. This is the only body of the
+  # four that either stub refuses, which is what makes the other three worth
+  # sending: a stub that matched everything would agree with its twin as well.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/negated-and, body: "ab"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/or-of-nots, body: "ab"}
+    expect: {status: 404}
+
+  # One operand holds and the other does not, in each direction.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/negated-and, body: "a"}
+    expect: {status: 200, body: "negated-and"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/or-of-nots, body: "a"}
+    expect: {status: 200, body: "or-of-nots"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/negated-and, body: "b"}
+    expect: {status: 200, body: "negated-and"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/or-of-nots, body: "b"}
+    expect: {status: 200, body: "or-of-nots"}
+
+  # Neither operand holds.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/negated-and, body: "c"}
+    expect: {status: 200, body: "negated-and"}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-combinators-demorgan-001/or-of-nots, body: "c"}
+    expect: {status: 200, body: "or-of-nots"}

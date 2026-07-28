@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-put-after-delete-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-ADMIN-MAPPINGS-ID-DELETE
+wm: verified
+# The unmatched mock-port steps compare by status only: their body is the
+# near-miss table WireMock renders and mockulus does not (deviation #2/#18).
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0002-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-after-delete-001/doomed"},
+         "response": {"status": 200, "body": "alive"}}
+    expect: {status: 201}
+
+  # While the stub is live the PUT lands, which is the reference answer the rest
+  # of the case is measured against: nothing about this id or this body changes
+  # below, only whether the stub still exists.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0002-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-after-delete-001/doomed"},
+         "response": {"status": 200, "body": "edited"}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-after-delete-001/doomed}
+    expect: {status: 200, body: "edited"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0002-4000-8000-000000000001}
+    expect: {status: 200}
+
+  # The same call that succeeded twice now reports 404, so the answer tracks the
+  # stub being there and not the id ever having been used. A store that kept a
+  # tombstone addressable would still accept this.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0002-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-after-delete-001/doomed"},
+         "response": {"status": 200, "body": "resurrected"}}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # And the refusal is total: the PUT did not put the stub back, so the path
+  # stays unmatched. This is the step that separates "404 was reported" from
+  # "404 and nothing happened" — a handler that answered 404 after writing would
+  # leave a stub serving under an id its own API says does not exist.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-after-delete-001/doomed}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0002-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # Only a create brings the id back, and once it is back the identical PUT
+  # works again. The id was never poisoned by having been deleted; what changed
+  # each time is only whether a stub was standing under it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0002-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-after-delete-001/doomed"},
+         "response": {"status": 200, "body": "recreated"}}
+    expect: {status: 201}
+
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0002-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-after-delete-001/doomed"},
+         "response": {"status": 200, "body": "resurrected"}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-after-delete-001/doomed}
+    expect: {status: 200, body: "resurrected"}

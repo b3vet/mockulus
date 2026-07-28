@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-matches-lookahead-001
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The two-engine strategy of §6.6 is a property of the regex seam, so it has
+  # to be reachable from every criterion that accepts a pattern. The existing
+  # fallback cases exercise it through a URL and through a body pattern; this
+  # one goes in through a header value, where the compiled matcher is built and
+  # cached alongside the header index rather than alongside the body patterns.
+  # RE2 refuses `(?!…)` outright, so registration succeeding is already evidence
+  # the fallback took the pattern — a header path wired only to RE2 would have
+  # answered 422 with code 1003 here and the stub would not exist.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0014-4000-8000-000000000001",
+         "name": "negative lookahead over a header value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-matches-lookahead-001/version",
+                     "headers": {"X-Ver": {"matches": "(?!v0)v[0-9]+"}}},
+         "response": {"status": 200, "body": "lookahead",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-Ver: {matches: "(?!v0)v[0-9]+"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-lookahead-001/version
+      headers: {X-Ver: "v1"}
+    expect: {status: 200, body: "lookahead"}
+
+  # Accepting the pattern is worth nothing unless it is evaluated, and this is
+  # the value the lookahead exists to refuse. A header path that quietly dropped
+  # the assertion — or that stored the pattern and matched on `v[0-9]+` — is a
+  # 200 here.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-lookahead-001/version
+      headers: {X-Ver: "v0"}
+    expect: {status: 404}
+
+  # The lookahead reads ahead without consuming, so a longer version beginning
+  # with the excluded prefix is excluded too. Any implementation that treated
+  # `(?!v0)` as a literal, or that anchored it to the end of the value, differs
+  # here.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-lookahead-001/version
+      headers: {X-Ver: "v01"}
+    expect: {status: 404}
+
+  # The rest of the pattern still has to hold: the lookahead does not turn what
+  # follows it into a wildcard.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-lookahead-001/version
+      headers: {X-Ver: "w1"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-matches-lookahead-001/version
+      headers: {X-Ver: "v"}
+    expect: {status: 404}

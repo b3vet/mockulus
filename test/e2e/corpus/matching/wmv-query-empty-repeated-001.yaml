@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-empty-repeated-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-MATCH-EQUALTO-CASEINSENSITIVE]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A parameter sent with no value still occupies a slot in that parameter's list
+# of values, which is the thing a repeated parameter makes observable: the real
+# value sitting next to it has to be found anyway, and the two spellings of "no
+# value" have to end up as the same value. A parser that treated `?x=` as an
+# instruction to skip the parameter would pass every positive step below and
+# fail the last two, and one that treated a bare `?x` as a different kind of
+# thing from `?x=` would fail the pair in the middle.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000018",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-empty-repeated-001/empty",
+                     "queryParameters": {"x": {"equalTo": ""}}},
+         "response": {"status": 200, "body": "empty", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            x: {equalTo: ""}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000019",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-empty-repeated-001/value",
+                     "queryParameters": {"x": {"equalTo": "v"}}},
+         "response": {"status": 200, "body": "value", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The real value is found next to an empty one, in either order, so the empty
+  # value neither ends the list nor replaces what follows it.
+  - request: {method: GET, path: "/e2e/wmv-query-empty-repeated-001/value?x=&x=v"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "value"
+  - request: {method: GET, path: "/e2e/wmv-query-empty-repeated-001/value?x=v&x="}
+    expect: {status: 200, body: "value"}
+
+  # The same request written with the other spelling of the empty value. If a
+  # bare `?x` were anything other than the empty string — a flag, an absence —
+  # this step and the one above it could not both hold.
+  - request: {method: GET, path: "/e2e/wmv-query-empty-repeated-001/value?x&x=v"}
+    expect: {status: 200, body: "value"}
+
+  # And with only empty values there is nothing for the criterion to find, which
+  # is what makes the three steps above about the real value rather than about
+  # the criterion being lenient.
+  - request: {method: GET, path: "/e2e/wmv-query-empty-repeated-001/value?x="}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-empty-repeated-001/value?x&x="}
+    expect: {status: 404}
+
+  # Read from the other side, with the criterion that demands the empty string:
+  # a parameter repeated in both of its empty spellings carries the empty string
+  # twice, so `?x` and `?x=` really are one value rather than two.
+  - request: {method: GET, path: "/e2e/wmv-query-empty-repeated-001/empty?x&x="}
+    expect: {status: 200, body: "empty"}
+
+  - request: {method: GET, path: "/e2e/wmv-query-empty-repeated-001/empty?x=v"}
+    expect: {status: 404}

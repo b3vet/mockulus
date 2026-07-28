@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-put-seq-preserved-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+wm: verified
+steps:
+  # Three stubs on one path at equal (absent, therefore default) priority. The
+  # tie-break is insertion sequence descending, so C wins, then B, then A — an
+  # order the edits below must not touch. Three rather than two, because a PUT
+  # that re-inserted at the head would be invisible with two stubs whenever the
+  # edited one happened to be the winner already.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0005-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-seq-preserved-001/lane"},
+         "response": {"status": 200, "body": "A-v1"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0005-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-seq-preserved-001/lane"},
+         "response": {"status": 200, "body": "B-v1"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0005-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-seq-preserved-001/lane"},
+         "response": {"status": 200, "body": "C-v1"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-seq-preserved-001/lane}
+    expect: {status: 200, body: "C-v1"}
+
+  # Editing the two losers, oldest first, is the shape that would expose a fresh
+  # sequence most loudly: after these two calls A is the most recently written
+  # document of the three, and B the second most recent.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0005-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-seq-preserved-001/lane"},
+         "response": {"status": 200, "body": "A-v2"}}
+    expect: {status: 200}
+
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0005-4000-8000-000000000002
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-seq-preserved-001/lane"},
+         "response": {"status": 200, "body": "B-v2"}}
+    expect: {status: 200}
+
+  # C still serves. A suite that edited a stub between two tests must not find
+  # an unrelated test answering differently afterwards, with nothing in either
+  # document to explain it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-seq-preserved-001/lane}
+    expect: {status: 200, body: "C-v1"}
+
+  # Removing the winner exposes the order underneath it, which is the assertion
+  # the two edits were really aimed at: B is next, not A. Preservation has to
+  # hold between the edited stubs and not only against the untouched one.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0005-4000-8000-000000000003}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-seq-preserved-001/lane}
+    expect: {status: 200, body: "B-v2"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0005-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-seq-preserved-001/lane}
+    expect: {status: 200, body: "A-v2"}
+
+  # The control for all of it. Deleting a stub and creating it again *is* a new
+  # registration and does take the newest sequence, so the mechanism the PUTs
+  # above did not trigger is demonstrably there to trigger — without this step
+  # the case would also pass against a server that ignored insertion order
+  # entirely and always served the oldest stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0005-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-seq-preserved-001/lane"},
+         "response": {"status": 200, "body": "D-newest"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-seq-preserved-001/lane}
+    expect: {status: 200, body: "D-newest"}

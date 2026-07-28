@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-nested-number-text-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The inner matchers are string matchers, so a selected value that is not a
+  # string is rendered to text before one sees it. That rendering is the part a
+  # stub author cannot see and has to be able to predict: a whole-number JSON
+  # value reaches the matcher as its digits, with no quotes around it and no
+  # decimal point added.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0016-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nested-number-text-001/qty",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.qty",
+                                                           "equalTo": "7"}}]},
+         "response": {"status": 200, "body": "qty",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-number-text-001/qty
+      body: '{"qty":7}'
+    expect: {status: 200, body: "qty"}
+
+  # The same digits sent as a string satisfy the same stub, because what the
+  # inner matcher compares is text either way. A stub cannot tell the two
+  # documents apart, and that is the documented consequence rather than a bug.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-number-text-001/qty
+      body: '{"qty":"7"}'
+    expect: {status: 200, body: "qty"}
+
+  # A different number is a different text: the rendering does not make every
+  # number equal to every other.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-number-text-001/qty
+      body: '{"qty":8}'
+    expect: {status: 404}
+
+  # No quotes are added around the rendered value — a matcher comparing against
+  # the JSON spelling of the node would want "\"7\"" and refuse this document.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-number-text-001/qty
+      body: '{"qty":7,"other":"7"}'
+    expect: {status: 200, body: "qty"}
+
+  # A null is not rendered at all, whatever text the inner matcher wants.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-number-text-001/qty
+      body: '{"qty":null}'
+    expect: {status: 404}
+
+  # A longer whole number to pin that the digits are carried across verbatim
+  # rather than reformatted, grouped or truncated.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0016-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-nested-number-text-001/total",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.total",
+                                                           "equalTo": "1234567"}}]},
+         "response": {"status": 200, "body": "total",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-number-text-001/total
+      body: '{"total":1234567}'
+    expect: {status: 200, body: "total"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-nested-number-text-001/total
+      body: '{"total":1234568}'
+    expect: {status: 404}

@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-definition-roundtrip-001
+behaviors:
+  - B-STUB-RESPONSE
+  - B-RESP-STATUS
+  - B-RESP-STATUSMESSAGE
+  - B-RESP-HEADERS
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-RESP-FIXEDDELAYMILLISECONDS
+wm: verified
+# $global-listing covers the listing step, and it is not a deviation: pointed at
+# a fresh instance the two servers return the same listing. The oracle is reset
+# per case while corpus cases share one mockulus, so our list is a superset of
+# the oracle's and the two cannot agree on ordering or on meta.total. The entry
+# itself is still compared in full — this stub's document has to be in the list
+# and has to match WireMock's.
+wm_ignore: ["$global-listing"]
+steps:
+  # One response object using every field of §5.2 that mockulus serves inline —
+  # a status, a reason phrase, a declared content type, a header that repeats, a
+  # JSON payload and a delay. The reason it is one stub rather than six is that
+  # the fields are stored together and read back together: a mapping that dropped
+  # a field it did not recognise, or reordered the response object as it
+  # serialised it, would still round-trip each field on its own.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0018-4000-8000-000000000001",
+         "name": "the whole response definition",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-definition-roundtrip-001/everything"},
+         "response": {"status": 207, "statusMessage": "Read Back",
+                      "jsonBody": {"z": 1, "a": [1, 2]},
+                      "headers": {"Content-Type": "application/json",
+                                  "X-Multi": ["a", "b"]},
+                      "fixedDelayMilliseconds": 25}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "a1000007-0018-4000-8000-000000000001"
+        response:
+          status: 207
+          statusMessage: "Read Back"
+          jsonBody: {z: 1, a: [1, 2]}
+          headers:
+            Content-Type: "application/json"
+            X-Multi: ["a", "b"]
+          fixedDelayMilliseconds: 25
+
+  # Read back by id, field for field. This is the request a client makes when it
+  # wants to know what it registered, and the answer has to be the document it
+  # sent rather than a rendering of the server's internal form: an array header
+  # flattened to a string here, or a delay normalised to a duration, would be a
+  # mapping the client cannot diff against its own source.
+  - admin: {method: GET, path: /__admin/mappings/a1000007-0018-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "a1000007-0018-4000-8000-000000000001"
+        name: "the whole response definition"
+        response:
+          status: 207
+          statusMessage: "Read Back"
+          jsonBody: {z: 1, a: [1, 2]}
+          headers:
+            Content-Type: "application/json"
+            X-Multi: ["a", "b"]
+          fixedDelayMilliseconds: 25
+
+  # And in the deployment-wide listing, found by id. The listing is global and
+  # every case writes to the same instance, so this case finds its own stub by
+  # identity: an index would name whichever stub some other case registered
+  # first, and a count would name how many of them there happen to be.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match:
+            id: "a1000007-0018-4000-8000-000000000001"
+            response:
+              status: 207
+              statusMessage: "Read Back"
+              headers: {X-Multi: ["a", "b"]}
+              fixedDelayMilliseconds: 25
+
+  # The stored document is what gets served, so the round trip above is not a
+  # separate copy kept for the admin API's benefit. Every field is observable in
+  # this one exchange: the status, the phrase, the declared type, the first of
+  # the repeated values, and the compact rendering of the JSON value.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-definition-roundtrip-001/everything}
+    expect:
+      status: 207
+      status_message: "Read Back"
+      headers: {Content-Type: application/json, X-Multi: "a"}
+      body: '{"z":1,"a":[1,2]}'

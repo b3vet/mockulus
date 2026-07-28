@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-filter-existence-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A filter term with no operator is an existence test over the element, which
+  # is how a stub says "the elements that carry this field". It is worth its own
+  # case because it is the one filter term whose right-hand side is implicit,
+  # and because the obvious mistake — reading the field's value as a boolean —
+  # is invisible until an element carries a false.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0012-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-existence-001/carries",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.flag)]"}]},
+         "response": {"status": 200, "body": "carries",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"flag":"on"}]}'
+    expect: {status: 200, body: "carries"}
+
+  # The field carrying false: it is there, and the term asks whether it is there.
+  # A term that had been read as "@.flag == true" answers 404.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"flag":false}]}'
+    expect: {status: 200, body: "carries"}
+
+  # The same argument with an empty string, which a truthiness test would also
+  # reject.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"flag":""}]}'
+    expect: {status: 200, body: "carries"}
+
+  # An element without the field is the control, and it is what makes the three
+  # steps above assertions rather than coincidences.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"other":1}]}'
+    expect: {status: 404}
+
+  # One element out of several is enough — the filter selects the elements that
+  # satisfy it and the bare form only asks whether any were selected.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"other":1},{"flag":"on"}]}'
+    expect: {status: 200, body: "carries"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[]}'
+    expect: {status: 404}

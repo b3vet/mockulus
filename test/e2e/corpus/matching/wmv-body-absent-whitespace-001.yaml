@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-absent-whitespace-001
+behaviors: [B-MATCH-ABSENT, B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A zero-length body is absent. A body of one space is not: it is a body, one
+  # byte long, that happens to be whitespace. The distinction is invisible to a
+  # human reading a request log and it decides which stub answers, so the two
+  # stubs below are registered on the same question from opposite sides — one
+  # demands absence, one demands exactly that single space.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000f-4000-8000-000000000001",
+         "name": "absent body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-absent-whitespace-001/absent",
+                     "bodyPatterns": [{"absent": true}]},
+         "response": {"status": 200, "body": "absent",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000006-000f-4000-8000-000000000002",
+         "name": "a body of exactly one space",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-absent-whitespace-001/space",
+                     "bodyPatterns": [{"equalTo": " "}]},
+         "response": {"status": 200, "body": "space",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-absent-whitespace-001/absent}
+    expect: {status: 200, body: "absent"}
+
+  # One space is a present body, so `absent` does not hold. An implementation
+  # that trimmed the body before deciding presence — which is the same instinct
+  # that trims before comparing — answers this 200 and then answers the
+  # equalTo step below 404, getting both halves of the case wrong at once.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-absent-whitespace-001/absent, body: " "}
+    expect: {status: 404}
+
+  # A newline is not emptiness either, and it is the byte a client library is
+  # most likely to append on its own.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-absent-whitespace-001/absent, body: "\n"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-absent-whitespace-001/space, body: " "}
+    expect: {status: 200, body: "space"}
+
+  # And the space stub refuses the absent body, which is the other half of the
+  # rule: no positive body matcher holds over an absent subject, however
+  # forgiving its operand looks.
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-absent-whitespace-001/space}
+    expect: {status: 404}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-body-absent-whitespace-001/space, body: "  "}
+    expect: {status: 404}

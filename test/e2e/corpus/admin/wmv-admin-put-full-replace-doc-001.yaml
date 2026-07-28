@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-put-full-replace-doc-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-STUB-NAME
+  - B-STUB-METADATA
+  - B-STUB-PRIORITY
+wm: verified
+steps:
+  # A stub carrying every optional top-level field the format has, so the
+  # replacement below has something to drop on each of them. The create echo is
+  # asserted exactly, which pins the starting document rather than assuming it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0003-4000-8000-000000000001",
+         "name": "the full document",
+         "priority": 2,
+         "persistent": true,
+         "metadata": {"suite": "wmv-admin-put-full-replace-doc-001", "owner": "admin"},
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-full-replace-doc-001/doc"},
+         "response": {"status": 201, "body": "before", "headers": {"X-Mark": "one"}}}
+    expect:
+      status: 201
+      body_json:
+        id: "a1000008-0003-4000-8000-000000000001"
+        uuid: "a1000008-0003-4000-8000-000000000001"
+        name: "the full document"
+        priority: 2
+        persistent: true
+        metadata: {suite: "wmv-admin-put-full-replace-doc-001", owner: "admin"}
+        request: {method: GET, urlPath: /e2e/wmv-admin-put-full-replace-doc-001/doc}
+        response: {status: 201, body: "before", headers: {X-Mark: "one"}}
+
+  # The replacement names none of them. body_json rather than body_json_subset
+  # is the whole point: the assertion is about what is *absent*, and a subset
+  # check would pass just as happily if name, priority, persistent and metadata
+  # had all survived the edit.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/a1000008-0003-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-put-full-replace-doc-001/doc"},
+         "response": {"status": 200, "body": "after"}}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0003-4000-8000-000000000001"
+        uuid: "a1000008-0003-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-put-full-replace-doc-001/doc}
+        response: {status: 200, body: "after"}
+
+  # The identity fields are the exception, and they are not an exception the
+  # body granted: the replacement never mentioned an id either, and it is still
+  # addressable under the one in the path. A full replace that took the document
+  # literally on this field would have unregistered the stub it just edited.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0003-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0003-4000-8000-000000000001"
+        uuid: "a1000008-0003-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-put-full-replace-doc-001/doc}
+        response: {status: 200, body: "after"}
+
+  # The read-back is the stored document and the PUT response was the same one,
+  # so the drop reached the store rather than only the echo. The serving
+  # snapshot agrees too: the header the old response set is gone from the wire,
+  # which is where a merge would still be visible after both documents looked
+  # clean.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-put-full-replace-doc-001/doc}
+    expect:
+      status: 200
+      header_absent: [X-Mark]
+      body: "after"

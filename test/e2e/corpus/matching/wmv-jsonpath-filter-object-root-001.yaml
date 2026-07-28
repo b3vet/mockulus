@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-filter-object-root-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A filter applied to something that is not an array tests that node itself,
+  # which is what makes a predicate usable over a single document rather than
+  # only over a collection. It is the shape a stub reaches for when the body is
+  # one record: "this document, if it looks like this".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0023-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-object-root-001/record",
+                     "bodyPatterns": [{"matchesJsonPath": "$[?(@.status == 'paid')]"}]},
+         "response": {"status": 200, "body": "record",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-object-root-001/record
+      body: '{"status":"paid"}'
+    expect: {status: 200, body: "record"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-object-root-001/record
+      body: '{"status":"pending"}'
+    expect: {status: 404}
+
+  # The predicate is answered about the document, not about anything nested in
+  # it, so a matching record one level down does not carry the root.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-object-root-001/record
+      body: '{"order":{"status":"paid"}}'
+    expect: {status: 404}
+
+  # The same expression over an array root does what a filter ordinarily does,
+  # which is the property that lets one stub accept a record and a batch of them.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-object-root-001/record
+      body: '[{"status":"pending"},{"status":"paid"}]'
+    expect: {status: 200, body: "record"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-object-root-001/record
+      body: '[{"status":"pending"}]'
+    expect: {status: 404}

@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-absent-decoded-name-001
+behaviors: [B-MATCH-ABSENT, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `absent` is decided by a name lookup and nothing else, which makes it the one
+# criterion that fails silently when names are not decoded: the lookup finds
+# nothing, the criterion is satisfied, and the stub answers a request it was
+# written to refuse. Every other criterion would at least have refused. The name
+# here can only reach the server encoded, so the two spellings below are the
+# whole assertion.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000043",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-query-absent-decoded-name-001/quiet",
+                     "queryParameters": {"a b": {"absent": true}}},
+         "response": {"status": 200, "body": "quiet", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            "a b": {absent: true}
+
+  - request: {method: GET, path: /e2e/wmv-query-absent-decoded-name-001/quiet}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "quiet"
+
+  # A parameter whose decoded name is not the criterion's does not defeat it.
+  - request: {method: GET, path: "/e2e/wmv-query-absent-decoded-name-001/quiet?ab=1"}
+    expect: {status: 200, body: "quiet"}
+
+  # The two encodings of the criterion's name, both of which do.
+  - request: {method: GET, path: "/e2e/wmv-query-absent-decoded-name-001/quiet?a%20b=1"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-query-absent-decoded-name-001/quiet?a+b=1"}
+    expect: {status: 404}
+
+  # Presence is presence whatever the value, so the empty one defeats it too.
+  - request: {method: GET, path: "/e2e/wmv-query-absent-decoded-name-001/quiet?a+b="}
+    expect: {status: 404}

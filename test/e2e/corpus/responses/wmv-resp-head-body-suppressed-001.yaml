@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-head-body-suppressed-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-RESP-HEADERS
+  - B-REQ-METHOD
+wm: verified
+steps:
+  # A stub says what the response is; the method of the request says how much of
+  # it may be sent. HEAD is answered with the headers of the GET and none of the
+  # body, and a mock that wrote the body anyway would desynchronise the
+  # connection for every client that pipelines or keeps it alive.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0015-4000-8000-000000000001",
+         "request": {"method": "ANY", "urlPath": "/e2e/wmv-resp-head-body-suppressed-001/resource"},
+         "response": {"status": 200, "body": "the representation",
+                      "headers": {"Content-Type": "text/plain", "X-Meta": "kept"}}}
+    expect: {status: 201}
+
+  # The headers a HEAD is asked for are exactly the ones the GET would carry, so
+  # the metadata is the point and dropping it would make the method useless.
+  - request: {port: mock, method: HEAD, path: /e2e/wmv-resp-head-body-suppressed-001/resource}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain, X-Meta: "kept"}
+      body: ""
+
+  # The control, and the only thing that makes the empty body above a statement
+  # about HEAD: the very same stub, reached the very same way, hands the body
+  # over to a GET. An implementation that had simply failed to build the body
+  # would pass the step above and fail this one.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-head-body-suppressed-001/resource}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain, X-Meta: "kept"}
+      body: "the representation"
+
+  # And the suppression is not a property of the stub having been served once:
+  # asking again, in the other order, gives the same two answers.
+  - request: {port: mock, method: HEAD, path: /e2e/wmv-resp-head-body-suppressed-001/resource}
+    expect:
+      status: 200
+      body: ""

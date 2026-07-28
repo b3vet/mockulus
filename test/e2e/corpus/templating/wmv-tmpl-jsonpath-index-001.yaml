@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-jsonpath-index-001
+behaviors: [B-TPL-JSONPATH]
+wm: verified
+steps:
+  # The helper shares the matcher's JSONPath engine (SPEC §6.7), so the parts
+  # of the dialect a stub relies on are worth pinning where the answer is
+  # visible as text rather than as a match or a miss. This body reads one
+  # document eight ways.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0012-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-jsonpath-index-001/select"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "idx1={{jsonPath request.body '$.xs[1]'}} last={{jsonPath request.body '$.xs[-1]'}} deep={{jsonPath request.body '$.a.b.c'}} int={{jsonPath request.body '$.n'}} frac={{jsonPath request.body '$.f'}} flag={{jsonPath request.body '$.flag'}} nul=[{{jsonPath request.body '$.nil'}}] gone=[{{jsonPath request.body '$.nope'}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `idx1` and `last` are the same element reached from both ends, which is
+  # what makes the negative index a claim about counting backwards rather than
+  # about an engine that ignored the brackets and returned the whole array.
+  #
+  # The three scalars pin how a selected value becomes text: an integer keeps
+  # no decimal point, a fraction keeps its digits, and a boolean renders as a
+  # word. A stub writing these into a JSON document cannot afford a "7.0" where
+  # it wrote 7.
+  #
+  # `nul` and `gone` are bracketed because they are assertions about absence. A
+  # JSON null and a path that selects nothing both render as nothing — the
+  # difference between a body that parses and one carrying the literal word
+  # null where a caller expected a value.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonpath-index-001/select
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["a", "b", "c"], "a": {"b": {"c": "deep"}}, "n": 7, "f": 3.5, "flag": true, "nil": null}'
+    expect:
+      status: 200
+      body: "idx1=b last=c deep=deep int=7 frac=3.5 flag=true nul=[] gone=[]"
+
+  # A second document through the same stub. The array is a different length,
+  # so `last` moves while `idx1` stays put — an engine that had resolved the
+  # negative index to a fixed position would answer this one with "b" again.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonpath-index-001/select
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["a", "b", "c", "d", "e"], "a": {"b": {"c": "deeper"}}, "n": 0, "f": 0.5, "flag": false, "nil": null}'
+    expect:
+      status: 200
+      body: "idx1=b last=e deep=deeper int=0 frac=0.5 flag=false nul=[] gone=[]"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0012-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-jsonpath-index-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "idx1={{jsonPath request.body '$.xs[1]'}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-jsonpath-index-001/literal
+      headers: {Content-Type: application/json}
+      body: '{"xs": ["a", "b", "c"]}'
+    expect:
+      status: 200
+      body: "idx1={{jsonPath request.body '$.xs[1]'}}"

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-create-duplicate-imported-id-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-ERR-109
+wm: verified
+steps:
+  # The id arrives by import rather than by create, which is the interesting
+  # part: the duplicate guard is a property of the store's identity index, not
+  # of the endpoint that happened to fill it. A guard implemented inside the
+  # create handler's own bookkeeping would miss every id an import brought in,
+  # and a deployment seeded from a mappings file — the normal way to start one —
+  # would have no protection at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0009-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-duplicate-imported-id-001/seeded"},
+            "response": {"status": 200, "body": "seeded"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-duplicate-imported-id-001/seeded}
+    expect: {status: 200, body: "seeded"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0009-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-duplicate-imported-id-001/seeded"},
+         "response": {"status": 200, "body": "from create"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 109
+            title: "Duplicate stub mapping ID"
+
+  # The two halves of the pairing. Import *is* the upsert that create refuses to
+  # be, so the same document that was just rejected goes in without complaint
+  # through the other endpoint — which is what makes the 422 above a deliberate
+  # choice about POST rather than a general refusal to touch a live id.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0009-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-duplicate-imported-id-001/seeded"},
+            "response": {"status": 200, "body": "from create"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-duplicate-imported-id-001/seeded}
+    expect: {status: 200, body: "from create"}
+
+  # And the refusal was about that id and nothing broader: a create naming an id
+  # the import never mentioned is accepted in the same breath.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0009-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-duplicate-imported-id-001/fresh"},
+         "response": {"status": 200, "body": "fresh"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-duplicate-imported-id-001/fresh}
+    expect: {status: 200, body: "fresh"}

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-double-slash-001
+behaviors: [B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An empty path segment is the artefact of joining a base URL to a path that
+  # already starts with a slash, so it arrives in real traffic more often than
+  # anyone intends. The question a matching engine has to answer is whether the
+  # path it compares is the one that arrived or a tidied version of it, and the
+  # two stubs here make the answer legible: collapsing `//` would leave both
+  # requests pointing at the second stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0024-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-double-slash-001//dup"},
+         "response": {"status": 200, "body": "empty-segment", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPath: "/e2e/wmv-url-double-slash-001//dup"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0024-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-double-slash-001/dup"},
+         "response": {"status": 200, "body": "single-slash", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-double-slash-001//dup}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "empty-segment"
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-double-slash-001/dup}
+    expect: {status: 200, body: "single-slash"}

@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-combinator-composite-001
+behaviors: [B-MATCH-AND-OR-NOT, B-MATCH-CONTAINS-DOESNOTCONTAIN, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # matchers-core-combinators-001 exercises each combinator on its own. This is
+  # the shape a real stub ends up with — an `or` of the accepted environments
+  # narrowed by a `not` over a region suffix, both under one `and` — and it is
+  # where an implementation that flattened the tree, or that evaluated the
+  # branches in a fixed order and returned early, stops agreeing. Each of the
+  # four requests below is refused by exactly one branch, or accepted by both.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0020-4000-8000-000000000001",
+         "name": "and of an or and a not over one header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-combinator-composite-001/env",
+                     "headers": {"X-Env": {"and": [{"or": [{"contains": "dev"},
+                                                           {"contains": "stage"}]},
+                                                   {"not": {"contains": "-eu"}}]}}},
+         "response": {"status": 200, "body": "composite",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-combinator-composite-001/env
+      headers: {X-Env: "dev-us"}
+    expect: {status: 200, body: "composite"}
+
+  # The second branch of the `or`, so neither branch is dead.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-combinator-composite-001/env
+      headers: {X-Env: "stage-us"}
+    expect: {status: 200, body: "composite"}
+
+  # Refused by the `or` alone: the region is acceptable.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-combinator-composite-001/env
+      headers: {X-Env: "prod-us"}
+    expect: {status: 404}
+
+  # Refused by the `not` alone: the environment is acceptable. A tree flattened
+  # into a disjunction of its leaves answers 200 here, which is the whole reason
+  # the two failing requests are kept apart.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-combinator-composite-001/env
+      headers: {X-Env: "dev-eu"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-combinator-composite-001/env
+      headers: {X-Env: "stage-eu"}
+    expect: {status: 404}
+
+  # Refused by both.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-combinator-composite-001/env
+      headers: {X-Env: "prod-eu"}
+    expect: {status: 404}

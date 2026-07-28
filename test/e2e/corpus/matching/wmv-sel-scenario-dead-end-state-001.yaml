@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-sel-scenario-dead-end-state-001
+behaviors: [B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE]
+wm: verified
+# The unmatched steps land on a body that differs by design (deviation #2/#18).
+# The statuses, and every matched body, are still diffed.
+wm_ignore: ["$unmatched-body"]
+# A newScenarioState nobody requires is a legal destination. The transition is a
+# write, not a move along a declared edge, so the flow can be put somewhere no
+# gated stub can serve from — and the answer there is a plain 404, the same one
+# the request would get if the stub had never been registered.
+#
+# It is worth pinning because it is the shape of a real mistake — a state name
+# misspelled in one of the two places it appears — and because the tempting
+# repairs are all worse than the 404: validating the destination against the
+# states some stub happens to require would make a stub's transition depend on
+# which *other* stubs are registered at the time, and refusing to write it would
+# leave the flow one state behind what the suite believes.
+#
+# The dead end is then shown to be confined and recoverable: a stub in the same
+# scenario that names no required state still answers from it, and an ungated
+# transition brings the flow back.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0022-4000-8000-000000000001",
+         "scenarioName": "wmv-sel-scenario-dead-end-state-001",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "terminated",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-sel-scenario-dead-end-state-001/session"},
+         "response": {"status": 200, "body": "session closed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        requiredScenarioState: "Started"
+        newScenarioState: "terminated"
+
+  # In the same scenario and on the same path, but ungated, so it can say
+  # whether the scenario is unreachable or only its gated stubs are.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0022-4000-8000-000000000002",
+         "scenarioName": "wmv-sel-scenario-dead-end-state-001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-dead-end-state-001/session"},
+         "response": {"status": 200, "body": "member of the scenario, ungated",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-dead-end-state-001/session}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "session closed"
+
+  # No stub anywhere requires `terminated`, so the path has nothing to answer
+  # with. The 404 is the ordinary unmatched answer rather than a scenario error:
+  # a flow parked where no stub can serve is not a failure of the server.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-dead-end-state-001/session}
+    expect: {status: 404}
+
+  # The ungated member of the same scenario still answers from the dead end, so
+  # what stopped above was one stub's gate and not the scenario as a whole.
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-dead-end-state-001/session}
+    expect: {status: 200, body: "member of the scenario, ungated"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a100000a-0022-4000-8000-000000000003",
+         "scenarioName": "wmv-sel-scenario-dead-end-state-001",
+         "newScenarioState": "Started",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-sel-scenario-dead-end-state-001/reopen"},
+         "response": {"status": 200, "body": "reopened",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/wmv-sel-scenario-dead-end-state-001/reopen}
+    expect: {status: 200, body: "reopened"}
+
+  # The gated stub is unchanged and serves again, which is what makes the 404
+  # above a statement about where the flow was rather than about the stub having
+  # been consumed.
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-dead-end-state-001/session}
+    expect: {status: 200, body: "session closed"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-sel-scenario-dead-end-state-001/session}
+    expect: {status: 404}

@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-query-urlpattern-conjunction-001
+behaviors: [B-REQ-URLPATTERN, B-REQ-URLPATHPATTERN, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The two regex URL criteria differ in exactly one respect — whether the query
+# is part of the subject — and the difference is invisible until a request
+# carries a query. The stubs below make each of them answer the same two
+# requests, so the boundary is drawn rather than described: the same query that
+# a urlPattern has to account for is one a urlPathPattern must not see at all.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000037",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/wmv-query-urlpattern-conjunction-001/raw\\?q=a%20b"},
+         "response": {"status": 200, "body": "raw-regex", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          urlPattern: "/e2e/wmv-query-urlpattern-conjunction-001/raw\\?q=a%20b"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000003-0000-4000-8000-000000000038",
+         "request": {"method": "GET",
+                     "urlPathPattern": "/e2e/wmv-query-urlpattern-conjunction-001/path\\w*",
+                     "queryParameters": {"q": {"equalTo": "a b"}}},
+         "response": {"status": 200, "body": "path-and-query", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/raw?q=a%20b"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "raw-regex"
+
+  # urlPattern is a regex over the target as received, so it sees the escape
+  # rather than what the escape stands for: the other spelling of the same
+  # parameter value is a different string and does not match.
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/raw?q=a+b"}
+    expect: {status: 404}
+
+  # And the pattern is anchored to the whole target, query included, so a
+  # parameter it never accounted for breaks it.
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/raw?q=a%20b&extra=1"}
+    expect: {status: 404}
+
+  # The other stub answers both spellings, because its regex stops at the path
+  # and the parameter is judged by a criterion that reads it decoded.
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/path?q=a%20b"}
+    expect: {status: 200, body: "path-and-query"}
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/path?q=a+b"}
+    expect: {status: 200, body: "path-and-query"}
+
+  # An extra parameter breaks nothing here, which is the same addition that
+  # broke the urlPattern stub three steps ago.
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/pathx?q=a%20b&extra=1"}
+    expect: {status: 200, body: "path-and-query"}
+
+  # The query criterion is still a criterion: the path pattern matching does not
+  # carry the stub on its own.
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/path?q=other"}
+    expect: {status: 404}
+
+  # A path the regex does not describe fails even with the query satisfied,
+  # which is the conjunction read from the other end.
+  - request: {method: GET, path: "/e2e/wmv-query-urlpattern-conjunction-001/other?q=a%20b"}
+    expect: {status: 404}

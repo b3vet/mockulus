@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-jsonbody-escapes-001
+behaviors:
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2, byte for byte. As with the numbers
+# case, the differential compares the decoded documents and every escaping below
+# decodes to the same string — so the exact-byte assertion is what pins the
+# rendering, and the oracle is what confirms the rendering is WireMock's.
+wm: verified
+steps:
+  # Go's encoding/json escapes <, > and & into their \u00xx forms by default, so
+  # a jsonBody carrying markup is where a Go implementation departs from Jackson
+  # without anyone writing a line of code to make it happen. The two
+  # documents are equal as JSON and different as bytes, and a client asserting
+  # on the payload it received — or a browser fixture that has to contain real
+  # angle brackets — sees the difference.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0010-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-escapes-001/markup"},
+         "response": {"status": 200,
+                      "jsonBody": {"html": "<a href=\"x\">&amp;</a>", "amp": "a&b",
+                                   "slash": "a/b", "tab": "a\tb", "nl": "a\nb",
+                                   "bs": "a\\b"}}}
+    expect: {status: 201}
+
+  # Every escape in this line is load-bearing. The angle brackets and the
+  # ampersand are literal, because JSON does not require them escaped; the
+  # forward slash is literal too, which is the other escape a JSON writer is
+  # sometimes tempted into. The quote, the backslash, the tab and the newline
+  # are escaped, because JSON does require those — so this is not "nothing is
+  # escaped" but "exactly what the grammar demands is".
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-escapes-001/markup}
+    expect:
+      status: 200
+      body: '{"html":"<a href=\"x\">&amp;</a>","amp":"a&b","slash":"a/b","tab":"a\tb","nl":"a\nb","bs":"a\\b"}'
+
+  # The same characters through the `body` form, which takes bytes rather than a
+  # value and so has nothing to escape at all. The pair is the control: the step
+  # above is about how a JSON value is rendered, and this one shows what the
+  # literal-bytes form does with the identical text, so neither answer can be
+  # explained by the payload being mishandled on the way in.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0010-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-jsonbody-escapes-001/literal"},
+         "response": {"status": 200, "body": "<a href=\"x\">&amp;</a>",
+                      "headers": {"Content-Type": "text/html"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-jsonbody-escapes-001/literal}
+    expect:
+      status: 200
+      headers: {Content-Type: text/html}
+      body: '<a href="x">&amp;</a>'

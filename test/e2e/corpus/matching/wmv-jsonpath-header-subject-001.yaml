@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-header-subject-001
+behaviors: [B-MATCH-MATCHESJSONPATH, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # matchesJsonPath is a content matcher, so it applies wherever content
+  # matchers do — and a header carrying a JSON envelope is the case where that
+  # matters, because the subject is then a header value rather than the request
+  # body. The stubs below are the two forms over the same header, so the case
+  # covers the plumbing (does a header value reach the JSONPath engine at all)
+  # and the semantics on the way through.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001a-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-jsonpath-header-subject-001/ctx",
+                     "headers": {"X-Ctx": {"matchesJsonPath": "$.tenant"}}},
+         "response": {"status": 200, "body": "ctx",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001a-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-jsonpath-header-subject-001/tenant",
+                     "headers": {"X-Ctx": {"matchesJsonPath": {"expression": "$.tenant",
+                                                              "equalTo": "t1"}}}},
+         "response": {"status": 200, "body": "tenant",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonpath-header-subject-001/ctx
+      headers: {X-Ctx: '{"tenant":"t1"}'}
+    expect: {status: 200, body: "ctx"}
+
+  # A well-formed envelope without the key: the criterion is about the path and
+  # not about the header being JSON.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonpath-header-subject-001/ctx
+      headers: {X-Ctx: '{"other":"t1"}'}
+    expect: {status: 404}
+
+  # A header that is not JSON is a plain non-match here as it is over a body, so
+  # a client sending an opaque header cannot make the server fail.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonpath-header-subject-001/ctx
+      headers: {X-Ctx: 'opaque'}
+    expect: {status: 404}
+
+  # An absent header has no subject at all, which is a third route to the same
+  # answer and is the one a missing-value check gets wrong.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonpath-header-subject-001/ctx
+    expect: {status: 404}
+
+  # The nested form over the same header, with the value it wants…
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonpath-header-subject-001/tenant
+      headers: {X-Ctx: '{"tenant":"t1"}'}
+    expect: {status: 200, body: "tenant"}
+
+  # …and with the key present but carrying something else, which is what
+  # separates the nested form from the bare one on this subject too.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonpath-header-subject-001/tenant
+      headers: {X-Ctx: '{"tenant":"t2"}'}
+    expect: {status: 404}

@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-contains-empty-operand-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-MATCH-ABSENT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Every string contains the empty string, so `{"contains": ""}` degenerates
+  # into a presence test and its negation into an absence test. The degenerate
+  # form is worth pinning because it is where the two halves of the matcher
+  # separate cleanly: the substring test itself can no longer fail, so whatever
+  # answer comes back is entirely the key-level rule about a header that is not
+  # there. An implementation that special-cased an empty operand — rejecting it,
+  # or treating it as "no criterion" — differs on all four steps below.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0015-4000-8000-000000000001",
+         "name": "contains the empty string",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-contains-empty-operand-001/any",
+                     "headers": {"X-Trace": {"contains": ""}}},
+         "response": {"status": 200, "body": "any",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0015-4000-8000-000000000002",
+         "name": "does not contain the empty string",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-contains-empty-operand-001/none",
+                     "headers": {"X-Trace": {"doesNotContain": ""}}},
+         "response": {"status": 200, "body": "none",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-contains-empty-operand-001/any
+      headers: {X-Trace: "t1"}
+    expect: {status: 200, body: "any"}
+
+  # The value cannot be the reason for a mismatch here, so a 404 could only come
+  # from the header not being there — which is exactly what this asserts.
+  - request: {method: GET, path: /e2e/wmv-header-contains-empty-operand-001/any}
+    expect: {status: 404}
+
+  # The negative form can never hold on the substring test, so a present header
+  # of any value fails it…
+  - request:
+      method: GET
+      path: /e2e/wmv-header-contains-empty-operand-001/none
+      headers: {X-Trace: "t1"}
+    expect: {status: 404}
+
+  # …and the only thing left that can satisfy it is the header being missing,
+  # which the negative matchers admit.
+  - request: {method: GET, path: /e2e/wmv-header-contains-empty-operand-001/none}
+    expect: {status: 200, body: "none"}

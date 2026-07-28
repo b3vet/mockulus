@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-exact-repeated-param-002
+behaviors: [B-REQ-URL, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # url-criteria-url-exact-001 shows that two *different* parameters in the
+  # other order do not match. The sharper version is one parameter repeated: the
+  # two targets below carry the same name with the same multiset of values, so
+  # every parsed representation of them — a map of name to a set of values, a
+  # map to the first value, a map to the last — makes them equal. Only comparing
+  # the target as text tells them apart, and two stubs that both register and
+  # both serve their own request is the proof that it does.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0019-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-exact-repeated-param-002/r?a=1&a=2"},
+         "response": {"status": 200, "body": "one-two", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-url-exact-repeated-param-002/r?a=1&a=2"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0019-4000-8000-000000000002",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-exact-repeated-param-002/r?a=2&a=1"},
+         "response": {"status": 200, "body": "two-one", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-repeated-param-002/r?a=1&a=2"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "one-two"
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-repeated-param-002/r?a=2&a=1"}
+    expect: {status: 200, body: "two-one"}
+
+  # One occurrence is not two, so neither stub is satisfied by a subset of its
+  # own query…
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-repeated-param-002/r?a=1"}
+    expect: {status: 404}
+
+  # …and neither is satisfied by a superset, which rules out the prefix reading
+  # that the first stub's target being a prefix of this one would otherwise
+  # leave open.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-exact-repeated-param-002/r?a=1&a=2&a=3"}
+    expect: {status: 404}

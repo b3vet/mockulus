@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-create-refused-keeps-order-001
+behaviors:
+  - B-ADMIN-MAPPINGS-POST
+  - B-ERR-109
+wm: verified
+steps:
+  # Two stubs on one path at equal priority, so the newer one serves it. The
+  # path is shared on purpose: it turns "the refused document was not written"
+  # from a claim about an unrelated URL into a claim about the very selection
+  # the caller is watching.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0011-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-refused-keeps-order-001/lane"},
+         "response": {"status": 200, "body": "older"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0011-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-refused-keeps-order-001/lane"},
+         "response": {"status": 200, "body": "newer"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-refused-keeps-order-001/lane}
+    expect: {status: 200, body: "newer"}
+
+  # A create colliding with the *older* id, on the same path. A server that
+  # inserted the incoming stub and only then noticed the collision would have
+  # made this document the newest one on the path, and the next request would be
+  # answered by a stub the API had just told the caller it refused.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0011-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-create-refused-keeps-order-001/lane"},
+         "response": {"status": 200, "body": "smuggled"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 109
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-refused-keeps-order-001/lane}
+    expect: {status: 200, body: "newer"}
+
+  # Nor did it overwrite the stub it collided with. Removing the winner shows
+  # what is underneath, and it is the original older document — the refusal cost
+  # the existing stub neither its content nor its place.
+  - admin: {method: DELETE, path: /__admin/mappings/a1000008-0011-4000-8000-000000000002}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-create-refused-keeps-order-001/lane}
+    expect: {status: 200, body: "older"}

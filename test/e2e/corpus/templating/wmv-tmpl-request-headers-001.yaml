@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-headers-001
+behaviors: [B-RESP-TRANSFORMERS, B-REQ-HEADERS]
+wm: verified
+steps:
+  # Header names are case-insensitive on the wire, so a template author writes
+  # the spelling they saw in a curl transcript and expects it to resolve. Both
+  # spellings of the same header are rendered here, from one request, so a
+  # model that canonicalised the names into one form and stopped answering the
+  # other is a failing line rather than a support ticket.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0006-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-headers-001/echo",
+                     "headers": {"X-Trace": {"matches": "tr-[0-9]+"}}},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "wire={{request.headers.X-Trace}} lower={{request.headers.x-trace}} absent=[{{request.headers.X-Absent}}] look={{lookup request.headers request.query.which}} present={{#if request.headers.X-Trace}}yes{{else}}no{{/if}} missing={{#if request.headers.X-Absent}}yes{{else}}no{{/if}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `look` reaches the same header through `lookup` with a key that is itself
+  # taken from the request, which is the form a stub needs when the header to
+  # echo is chosen by the caller. It has to agree with the two direct
+  # spellings; a lookup that indexed a different map would still render
+  # something.
+  #
+  # The two `#if`s are the control on absence: a header that is not there is
+  # falsy and renders as nothing, rather than as the string "undefined" or as
+  # its own path expression — either of which reads as a value to whatever
+  # parses the response.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-headers-001/echo?which=X-Trace
+      headers: {X-Trace: "tr-1"}
+    expect:
+      status: 200
+      body: "wire=tr-1 lower=tr-1 absent=[] look=tr-1 present=yes missing=no"
+
+  # A second value through the same stub. Both spellings move together, which
+  # is what separates reading the header from having memoised one.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-headers-001/echo?which=X-Trace
+      headers: {X-Trace: "tr-2"}
+    expect:
+      status: 200
+      body: "wire=tr-2 lower=tr-2 absent=[] look=tr-2 present=yes missing=no"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0006-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-request-headers-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "wire={{request.headers.X-Trace}} lower={{request.headers.x-trace}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-headers-001/literal
+      headers: {X-Trace: "tr-1"}
+    expect:
+      status: 200
+      body: "wire={{request.headers.X-Trace}} lower={{request.headers.x-trace}}"

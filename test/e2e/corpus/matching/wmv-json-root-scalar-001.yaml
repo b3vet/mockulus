@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-root-scalar-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A bare scalar is a legal JSON document and some APIs post one. The operand
+  # is a JSON document too, so `"5"` is the number five rather than the
+  # one-character string — the distinction the next three stubs pin, each with
+  # the neighbouring type as its negative.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0011-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-root-scalar-001/number",
+                     "bodyPatterns": [{"equalToJson": "5"}]},
+         "response": {"status": 200, "body": "number",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/number
+      body: '5'
+    expect: {status: 200, body: "number"}
+
+  # Value-equality reaches a root scalar as it reaches a nested one.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/number
+      body: '5.0'
+    expect: {status: 200, body: "number"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/number
+      body: '"5"'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/number
+      body: '6'
+    expect: {status: 404}
+
+  # The boolean, whose usual confusion is with 1 and with its own spelling.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0011-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-root-scalar-001/boolean",
+                     "bodyPatterns": [{"equalToJson": "true"}]},
+         "response": {"status": 200, "body": "boolean",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/boolean
+      body: 'true'
+    expect: {status: 200, body: "boolean"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/boolean
+      body: '"true"'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/boolean
+      body: '1'
+    expect: {status: 404}
+
+  # And the string, where the quoting in the operand is what makes it one. A
+  # request body of bare `hi` is not a JSON document at all, so it is a plain
+  # non-match rather than a second way to spell the same string.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0011-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-root-scalar-001/string",
+                     "bodyPatterns": [{"equalToJson": "\"hi\""}]},
+         "response": {"status": 200, "body": "string",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/string
+      body: '"hi"'
+    expect: {status: 200, body: "string"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/string
+      body: 'hi'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-root-scalar-001/string
+      body: '"HI"'
+    expect: {status: 404}

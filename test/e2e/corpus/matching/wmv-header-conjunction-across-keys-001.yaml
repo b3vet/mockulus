@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-header-conjunction-across-keys-001
+behaviors: [B-REQ-HEADERS, B-MATCH-ABSENT, B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-CONTAINS-DOESNOTCONTAIN]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Several named headers in one `headers` object are a conjunction, and the
+  # absence form takes part in it on equal terms — an implementation that
+  # handled `absent` as a separate pre-pass, or that stopped at the first
+  # criterion it could satisfy, still answers 200 to the first request below.
+  # What separates those implementations from a correct one is the four that
+  # follow, each of which breaks exactly one criterion and leaves the rest
+  # satisfied.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000002-0009-4000-8000-000000000001",
+         "name": "three header criteria of three kinds",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-header-conjunction-across-keys-001/gate",
+                     "headers": {"X-Tenant": {"equalTo": "acme"},
+                                 "X-Env": {"contains": "prod"},
+                                 "X-Debug": {"absent": true}}},
+         "response": {"status": 200, "body": "gate",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-conjunction-across-keys-001/gate
+      headers: {X-Tenant: acme, X-Env: prod-eu}
+    expect: {status: 200, body: "gate"}
+
+  # Only the equalTo fails.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-conjunction-across-keys-001/gate
+      headers: {X-Tenant: other, X-Env: prod-eu}
+    expect: {status: 404}
+
+  # Only the contains fails.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-conjunction-across-keys-001/gate
+      headers: {X-Tenant: acme, X-Env: staging}
+    expect: {status: 404}
+
+  # Only the absence fails, and it is the one an implementation is most likely
+  # to have evaluated somewhere other than alongside the rest.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-conjunction-across-keys-001/gate
+      headers: {X-Tenant: acme, X-Env: prod-eu, X-Debug: "1"}
+    expect: {status: 404}
+
+  # A criterion is not satisfied by its header being missing, so dropping one
+  # of the two positive criteria is a mismatch rather than a wildcard.
+  - request:
+      method: GET
+      path: /e2e/wmv-header-conjunction-across-keys-001/gate
+      headers: {X-Env: prod-eu}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-header-conjunction-across-keys-001/gate
+      headers: {X-Tenant: acme}
+    expect: {status: 404}

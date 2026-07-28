@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-filter-boolean-ops-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # && and || combine comparisons WITHIN one element. That scoping is the claim
+  # worth testing: the array is walked element by element and the predicate is
+  # answered for each, so two conditions satisfied by two different elements do
+  # not add up to a match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0011-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-boolean-ops-001/both",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.a == 1 && @.b == 2)]"}]},
+         "response": {"status": 200, "body": "both",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0011-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-filter-boolean-ops-001/either",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.a == 1 || @.b == 2)]"}]},
+         "response": {"status": 200, "body": "either",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-boolean-ops-001/both
+      body: '{"items":[{"a":1,"b":2}]}'
+    expect: {status: 200, body: "both"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-boolean-ops-001/both
+      body: '{"items":[{"a":1,"b":3}]}'
+    expect: {status: 404}
+
+  # The scoping step: each condition is satisfied, by a different element. A
+  # predicate evaluated over the array instead of over its elements answers 200
+  # here, and nothing else in this case would notice.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-boolean-ops-001/both
+      body: '{"items":[{"a":1},{"b":2}]}'
+    expect: {status: 404}
+
+  # …and with one element carrying both, the same two conditions do hold.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-boolean-ops-001/both
+      body: '{"items":[{"a":1},{"a":1,"b":2}]}'
+    expect: {status: 200, body: "both"}
+
+  # The disjunction needs one branch, and the two steps below take a different
+  # branch each — so a mis-wired conjunction fails both rather than one.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-boolean-ops-001/either
+      body: '{"items":[{"a":1,"b":3}]}'
+    expect: {status: 200, body: "either"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-boolean-ops-001/either
+      body: '{"items":[{"a":9,"b":2}]}'
+    expect: {status: 200, body: "either"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-boolean-ops-001/either
+      body: '{"items":[{"a":9,"b":9}]}'
+    expect: {status: 404}

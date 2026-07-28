@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-request-path-template-001
+behaviors: [B-REQ-URLPATHTEMPLATE-PATHPARAMETERS, B-RESP-TRANSFORMERS]
+wm: verified
+# The rejected path lands on the unmatched 404, whose body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A `urlPathTemplate` stub names its variables once and the template reads
+  # them back by those names. That binding is the reason the feature is worth
+  # having over `urlPathPattern`: a captured segment reaches the response as
+  # `orderId` rather than as "the fourth thing after the slashes".
+  #
+  # The stub also constrains one of the variables, so the case can show the
+  # criterion and the accessor agreeing on which segment `orderId` is.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0004-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPathTemplate": "/e2e/wmv-tmpl-request-path-template-001/orders/{orderId}/items/{itemId}",
+                     "pathParameters": {"orderId": {"matches": "ORD-[0-9]+"}}},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "order={{request.path.orderId}} item={{request.path.itemId}} unknown=[{{request.path.customerId}}] s3={{request.path.[3]}} whole={{request.path}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `order` and `s3` are the same segment read two ways, which is what pins the
+  # variable to a position: a binder that had shifted by one renders a name and
+  # an index that disagree, and either alone would have looked right.
+  #
+  # `unknown` names a variable the template never declared. It renders as
+  # nothing rather than as its own expression, so a stub can reference an
+  # optional variable without the body turning into Handlebars source.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-template-001/orders/ORD-9/items/IT-3
+    expect:
+      status: 200
+      body: "order=ORD-9 item=IT-3 unknown=[] s3=ORD-9 whole=/e2e/wmv-tmpl-request-path-template-001/orders/ORD-9/items/IT-3"
+
+  # Both variables move together on a second request, so neither is a constant
+  # the first step could not have told apart from a binding.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-template-001/orders/ORD-77/items/IT-8
+    expect:
+      status: 200
+      body: "order=ORD-77 item=IT-8 unknown=[] s3=ORD-77 whole=/e2e/wmv-tmpl-request-path-template-001/orders/ORD-77/items/IT-8"
+
+  # The criterion on `orderId` still decides whether the stub is selected at
+  # all. Without this step the case would pass on an implementation that bound
+  # the variables and quietly ignored `pathParameters` — which is the failure
+  # that lets a stub answer requests it was written to refuse.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-template-001/orders/XX-9/items/IT-3
+    expect: {status: 404}
+
+  # The control. The variable names are resolved by the transformer, not by the
+  # router that captured them, so without the opt-in they stay text.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0004-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPathTemplate": "/e2e/wmv-tmpl-request-path-template-001/literal/{orderId}"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "order={{request.path.orderId}}"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-request-path-template-001/literal/ORD-9
+    expect:
+      status: 200
+      body: "order={{request.path.orderId}}"

@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-url-encoded-question-path-002
+behaviors: [B-REQ-URL, B-REQ-URLPATH, B-STUB-REQUEST]
+wm: verified
+# Unmatched bodies differ by design (deviation #2/#18); status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Where the path ends and the query begins is decided on the raw target, at
+  # the first literal `?`. An encoded one is therefore an ordinary character in
+  # the path and must not start a query — which is only true if the split
+  # happens before any decoding. Reverse that order and `%3F` becomes a
+  # separator, the path silently shortens, and every stub under it stops
+  # matching while the request still looks fine in a log.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0022-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-encoded-question-path-002/q%3Fx"},
+         "response": {"status": 200, "body": "encoded-question", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-url-encoded-question-path-002/q%3Fx"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0022-4000-8000-000000000002",
+         "request": {"method": "GET", "url": "/e2e/wmv-url-encoded-question-path-002/q?x"},
+         "response": {"status": 200, "body": "real-query", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A urlPath criterion holding the encoded `?`. If the split were done after
+  # decoding, the subject this is compared against would have been cut down to
+  # `/e2e/…/p` and this stub could never match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0022-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-url-encoded-question-path-002/p%3Fx"},
+         "response": {"status": 200, "body": "encoded-in-path", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-question-path-002/q%3Fx}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "encoded-question"
+
+  # The unencoded spelling is a different target with a query on it, and it
+  # selects the other stub — the pair is what makes the encoding observable.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-encoded-question-path-002/q?x"}
+    expect: {status: 200, body: "real-query"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-url-encoded-question-path-002/p%3Fx}
+    expect: {status: 200, body: "encoded-in-path"}
+
+  # And the path criterion is not satisfied by the target whose query happens to
+  # decode to the same characters.
+  - request: {port: mock, method: GET, path: "/e2e/wmv-url-encoded-question-path-002/p?x"}
+    expect: {status: 404}

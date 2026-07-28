@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-empty-collections-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The bare form's emptiness test applies to collections and to nothing else,
+  # and it applies to what the evaluation RETURNED. A definite path returns the
+  # selected node, so an empty array there is an empty result; a deep scan
+  # returns a list of hits, and a list holding one empty array is not empty. The
+  # two stubs below differ only in that, so every step is its own control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0002-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-empty-collections-001/definite",
+                     "bodyPatterns": [{"matchesJsonPath": "$.xs"}]},
+         "response": {"status": 200, "body": "definite",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-0002-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-empty-collections-001/descend",
+                     "bodyPatterns": [{"matchesJsonPath": "$..xs"}]},
+         "response": {"status": 200, "body": "descend",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # An empty array is a present node that is nonetheless empty, so the definite
+  # path refuses it while the deep scan reports one hit and matches.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/definite
+      body: '{"xs":[]}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/descend
+      body: '{"xs":[]}'
+    expect: {status: 200, body: "descend"}
+
+  # An empty object is the other collection, and it behaves identically — the
+  # test is emptiness, not array-ness.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/definite
+      body: '{"xs":{}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/descend
+      body: '{"xs":{}}'
+    expect: {status: 200, body: "descend"}
+
+  # One element is enough to make the array a match, whatever the element is.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/definite
+      body: '{"xs":[0]}'
+    expect: {status: 200, body: "definite"}
+
+  # The emptiness test is shallow: an object carrying one member matches even
+  # when that member is null. A recursive "is there anything meaningful in here"
+  # test would answer no, and would be wrong.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/definite
+      body: '{"xs":{"a":null}}'
+    expect: {status: 200, body: "definite"}
+
+  # An array holding only nulls is still a non-empty array, so the null rule
+  # really is confined to the top-level result.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/definite
+      body: '{"xs":[null]}'
+    expect: {status: 200, body: "definite"}
+
+  # And a scalar is never subject to the test at all, which is what stops a
+  # generic emptiness check from creeping in: zero is not an empty collection.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/definite
+      body: '{"xs":0}'
+    expect: {status: 200, body: "definite"}
+
+  # Selecting nothing is distinct from selecting something empty; both refuse,
+  # but the deep scan separates them — it matched every empty node above and
+  # refuses here, where there is no node.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/definite
+      body: '{"ys":[1]}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-empty-collections-001/descend
+      body: '{"ys":[1]}'
+    expect: {status: 404}

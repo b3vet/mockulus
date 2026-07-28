@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-criteria-literal-001
+behaviors: [B-RESP-TRANSFORMERS, B-REQ-QUERYPARAMETERS]
+wm: verified
+# The two rejected requests land on the unmatched 404, whose body is deviation
+# #2/#18. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `response-template` names what it transforms. The criteria on the request
+  # side are never rendered, and this stub is the sharpest way to say so: its
+  # operand is a template expression that would resolve to "GET" if anything
+  # touched it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0025-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-tmpl-criteria-literal-001/select",
+                     "queryParameters": {"tier": {"equalTo": "{{request.method}}"}}},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "matched={{request.query.tier}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # A caller who sends the braces matches, because the criterion is the
+  # characters the stub declared.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-criteria-literal-001/select?tier=%7B%7Brequest.method%7D%7D
+    expect:
+      status: 200
+      body: "matched={{request.method}}"
+
+  # And a caller who sends what the expression would have rendered does not.
+  # This is the step that fails if criteria were ever templated: the stub would
+  # answer here and refuse the request above, which is the exact opposite of
+  # what its author wrote.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-criteria-literal-001/select?tier=GET
+    expect: {status: 404}
+
+  # The body of the matching request is the other half of the same claim. The
+  # value it echoes came from the query and comes back unrendered, so the
+  # matcher and the renderer agree about which side of the exchange is data —
+  # while `matched=` itself is the proof the transformer ran at all.
+
+  # A stub whose criterion is the rendered form, to close the loop from the
+  # other direction: it answers "GET" and refuses the braces, which is the
+  # behavior the first stub would have had if the criteria were templates.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0025-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-tmpl-criteria-literal-001/rendered",
+                     "queryParameters": {"tier": {"equalTo": "GET"}}},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "matched={{request.query.tier}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-criteria-literal-001/rendered?tier=GET
+    expect:
+      status: 200
+      body: "matched=GET"
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-criteria-literal-001/rendered?tier=%7B%7Brequest.method%7D%7D
+    expect: {status: 404}

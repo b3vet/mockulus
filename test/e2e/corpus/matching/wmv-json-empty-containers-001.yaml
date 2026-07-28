@@ -1,0 +1,134 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-empty-containers-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # An empty expected container is the degenerate case of both rules at once,
+  # and the two flags pull it in opposite directions: strict, {} means "an
+  # object with no members"; with ignoreExtraElements it means "any object at
+  # all". Both readings are defensible, so both are pinned.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0009-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-empty-containers-001/empty-object",
+                     "bodyPatterns": [{"equalToJson": "{}"}]},
+         "response": {"status": 200, "body": "empty-object",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0009-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-empty-containers-001/any-object",
+                     "bodyPatterns": [{"equalToJson": "{}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "any-object",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/empty-object
+      body: '{}'
+    expect: {status: 200, body: "empty-object"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/empty-object
+      body: '{"a":1}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/any-object
+      body: '{"a":1,"b":{"c":2}}'
+    expect: {status: 200, body: "any-object"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/any-object
+      body: '{}'
+    expect: {status: 200, body: "any-object"}
+
+  # "Any object" is still an object: the flag has nothing to say about a
+  # document of another type, so neither stub accepts an array or a scalar.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/any-object
+      body: '[]'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/any-object
+      body: '"x"'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/empty-object
+      body: '[]'
+    expect: {status: 404}
+
+  # The array reading of the same pair. Strict, an empty expected array requires
+  # an empty actual one; with the flag every element is one the expected
+  # document never accounted for, so any array satisfies it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0009-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-empty-containers-001/empty-array",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[]}"}]},
+         "response": {"status": 200, "body": "empty-array",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000004-0009-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-empty-containers-001/any-array",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[]}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "any-array",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/empty-array
+      body: '{"xs":[]}'
+    expect: {status: 200, body: "empty-array"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/empty-array
+      body: '{"xs":[1]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/any-array
+      body: '{"xs":[1,2]}'
+    expect: {status: 200, body: "any-array"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/any-array
+      body: '{"xs":[]}'
+    expect: {status: 200, body: "any-array"}
+
+  # And an empty object is not an empty array, in either direction.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-empty-containers-001/any-array
+      body: '{"xs":{}}'
+    expect: {status: 404}

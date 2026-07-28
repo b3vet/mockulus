@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-import-ignore-keeps-document-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-STUB-NAME
+  - B-STUB-METADATA
+  - B-STUB-PRIORITY
+wm: verified
+steps:
+  # A stub with fields the incoming document does not have, so "untouched" can
+  # be asserted as a whole document rather than as one body string. Under IGNORE
+  # the existing mapping is dropped on the floor, not merged with the new one —
+  # and a merge is exactly what a naive implementation produces, since keeping
+  # the old document while accepting the new one field by field looks like the
+  # helpful reading of "ignore the duplicate".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000008-0017-4000-8000-000000000001",
+         "name": "the incumbent",
+         "priority": 2,
+         "metadata": {"suite": "wmv-admin-import-ignore-keeps-document-001"},
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-ignore-keeps-document-001/keep"},
+         "response": {"status": 200, "body": "original"}}
+    expect: {status: 201}
+
+  # One batch holding a collision and a mapping whose id is free.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0017-4000-8000-000000000001",
+            "name": "the challenger",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-ignore-keeps-document-001/keep"},
+            "response": {"status": 500, "body": "replacement"}},
+           {"id": "a1000008-0017-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-ignore-keeps-document-001/fresh"},
+            "response": {"status": 200, "body": "fresh"}}
+         ],
+         "importOptions": {"duplicatePolicy": "IGNORE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  # The incumbent is byte-for-byte what it was, down to the fields the incoming
+  # document never mentioned.
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0017-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0017-4000-8000-000000000001"
+        uuid: "a1000008-0017-4000-8000-000000000001"
+        name: "the incumbent"
+        priority: 2
+        metadata: {suite: "wmv-admin-import-ignore-keeps-document-001"}
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-ignore-keeps-document-001/keep}
+        response: {status: 200, body: "original"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-ignore-keeps-document-001/keep}
+    expect: {status: 200, body: "original"}
+
+  # IGNORE skips the collisions only. Its batch-mate had a free id and went in,
+  # so a payload that is partly already-known is not refused wholesale — which
+  # is the property that makes IGNORE usable as "seed what is missing".
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-ignore-keeps-document-001/fresh}
+    expect: {status: 200, body: "fresh"}
+
+  # The control. The same collision under OVERWRITE does replace the stub, so
+  # every assertion above measured the policy rather than an import that had no
+  # effect on anything.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "a1000008-0017-4000-8000-000000000001",
+            "name": "the challenger",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-import-ignore-keeps-document-001/keep"},
+            "response": {"status": 500, "body": "replacement"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-import-ignore-keeps-document-001/keep}
+    expect: {status: 500, body: "replacement"}
+
+  - admin: {method: GET, path: /__admin/mappings/a1000008-0017-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "a1000008-0017-4000-8000-000000000001"
+        uuid: "a1000008-0017-4000-8000-000000000001"
+        name: "the challenger"
+        request: {method: GET, urlPath: /e2e/wmv-admin-import-ignore-keeps-document-001/keep}
+        response: {status: 500, body: "replacement"}
