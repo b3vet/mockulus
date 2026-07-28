@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-engine-bare-helper-001
+behaviors: [B-TPL-NOW, B-TPL-RANDOMVALUE, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # A helper called with no arguments is written as one token, and one token
+  # inside a mustache is also how a variable is written. Handlebars settles the
+  # ambiguity by asking whether a helper of that name is registered, and a
+  # template engine that never asks renders `{{now}}` — the most commonly
+  # written expression in any WireMock template — as nothing at all.
+  #
+  # The values a no-argument helper produces are a clock and a random draw, and
+  # neither can be diffed directly: two servers answering microseconds apart
+  # cannot be relied on to agree on the second, and a draw has no expected
+  # value. So each is asserted through the part of it that does not move. That
+  # is not a weaker claim than printing the value — it is a stronger one, since
+  # every assertion below is a fixed string that a helper returning nothing, or
+  # the wrong shape, cannot produce.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0031-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-engine-bare-helper-001/stamp"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "day=[{{substring (now) 0 10}}] t=[{{substring (now) 10 11}}] z=[{{substring (now) 19 20}}] rvlen=[{{size (randomValue)}}] draw=[{{#if (randomValue)}}yes{{else}}no{{/if}}] unknown=[{{nope}}] argif=[{{#if now}}yes{{else}}no{{/if}}] argeach=[{{#each randomValue}}x{{else}}none{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `day`, `t` and `z` are three windows onto one instant, and between them they
+  # pin the whole default format: ten characters of date, the T that separates
+  # it from the time, and the Z that a zero offset collapses to. An engine
+  # rendering nothing fails all three; one rendering a numeric offset for the
+  # zone fails the third alone, which is the difference that only ever shows up
+  # at UTC — where a mock clock spends nearly all of its time.
+  #
+  # `rvlen` is the draw's contract without the draw: 36 characters, which is
+  # what a bare `randomValue` produces on both servers. `draw` is the same
+  # claim from the other side — a helper that returned nothing would be falsy
+  # here and the branch would go the other way.
+  #
+  # `unknown` is the first control. Only a name the registry has becomes a
+  # call: a bare name nothing has registered is still a lookup, so a body
+  # carrying `{{customerId}}` keeps rendering the model's value and a body
+  # carrying a name that is in neither place renders nothing, rather than
+  # failing the response with an unknown-helper error.
+  #
+  # `argif` and `argeach` are the second, and they are what stops the fix at
+  # the position it belongs in. An argument is a path in Handlebars even where
+  # a helper shares its name, so `{{#if now}}` tests a member the model does
+  # not have and takes the else branch on both servers. An engine that resolved
+  # helpers everywhere a name appears would answer "yes" here and iterate a
+  # draw in the next bracket — plausible in isolation, and wrong against the
+  # oracle in both.
+  - request: {port: mock, method: GET, path: /e2e/wmv-tmpl-engine-bare-helper-001/stamp}
+    expect:
+      status: 200
+      body_regex: '^day=\[20\d\d-\d\d-\d\d\] t=\[T\] z=\[Z\] rvlen=\[36\] draw=\[yes\] unknown=\[\] argif=\[no\] argeach=\[none\]$'
+
+  # The control on templating itself. The same expressions in a stub that never
+  # asked for the transformer are mock data: a fixture recording somebody
+  # else's template must survive being served, including the parenthesised
+  # form, which is the one an engine resolving helpers at parse time would be
+  # tempted to touch before it knew whether the response was templated at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0031-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-engine-bare-helper-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "now=[{{now}}] day=[{{substring (now) 0 10}}] rv=[{{randomValue}}]"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-tmpl-engine-bare-helper-001/literal}
+    expect:
+      status: 200
+      body: "now=[{{now}}] day=[{{substring (now) 0 10}}] rv=[{{randomValue}}]"

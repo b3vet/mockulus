@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-engine-each-multivalue-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-TPL-IF-UNLESS-EACH-WITH-LOOKUP, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # A name the wire carried more than once is one node with three readings, and
+  # a stub asks all three of them: the bare name is the first value, an index
+  # reaches past it, and {{#each}} walks the lot. A model that answered only
+  # the first two dropped the repeated values out of the response with nothing
+  # to say so — no registration error, no serve-time error, just a block that
+  # never ran.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0033-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-engine-each-multivalue-001/search"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "q=[{{#each request.query.tag}}{{@index}}:{{this}}{{#if @first}}F{{/if}}{{#if @last}}L{{/if}};{{/each}}] solo=[{{#each request.query.one}}{{@index}}:{{this}};{{/each}}] gone=[{{#each request.query.gone}}{{this}};{{else}}none{{/each}}] blank=[{{#each request.query.blank}}[{{this}}];{{/each}}] hdr=[{{#each request.headers.X-One}}{{@index}}:{{this}};{{/each}}] lower=[{{#each request.headers.x-one}}{{this}};{{/each}}] first=[{{request.query.tag}}] idx=[{{request.query.tag.[1]}}] join=[{{#each request.query.tag}}{{this}}{{#unless @last}},{{/unless}}{{/each}}] parent=[{{#each request.query.tag}}{{../request.method}}{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `q` is the whole of it: two values, numbered, with @first and @last falling
+  # on the right ones — a template joining values with a separator has nothing
+  # else to key on.
+  #
+  # `solo` is the case that decides how the node is modelled. A name that
+  # arrived once is a list of one and iterates once; a model that only grew a
+  # list when a key repeated would make a stub render one shape for a caller
+  # who sent one value and another for a caller who sent two, which is the
+  # difference nobody tests until it is in production.
+  #
+  # `blank` and `gone` are the pair that must not collapse into each other.
+  # `?blank=` is present carrying nothing — one iteration of an empty value —
+  # and a name that is not there at all has nothing to walk and takes the else
+  # branch, which is how a template writes "the caller sent no filter".
+  #
+  # `hdr` and `lower` are the same node reached under both spellings of a
+  # header name, so an alias that had been built as a copy without the list
+  # shows up here rather than in whichever stub happened to write the header in
+  # lower case.
+  #
+  # `first`, `idx`, `join` and `parent` are the controls, and they are what
+  # make the iteration an addition rather than a replacement. The bare name is
+  # still the first value and not "[red blue]" — the reading every stub written
+  # before the key was ever repeated depends on — the index form still reaches
+  # past it, and the enclosing scope is still reachable from inside the block
+  # the list opened.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-engine-each-multivalue-001/search?tag=red&tag=blue&one=solo&blank=
+      headers: {X-One: "only"}
+    expect:
+      status: 200
+      body: "q=[0:redF;1:blueL;] solo=[0:solo;] gone=[none] blank=[[];] hdr=[0:only;] lower=[only;] first=[red] idx=[blue] join=[red,blue] parent=[GETGET]"
+
+  # The same stub, three values under the one name and none under the others.
+  # Every count moves, so nothing above is a constant the first request could
+  # not have told apart from a rendering — and `idx` now reaches the middle
+  # value rather than the last, which is what separates an index into the list
+  # from a second reading of whatever the model kept.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-engine-each-multivalue-001/search?tag=x&tag=y&tag=z
+      headers: {X-One: "solo"}
+    expect:
+      status: 200
+      body: "q=[0:xF;1:y;2:zL;] solo=[] gone=[none] blank=[] hdr=[0:solo;] lower=[solo;] first=[x] idx=[y] join=[x,y,z] parent=[GETGETGET]"
+
+  # The control.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0033-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-engine-each-multivalue-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "q=[{{#each request.query.tag}}{{this}};{{/each}}]"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-engine-each-multivalue-001/literal?tag=red&tag=blue
+    expect:
+      status: 200
+      body: "q=[{{#each request.query.tag}}{{this}};{{/each}}]"

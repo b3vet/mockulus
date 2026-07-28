@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-engine-bare-now-001
+behaviors: [B-TPL-NOW, B-TPL-RANDOMVALUE, B-RESP-TRANSFORMERS]
+# The mustache form of a no-argument helper renders a clock to the second and a
+# random draw, and neither has a differential oracle: two servers answering the
+# same request microseconds apart cannot be relied on to agree on the second,
+# and a draw has no expected value. What is pinned here is the shape each one
+# produces, recorded from pinned WireMock 3.13.2 — `now=[2026-07-28T22:41:22Z]`
+# and a 36-character draw — and the resolution rule they share. The parts of
+# the same behaviour that can be diffed are asserted by
+# wmv-tmpl-engine-bare-helper-001.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b1000009-0035-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-tmpl-engine-bare-now-001/stamp"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Stamp": "{{now}}",
+                                  "X-Draw": "{{size (randomValue)}}"},
+                      "body": "now=[{{now}}] rv=[{{randomValue}}] scoped=[{{#with (jsonPath request.body '$.o')}}{{now}}|{{city}}{{/with}}] member=[{{#with (jsonPath request.body '$.o')}}{{tier}}{{/with}}] unknown=[{{nope}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `now` and `rv` are the two expressions the fix exists for, in the position
+  # they are written in: alone inside a mustache, where the token is equally
+  # readable as a variable of that name. The timestamp is asserted to the
+  # second and to the Z it collapses to at a zero offset, and the draw to its
+  # 36 characters, so an engine that rendered nothing — the answer before the
+  # registry was consulted — fails both.
+  #
+  # `scoped` is the rule that decides it, and the reason the answer cannot be
+  # "look the name up first and call the helper only if it misses". The scope
+  # pushed here carries its own `now`, and the helper still wins: WireMock
+  # answers the same template with a timestamp rather than with "MEMBER-NOW".
+  # A model-first reading would render one thing for a request whose body
+  # happens to carry that field and another for the next request, which is a
+  # response that depends on the caller's vocabulary.
+  #
+  # `member` and `unknown` are the controls on either side of it: a name in the
+  # same scope that no helper has is still the member, and a name in neither
+  # place is still nothing at all rather than an error.
+  #
+  # The two headers carry the same two expressions as the body, because header
+  # values are templated as well (§10.1) and a binding done on one path and not
+  # the other leaves every one of them empty. `X-Draw` is the exact assertion of
+  # the pair: 36 is the length of a draw whatever the draw was, so a header
+  # rendered as nothing is a failing line rather than a header nobody looked at.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-tmpl-engine-bare-now-001/stamp
+      headers: {Content-Type: application/json}
+      body: '{"o": {"now": "MEMBER-NOW", "city": "london", "tier": "gold"}}'
+    expect:
+      status: 200
+      headers: {X-Draw: "36"}
+      headers_contain: {X-Stamp: "Z"}
+      body_regex: '^now=\[20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ\] rv=\[[A-Za-z0-9]{36}\] scoped=\[20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ\|london\] member=\[gold\] unknown=\[\]$'

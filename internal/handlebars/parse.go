@@ -261,7 +261,20 @@ func (p *parser) consumeElse() {
 
 // parseExpression reads the inside of a mustache: a path, a literal, or a
 // helper call with positional and named arguments.
-func parseExpression(src string) (*Expression, error) {
+func parseExpression(src string) (*Expression, error) { return parseCall(src, false) }
+
+// parseCall is parseExpression plus the one thing that tells a subexpression
+// apart from a mustache: parentheses are a call whatever stands inside them.
+//
+// `{{now}}` is genuinely ambiguous — a variable named `now` is a legal reading
+// of it — and only the helper registry can settle which was meant, so that
+// decision is deferred to BindBareHelpers at compile time. `(now)` is not
+// ambiguous: Handlebars gives a parenthesised name no other meaning, and the
+// name resolves against the helper registry alone. Settling it in the parser is
+// what makes a subexpression naming a helper mockulus does not have a 422 at
+// registration rather than an expression that renders as nothing on every
+// request (P3).
+func parseCall(src string, parenthesised bool) (*Expression, error) {
 	tokens, err := tokenizeArgs(src)
 	if err != nil {
 		return nil, err
@@ -270,8 +283,15 @@ func parseExpression(src string) (*Expression, error) {
 		return nil, errors.New("empty expression")
 	}
 
-	// A single token is a bare path or literal, never a helper call.
+	// A single token is a bare path or literal in a mustache, and the name of a
+	// no-argument helper inside parentheses.
 	if len(tokens) == 1 && !strings.Contains(tokens[0], "=") {
+		if lit, isLit := literalValue(tokens[0]); isLit {
+			return &Expression{Literal: lit, IsLiteral: true}, nil
+		}
+		if parenthesised {
+			return &Expression{Helper: tokens[0]}, nil
+		}
 		return parseOperand(tokens[0])
 	}
 
@@ -323,7 +343,7 @@ func parseOperand(tok string) (*Expression, error) {
 	// A subexpression: {{#each (range 1 3)}} passes one helper's result to
 	// another, which is how Handlebars composes without temporaries.
 	if len(tok) >= 2 && tok[0] == '(' && tok[len(tok)-1] == ')' {
-		return parseExpression(strings.TrimSpace(tok[1 : len(tok)-1]))
+		return parseCall(strings.TrimSpace(tok[1:len(tok)-1]), true)
 	}
 	if lit, ok := literalValue(tok); ok {
 		return &Expression{Literal: lit, IsLiteral: true}, nil
@@ -370,8 +390,21 @@ func unescapeQuoted(s string) string {
 	return sb.String()
 }
 
+// ParentSegment is how a path spells a step out of the current scope. It is a
+// segment rather than a prefix the parser strips, because how many of them a
+// path opens with is the whole meaning of `../../x` and nothing downstream can
+// recover the count once they are gone.
+const ParentSegment = ".."
+
 // splitPath breaks a dotted path into segments, honouring the [n] index form
 // and the [literal segment] escape.
+//
+// Both separators Handlebars accepts are separators here: `a.b` and `a/b` name
+// the same two segments. The slash form only ever appears in real templates as
+// part of `../`, and treating it as an ordinary character is what used to make
+// `{{../request.method}}` a lookup of a member called "/request" — a name no
+// model has, so the expression rendered as nothing rather than reaching the
+// enclosing scope it names.
 func splitPath(tok string) []string {
 	var (
 		out []string
@@ -385,8 +418,21 @@ func splitPath(tok string) []string {
 	}
 
 	for i := 0; i < len(tok); i++ {
+		// `..` is a segment of its own wherever a segment may start, and the
+		// separator that follows it may be written either way. Anything else
+		// beginning with two dots — a member genuinely named "..x" — is left to
+		// the ordinary rules below.
+		if cur.Len() == 0 && strings.HasPrefix(tok[i:], ParentSegment) &&
+			(len(tok) == i+2 || tok[i+2] == '/' || tok[i+2] == '.') {
+			out = append(out, ParentSegment)
+			// Two for the dots; the loop's own increment steps over the
+			// separator that ends the segment.
+			i += 2
+			continue
+		}
+
 		switch tok[i] {
-		case '.':
+		case '.', '/':
 			flush()
 		case '[':
 			flush()

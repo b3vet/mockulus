@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-size-values-001
+behaviors: [B-TPL-TRIM-LOWER-LOWERCASE-UPPER-UPPERCASE-SPLIT-JOIN-CONCAT-SUBST]
+wm: verified
+steps:
+  # templating-strings-001 gives `size` a string literal and gets its length.
+  # The same helper over a query parameter is a different question, because a
+  # query parameter is a list of values that happens to print as the first of
+  # them: `size` there is how many values arrived, not how many characters the
+  # first one spells. The two readings coincide on nothing — `?tier=go-ld` is
+  # one value and five characters — and the wrong one is a plausible number
+  # every time, so a stub paging or branching on it is wrong without anything
+  # looking wrong.
+  #
+  # `lit` is the same five characters as a literal, sitting next to the
+  # parameter that carries them. It is what stops this case from being read as
+  # "size now counts things": handed the text, the helper still counts text.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0026-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-size-values-001/orders"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "tier=[{{request.query.tier}}] qs=[{{size request.query.tier}}] lit=[{{size 'go-ld'}}] tags=[{{size request.query.tag}}] i1=[{{request.query.tag.[1]}}] blank=[{{size request.query.blank}}] hdr=[{{size request.headers.X-Tier}}] segs=[{{size request.pathSegments}}] ck=[{{size request.cookies}}] rng=[{{size (range 1 5)}}] body=[{{size request.body}}] trimmed=[{{size (trim '  ab  ')}}] joined=[{{join request.query.tag '/'}}] loose=[{{join 'a' 'b' '-'}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `qs` and `tags` are the claim: one value under `tier`, three under `tag`.
+  # A helper measuring what the node prints answers 5 and 7 instead. Every
+  # value in this request is a length that differs from its count, which is
+  # not decoration — a parameter sent three times whose first value is three
+  # characters long gives the same digit either way and would sit in this diff
+  # proving nothing.
+  #
+  # `i1` reaches the second value while `qs` counts them, so the node keeps
+  # both natures. `tier` prints the first value, which is what every stub
+  # written for the common case depends on.
+  #
+  # `blank` is `?blank=`, present with an empty value: one value, not zero.
+  # Counting characters answers zero here and so does counting an absent
+  # parameter's values, which is exactly the confusion §5.2 keeps apart
+  # elsewhere.
+  #
+  # `hdr` is a header, which is the same shape as a query parameter and
+  # therefore the same question — a case cannot send the same header twice, so
+  # the repeated-header count is pinned by the unit tests instead.
+  #
+  # `segs`, `ck` and `rng` are the collections that were already counted by
+  # their elements: a list, a map and a helper's output. They are here because
+  # a branch for the repeated key must not displace them.
+  #
+  # `body`, `lit` and `trimmed` are the text side of the same helper. An empty
+  # body is zero characters, a literal is five, and a trimmed literal is two —
+  # so nothing here has become "count the elements" for values that have none.
+  #
+  # `joined` is the same node read by the helper that consumes all of it. A
+  # `join` that sees a scalar renders "crimson" and drops the rest into a
+  # response that still parses, which is the failure `size` makes visible as a
+  # number and this one makes visible as missing data. `loose` is its control:
+  # arguments that were never a list at all still join.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-size-values-001/orders?tier=go-ld&tag=crimson&tag=blue&tag=green&blank=
+      headers: {X-Tier: "gold", Cookie: "alpha=1; beta=2"}
+    expect:
+      status: 200
+      body: "tier=[go-ld] qs=[1] lit=[5] tags=[3] i1=[blue] blank=[1] hdr=[1] segs=[3] ck=[2] rng=[5] body=[0] trimmed=[2] joined=[crimson/blue/green] loose=[a-b]"
+
+  # The same stub against a request that repeats nothing. `tags` drops to one
+  # and `i1` empties, so the count is taken from the request in front of it
+  # rather than from a list left over from the step before; and one value under
+  # a name is still a list of one, which is the answer that makes `size` usable
+  # in a stub that does not know how many the caller will send.
+  #
+  # `ck` drops to zero with the cookie header gone — an empty map counted as a
+  # map, not a node that has stopped being one.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-size-values-001/orders?tier=x&tag=solo&blank=
+      headers: {X-Tier: "gold"}
+    expect:
+      status: 200
+      body: "tier=[x] qs=[1] lit=[5] tags=[1] i1=[] blank=[1] hdr=[1] segs=[3] ck=[0] rng=[5] body=[0] trimmed=[2] joined=[solo] loose=[a-b]"
+
+  # The control. Without the transformer the same body is served as written,
+  # which is what a fixture documenting a template has to survive.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0026-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-size-values-001/literal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "qs=[{{size request.query.tier}}] tags=[{{size request.query.tag}}]"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-size-values-001/literal?tier=go-ld&tag=crimson&tag=blue
+    expect:
+      status: 200
+      body: "qs=[{{size request.query.tier}}] tags=[{{size request.query.tag}}]"
