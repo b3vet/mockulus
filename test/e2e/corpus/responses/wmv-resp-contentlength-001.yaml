@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-contentlength-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2. Content-Length is on the differential's
+# volatile list, so what the oracle carries this case on is the body: the number
+# of bytes a client reads back is exactly what a declared length decides, and it
+# is where the two servers used to part company.
+wm: verified
+#
+# A stub may declare its own Content-Length, and it is the one response header
+# that is not just a header — it is the framing of the message underneath it.
+# Declaring a length shorter than the body is a mistake, but it is a mistake
+# both servers have to answer the same way, because the client on the other end
+# cannot tell a deliberate answer from a broken one.
+#
+# mockulus answered it worst of all. net/http takes a handler's declared length
+# literally and refuses a write that exceeds it rather than cutting it short, so
+# the response went out framed for three bytes and carrying none: the client
+# blocked waiting for a body that was never coming, then reported a truncated
+# read when the connection closed. A stub that registered cleanly and answers
+# 200 is the last place anyone looks for a hang.
+#
+# WireMock sends the declared header and then the whole body, which pushes the
+# surplus bytes past the end of the message. Its client reads exactly the
+# declared count and the rest becomes the first bytes of whatever that
+# connection reads next. Trimming the body to the length its stub declared is
+# the message both of those were reaching for: the client sees the same bytes it
+# sees from WireMock, and the message describes itself, so the connection
+# underneath survives instead of being poisoned or abandoned.
+steps:
+  # The declaration that used to hang: three bytes promised, eight bytes held.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-contentlength-001/short"},
+         "response": {"status": 200, "body": "abcdefgh",
+                      "headers": {"Content-Type": "text/plain", "Content-Length": "3"}}}
+    expect:
+      status: 201
+      # The header is stored as written. Neither server corrects the stub's
+      # arithmetic, and a mock that quietly rewrote this field could not be used
+      # to test a client's handling of a server that gets it wrong.
+      body_json_subset:
+        response:
+          headers: {Content-Length: "3"}
+
+  # Three bytes declared, three bytes read, and a response that ends where it
+  # says it ends. The body assertion is the whole point: it was empty here, and
+  # only after the client had waited out the bytes it had been promised.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-contentlength-001/short}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain, Content-Length: "3"}
+      body: "abc"
+
+  # Zero is a length like any other, and the far end of the same rule: a stub
+  # that declares no body at all gets a well-framed response with none. Read as
+  # "unset" instead of "zero" this would serve all eight bytes under a header
+  # promising none, which is the original failure with the sign flipped.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000001-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-contentlength-001/zero"},
+         "response": {"status": 200, "body": "abcdefgh",
+                      "headers": {"Content-Type": "text/plain", "Content-Length": "0"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-contentlength-001/zero}
+    expect:
+      status: 200
+      headers: {Content-Length: "0"}
+      body: ""
+
+  # The control, and the reason the rule is written as "shorter than the body"
+  # rather than "declared at all": a stub that declares the truth loses nothing.
+  # This is the only way anyone sets this header on purpose, and a trim written
+  # a byte too eagerly would take the last character off every one of them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000001-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-contentlength-001/exact"},
+         "response": {"status": 200, "body": "abcdefgh",
+                      "headers": {"Content-Type": "text/plain", "Content-Length": "8"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-contentlength-001/exact}
+    expect:
+      status: 200
+      headers: {Content-Length: "8"}
+      body: "abcdefgh"
+
+  # The second control: the ordinary stub, which declares nothing and must be
+  # served in full and framed by the server. Without it "the body is trimmed to
+  # the declared length" would be satisfied by an implementation that trimmed to
+  # a length it had invented.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000001-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-contentlength-001/undeclared"},
+         "response": {"status": 200, "body": "abcdefgh",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-contentlength-001/undeclared}
+    expect:
+      status: 200
+      headers: {Content-Length: "8"}
+      body: "abcdefgh"
+
+  # The third control, and the one that says the trim is about this header and
+  # not about response headers in general: a stub declaring some other length-
+  # shaped header keeps every byte of its body.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000001-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-contentlength-001/other-header"},
+         "response": {"status": 200, "body": "abcdefgh",
+                      "headers": {"Content-Type": "text/plain", "X-Content-Length": "3"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-contentlength-001/other-header}
+    expect:
+      status: 200
+      headers: {X-Content-Length: "3"}
+      body: "abcdefgh"

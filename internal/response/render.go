@@ -16,6 +16,7 @@ import (
 	mathrand "math/rand/v2"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/b3vet/mockulus/internal/handlebars"
@@ -104,6 +105,8 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 		header["Content-Type"] = nil
 	}
 
+	body = clampToDeclaredLength(header, body)
+
 	if resp.HasStatusMessage {
 		// Only a stub that asked for a reason phrase leaves the ordinary path,
 		// and it rejoins it if the connection cannot be taken (HTTP/2). The
@@ -125,6 +128,51 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 		_, _ = w.Write(body)
 	}
 	return resp.Status
+}
+
+// clampToDeclaredLength trims the body to a Content-Length the stub declared for
+// itself, when that header promises fewer bytes than the body holds.
+//
+// A stub is allowed to name its own Content-Length, and net/http takes the
+// header at its word: a handler that then writes more than it promised has the
+// write refused outright rather than truncated. So a stub declaring 3 over an
+// eight-byte body put a response on the wire that was framed for three bytes
+// and carried none, and the client either blocked on the three it had been
+// promised or reported an incomplete read — the worst way to answer, because
+// the stub registered cleanly and the failure looks like a network fault.
+//
+// WireMock sends the declared header and then the whole body, which pushes the
+// surplus five bytes past the end of the message: a conforming client reads
+// exactly the declared count as the body and the remainder becomes the first
+// bytes of whatever it reads next on that connection.
+//
+// Trimming is the message both of those were reaching for. The body the client
+// sees is byte for byte the body WireMock's client sees, and the message is
+// framed for what it actually carries, so the connection underneath it survives
+// the exchange instead of being poisoned or abandoned. The declared header
+// itself is left exactly as written: it is the stub author's statement about
+// the response, and it is the one part neither server second-guesses.
+func clampToDeclaredLength(header http.Header, body []byte) []byte {
+	declared := header.Get("Content-Length")
+	if declared == "" {
+		return body
+	}
+	n, err := strconv.Atoi(declared)
+	switch {
+	case err != nil || n < 0:
+		// Not a length at all. net/http drops the header and frames the response
+		// for the bytes it is holding, which is the only answer available, and
+		// second-guessing it here would put a length on the wire nobody wrote.
+		return body
+	case n >= len(body):
+		// The stub told the truth, or promised more than it has. The truthful
+		// case is every stub that sets this header on purpose and pays nothing
+		// for the feature; the over-promise is the direction where both servers
+		// already agree, since neither can invent the bytes it undertook to
+		// send.
+		return body
+	}
+	return body[:n]
 }
 
 // render evaluates the stub's templates. Only the parts that carry template

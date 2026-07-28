@@ -1,0 +1,152 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-body-charset-latin1-bytes-001
+behaviors: [B-MATCH-CONTAINS-DOESNOTCONTAIN, B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+#
+# The other direction of the charset rule, and the one a case file cannot write
+# down: these requests carry a body that is NOT valid UTF-8 — the four bytes
+# 63 61 66 E9, which is "café" in ISO-8859-1 and nothing at all in UTF-8. A YAML
+# scalar is UTF-8 by definition and cannot hold that lone byte, so the bodies
+# come from files instead, which body_file sends verbatim. Every step here would
+# otherwise have to be taken on trust from the sibling case, where the bytes are
+# legal in both readings.
+wm_ignore: ["$unmatched-body"]
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0002-4000-8000-000000000001",
+         "name": "equalTo an accented word",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-latin1-bytes-001/accent",
+                     "bodyPatterns": [{"equalTo": "caf\u00e9"}]},
+         "response": {"status": 200, "body": "accent",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0002-4000-8000-000000000002",
+         "name": "contains the accented letter",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-latin1-bytes-001/contains",
+                     "bodyPatterns": [{"contains": "\u00e9"}]},
+         "response": {"status": 200, "body": "contains",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0002-4000-8000-000000000003",
+         "name": "does not contain the accented letter",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-latin1-bytes-001/without",
+                     "bodyPatterns": [{"doesNotContain": "\u00e9"}]},
+         "response": {"status": 200, "body": "without",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A JSON document in the same encoding. The JSON matchers read the body as
+  # text before they read it as a document — that is where equalToJson gets its
+  # input on both servers — so the declaration reaches them too, and a document
+  # that is not valid UTF-8 is still a document once it has been decoded.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0de8859-0002-4000-8000-000000000004",
+         "name": "equalToJson over an accented member",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-body-charset-latin1-bytes-001/json",
+                     "bodyPatterns": [{"equalToJson": "{\"n\":\"caf\u00e9\"}"}]},
+         "response": {"status": 200, "body": "json",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Declared as what it is, the body spells the accented word and the stub
+  # answers it. Before the charset was read, this was a 404 here and a 200 on
+  # WireMock — the same stub and the same request, answered opposite ways.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/accent
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body_file: stubs/wmv-body-charset-latin1-text.bin
+    expect: {status: 200, body: "accent"}
+
+  # The controls: the same bytes claiming to be UTF-8, and claiming nothing.
+  # Neither spells the accented word, and neither may match — which is what
+  # stops the fix from being "try harder until something matches".
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/accent
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body_file: stubs/wmv-body-charset-latin1-text.bin
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/accent
+      headers: {Content-Type: "text/plain"}
+      body_file: stubs/wmv-body-charset-latin1-text.bin
+    expect: {status: 404}
+
+  # The substring form moves with equalTo rather than separately.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/contains
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body_file: stubs/wmv-body-charset-latin1-text.bin
+    expect: {status: 200, body: "contains"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/contains
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body_file: stubs/wmv-body-charset-latin1-text.bin
+    expect: {status: 404}
+
+  # And its complement moves the other way over a single value, so the pair
+  # cannot both be satisfied by a decoding that quietly did nothing.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/without
+      headers: {Content-Type: "text/plain; charset=ISO-8859-1"}
+      body_file: stubs/wmv-body-charset-latin1-text.bin
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/without
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body_file: stubs/wmv-body-charset-latin1-text.bin
+    expect: {status: 200, body: "without"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/json
+      headers: {Content-Type: "application/json; charset=ISO-8859-1"}
+      body_file: stubs/wmv-body-charset-latin1-json.bin
+    expect: {status: 200, body: "json"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-body-charset-latin1-bytes-001/json
+      headers: {Content-Type: "application/json"}
+      body_file: stubs/wmv-body-charset-latin1-json.bin
+    expect: {status: 404}

@@ -1,0 +1,166 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-resp-headerfold-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+# Verified against pinned WireMock 3.13.2, which folds the two spellings into
+# the first one with the values in an array, in both the response to the
+# registering write and the document a later GET returns.
+wm: verified
+#
+# Header names are case-insensitive, so `{"X-DUP": "first", "x-dup": "second"}`
+# is one header carrying two values and not two headers carrying one each. The
+# document the server stores has to say that, or it stops describing the
+# response it will serve: a client reading its own mapping back sees two headers
+# where the server holds one, and a client diffing the document it sent against
+# the document WireMock stored sees a difference that is not in either server.
+#
+# The order matters more than the shape does, and that is the half of this with
+# bytes behind it. The values of a repeated header are a sequence — two
+# Set-Cookie lines for the same cookie name, a Via chain — and reading the
+# object into a map and walking it in sorted order sent them back to front
+# whenever the second spelling sorted ahead of the first. The two stubs below
+# are the same stub written the two ways round, and they have to answer the
+# same, because the document says the same thing both times.
+steps:
+  # Upper case first. This is the spelling that survives, and the values follow
+  # in the order they were written.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000002-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headerfold-001/upper-first"},
+         "response": {"status": 200, "body": "upper first",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-DUP": "first", "x-dup": "second"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers: {X-DUP: ["first", "second"]}
+
+  # And it is what the store holds, not a shape invented on the way out of the
+  # registering write. A fold applied only to the 201 would leave every later
+  # reader of this mapping looking at the unfolded document.
+  - admin: {method: GET, path: /__admin/mappings/c1000002-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        response:
+          headers: {X-DUP: ["first", "second"]}
+
+  # Header.Get returns the first of a repeated header, which is where the order
+  # is visible from the case; that both values go out, in this order, is what
+  # the differential checks, because its normalizer joins the repeats before
+  # comparing them.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headerfold-001/upper-first}
+    expect:
+      status: 200
+      headers: {X-Dup: "first"}
+      body: "upper first"
+
+  # The same stub with the two spellings the other way round, which is the step
+  # that failed. Sorted, `X-DUP` came before `x-dup` whatever the document said,
+  # so this response went out carrying second and then first — the values
+  # reversed against a document nobody had changed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000002-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headerfold-001/lower-first"},
+         "response": {"status": 200, "body": "lower first",
+                      "headers": {"Content-Type": "text/plain",
+                                  "x-dup": "first", "X-DUP": "second"}}}
+    expect:
+      status: 201
+      # The first spelling written is the one kept, so this document folds to
+      # the lower-case name where the one above folded to the upper-case one.
+      body_json_subset:
+        response:
+          headers: {x-dup: ["first", "second"]}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headerfold-001/lower-first}
+    expect:
+      status: 200
+      headers: {X-Dup: "first"}
+      body: "lower first"
+
+  # Three spellings, one of them holding an array, contribute their values in
+  # the order the document wrote them and under the first name it used. This is
+  # what says the fold is over the whole object rather than a special case for
+  # two entries, and that an array entry is spliced in rather than nested.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000002-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headerfold-001/three"},
+         "response": {"status": 200, "body": "three spellings",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Tri": "one", "x-TRI": ["two", "three"]}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers: {X-Tri: ["one", "two", "three"]}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headerfold-001/three}
+    expect:
+      status: 200
+      headers: {X-Tri: "one"}
+      body: "three spellings"
+
+  # The control, and the line the fold must not cross: names that differ by more
+  # than case are different headers. They keep their own spellings, they keep
+  # their own single values, and neither of them becomes an array. Without this
+  # step "two spellings fold" would be satisfied by an implementation that
+  # folded everything into one header, or that wrapped every value in an array
+  # on the way past.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000002-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headerfold-001/distinct"},
+         "response": {"status": 200, "body": "two headers",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Alpha": "a", "X-Beta": "b"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers: {Content-Type: "text/plain", X-Alpha: "a", X-Beta: "b"}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headerfold-001/distinct}
+    expect:
+      status: 200
+      headers: {X-Alpha: "a", X-Beta: "b"}
+      header_absent: [X-Dup, X-Tri]
+      body: "two headers"
+
+  # The second control: a header named once, with its values already in an
+  # array, is not something to fold. It is stored with the array it was written
+  # with — the rewrite touches only the documents that have two spellings to
+  # reconcile, and leaves every other mapping byte for byte as registered.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c1000002-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-headerfold-001/already-array"},
+         "response": {"status": 200, "body": "already an array",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-List": ["a", "b"]}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers: {X-List: ["a", "b"]}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-headerfold-001/already-array}
+    expect:
+      status: 200
+      headers: {X-List: "a"}
+      body: "already an array"
