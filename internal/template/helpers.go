@@ -116,7 +116,12 @@ func nowHelper(args []any, hash map[string]any) (any, error) {
 		t = t.In(loc)
 	}
 
-	format := "yyyy-MM-dd'T'HH:mm:ssZ"
+	// The format a bare `now` falls back to. WireMock's default is not a Java
+	// pattern at all — it formats the instant with its ISO-8601 helper, which
+	// ends in "Z" at a zero offset and in "+HH:MM" elsewhere. That is exactly
+	// what XXX spells, so the default is written as the pattern that produces
+	// it rather than as a second code path that has to be kept in step.
+	format := "yyyy-MM-dd'T'HH:mm:ssXXX"
 	if raw, ok := hash["format"]; ok {
 		format = handlebars.Stringify(raw)
 	}
@@ -176,7 +181,14 @@ var javaPatternOrder = []struct{ java, golang string }{
 	{"mm", "04"},
 	{"ss", "05"},
 	{"SSS", "000"},
-	{"XXX", "-07:00"}, {"ZZ", "-0700"}, {"Z", "-0700"},
+	// "Z07:00" rather than "-07:00" because Java's XXX writes a bare "Z" at a
+	// zero offset and a numeric offset everywhere else, and Go's layout has the
+	// same split. "-07:00" is numeric always, so it renders "+00:00" for a UTC
+	// instant — a timestamp that is still ISO-8601 but not the one the oracle
+	// wrote, and the difference only shows up at UTC, which is where a mock
+	// clock spends nearly all of its time. ZZ and Z stay numeric: those are
+	// Java's RFC-822 patterns and they print "+0000" at UTC.
+	{"XXX", "Z07:00"}, {"ZZ", "-0700"}, {"Z", "-0700"},
 	{"a", "PM"},
 	{"EEEE", "Monday"}, {"EEE", "Mon"},
 }

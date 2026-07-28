@@ -156,6 +156,18 @@ steps:
       status: 200
       body_regex: '^x=\+1[01]:00$'
 
+  # The same token at a zero offset, asked for the same way. XXX has exactly
+  # two answers — a bare "Z" at UTC and a numeric offset everywhere else — and
+  # the Sydney request above can only see the second of them. A layout that
+  # spells the offset numerically whatever it is renders "+00:00" here and
+  # passes Sydney unchanged, so this is the request that separates the two.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/zone?z=UTC
+    expect:
+      status: 200
+      body: "x=Z"
+
   # A zone that does not exist. Falling back to UTC would render a timestamp
   # that is wrong by hours and looks entirely plausible — the worst kind of
   # answer a mock clock can give.

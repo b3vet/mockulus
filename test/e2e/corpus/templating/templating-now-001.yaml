@@ -14,7 +14,7 @@ steps:
          "request": {"method": "GET", "urlPath": "/e2e/templating-now-001/clock"},
          "response": {"status": 200,
                       "headers": {"Content-Type": "text/plain"},
-                      "body": "day={{now format='yyyy-MM-dd'}} year={{now format='yyyy'}} past={{now offset='-100 years' format='yyyy'}} future={{now offset='100 years' format='yyyy'}} epoch={{now format='epoch'}} unix={{now format='unix'}} sydney={{now timezone='Australia/Sydney' format='XXX'}}",
+                      "body": "day={{now format='yyyy-MM-dd'}} year={{now format='yyyy'}} past={{now offset='-100 years' format='yyyy'}} future={{now offset='100 years' format='yyyy'}} epoch={{now format='epoch'}} unix={{now format='unix'}} sydney={{now timezone='Australia/Sydney' format='XXX'}} iso={{now offset='0 seconds'}} isozone={{now timezone='Australia/Sydney' offset='0 seconds'}}",
                       "transformers": ["response-template"]}}
     expect: {status: 201}
 
@@ -32,7 +32,16 @@ steps:
   # `epoch` and `unix` differ only in unit, which is exactly why both are
   # here: milliseconds are thirteen digits and seconds ten until the year
   # 2286, so the two spellings cannot be transposed and still match.
+  #
+  # `iso` and `isozone` are the format a `now` that names none falls back to,
+  # and they are pinned here rather than in a diffed case because the default
+  # runs to the second and two servers a moment apart do not agree on that.
+  # The oracle's default is not a Java pattern at all — it formats the instant
+  # with an ISO-8601 helper, recorded by probe as ending in a bare "Z" at UTC
+  # and in "+10:00" under Sydney. Those are the two forms below, so a default
+  # that always writes a numeric offset fails on `iso` and one hard-coded to a
+  # Zulu marker fails on `isozone`.
   - request: {method: GET, path: /e2e/templating-now-001/clock}
     expect:
       status: 200
-      body_regex: '^day=20\d\d-\d\d-\d\d year=20\d\d past=19\d\d future=21\d\d epoch=\d{13} unix=\d{10} sydney=\+1[01]:00$'
+      body_regex: '^day=20\d\d-\d\d-\d\d year=20\d\d past=19\d\d future=21\d\d epoch=\d{13} unix=\d{10} sydney=\+1[01]:00 iso=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ isozone=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\+1[01]:00$'
