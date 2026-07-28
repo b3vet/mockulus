@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cfg-yaml-file-001
+behaviors: [B-CFG-DIAGNOSTICS-ON-UNMATCHED, B-CFG-MAX-BODY-BYTES]
+# The only variant booted from a YAML configuration file. SPEC §13 documents the
+# file as an input format on equal footing with the environment, and every other
+# instance in the harness is configured by environment variables alone — so
+# without this case the file is documented, shipped, and never read.
+config: yaml-config
+# n/a: WireMock is configured by command-line arguments and has no file of this
+# shape, so the binding itself has no oracle — and neither has either behavior
+# it is observed through. WireMock renders a near-miss table on every unmatched
+# request (deviation #2) and caps no request body at all (deviation #6), so it
+# would answer both of the requests below differently by design.
+wm: n/a
+steps:
+  # Both keys asserted below are set in the file and nowhere else, so the values
+  # in force can only have come out of it. The startup dump echoes each resolved
+  # value against the key that carries it (SPEC §14.2), which is what ties the
+  # observable further down to the file rather than to a coincidence: a default
+  # that happened to agree would fail here first.
+  - logprobe:
+      json_fields:
+        msg: config
+        setting: diagnostics_on_unmatched=true
+  - logprobe:
+      json_fields:
+        msg: config
+        setting: max_body_bytes=1KiB
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000001-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/cov-cfg-yaml-file-001/orders",
+                     "headers": {"X-Api-Key": {"equalTo": "secret"}}},
+         "response": {"status": 200, "body": "orders"}}
+    expect: {status: 201}
+
+  # A file-configured instance still matches: the binding is a different input
+  # format for the same settings, not a different mode of the server.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-cfg-yaml-file-001/orders
+      headers: {X-Api-Key: secret}
+    expect: {status: 200, body: "orders"}
+
+  # The first file-sourced value, observed where it acts. `diagnostics_on_
+  # unmatched` defaults to false, so a 404 that names the stub that came closest
+  # and the one criterion that did not line up is proof the file was read and
+  # applied — a binder that parsed the document and dropped it on the floor
+  # would leave the default in place and this body would stop at its first line.
+  #
+  # Asserted by regex rather than byte for byte for the reason §6.8 gives: the
+  # wording of a diagnostic is outside the compatibility surface, and pinning it
+  # exactly would make every improvement to it a corpus edit.
+  - request: {port: mock, method: GET, path: /e2e/cov-cfg-yaml-file-001/orders}
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body_regex: "^Request was not matched\n[\\s\\S]*c0000001-0000-4000-8000-000000000001[\\s\\S]*X-Api-Key"
+
+  # The second file-sourced value is a typed one: `max_body_bytes` is a size,
+  # written `1KiB` with a comment after it. A file that was not read leaves the
+  # documented 10MiB default in place and both requests below are served, which
+  # is what these assertions catch. The other two ways to get this key wrong —
+  # not understanding the suffix, or taking the trailing comment along with it —
+  # are refused at parse time, so they cost the variant its boot rather than
+  # costing this case its assertion.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000001-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-cfg-yaml-file-001/echo"},
+         "response": {"status": 200, "body": "under the cap"}}
+    expect: {status: 201}
+
+  # Under the cap, which is the control: the value in force rejects oversize
+  # bodies rather than rejecting bodies.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-cfg-yaml-file-001/echo
+      body: '{"small": true}'
+    expect: {status: 200, body: "under the cap"}
+
+  # Past it, 413 and code 1030. The body is the existing oversized fixture
+  # rather than a new one: it is two kilobytes of nothing in particular, and a
+  # second copy in the corpus would buy the case nothing it does not already
+  # get from the first.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-cfg-yaml-file-001/echo
+      body_file: stubs/errors-oversized-body.json
+    expect:
+      status: 413
+      body_json_subset:
+        errors:
+          - code: 1030
+            title: "Request body too large"
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000001-0000-4000-8000-000000000001}
+    expect: {status: 200}
+  - admin: {method: DELETE, path: /__admin/mappings/c0000001-0000-4000-8000-000000000002}
+    expect: {status: 200}

@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cfg-yaml-precedence-002
+behaviors: [B-CFG-TEMPLATING-ENABLED]
+# SPEC §13 states one rule about the two input formats: env var > YAML file >
+# default. The rule has no catalog row of its own — the §13 table is one row per
+# key — so this case binds the key whose value is being fought over, which is
+# also the key whose two settings a client can tell apart.
+#
+# Losing that key must not cost the file the rest of its document either.
+# cov-cfg-yaml-file-001 runs on this same instance and asserts that the keys the
+# environment leaves alone are still in force, so the two together say
+# env-over-file rather than env-instead-of-file.
+config: yaml-config
+# n/a: WireMock takes this decision at start-up through a flag its harness
+# oracle is not started with, so there is nothing to diff.
+wm: n/a
+steps:
+  # The file sets `templating_enabled: "off"` and the environment sets `on`.
+  # Both are present, both are valid, and only one can be in force; the dump
+  # says which won.
+  #
+  # The file's value is not a dead letter either — the parser has to accept the
+  # quoted scalar before precedence can discard it, and a quoting bug is a boot
+  # failure with a line number rather than a default quietly left in place. So
+  # this instance existing at all is part of the claim.
+  - logprobe:
+      json_fields:
+        msg: config
+        setting: templating_enabled=on
+
+  # The response is where the two settings disagree. This stub declares no
+  # transformer: under `off` there is no render engine in the process at all and
+  # the braces come back untouched, under `on` the deployment has taken the
+  # decision away from the stub author. Nothing between the two looks the same.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000001-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-cfg-yaml-precedence-002/global"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Method": "{{request.method}}"},
+                      "body": "path={{request.path}} tier={{request.query.tier}}"}}
+    expect: {status: 201}
+
+  # Rendered, so the environment won. Had the file won, this body would come
+  # back as its own template text and the header as the literal
+  # `{{request.method}}`. That is what the rule is worth pinning for: a checked-
+  # in file is the thing a deployment overrides per environment, and a
+  # precedence that ran the other way would let the file silently undo every
+  # override anyone made.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-cfg-yaml-precedence-002/global?tier=gold
+    expect:
+      status: 200
+      headers: {X-Method: "GET"}
+      body: "path=/e2e/cov-cfg-yaml-precedence-002/global tier=gold"
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000001-0000-4000-8000-000000000003}
+    expect: {status: 200}

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,11 +96,76 @@ const (
 	// listens on would still be reached if a stray Couchbase were running here,
 	// and the case would then prove the opposite of what it claims.
 	VariantStartWithoutStore = "start-without-store"
+	// VariantYAMLConfig boots an instance from a YAML configuration file
+	// instead of from the environment alone. SPEC §13 documents two input
+	// formats and one rule between them — env var > file > default — and every
+	// other variant here exercises only the first, which leaves a whole
+	// documented way of configuring the product with no case behind it. The
+	// file this variant is pointed at contradicts the environment on one key on
+	// purpose, so a case can observe which of the two won instead of trusting
+	// that the rule holds.
+	VariantYAMLConfig = "yaml-config"
 )
 
 // tlsFixtureDir is where the generated certificate lands. It sits under the
 // artifacts directory so a run leaves nothing in the source tree.
 const tlsFixtureDir = "test/e2e/.artifacts/tls"
+
+// yamlConfigFixtureDir is where the `yaml-config` variant's configuration file
+// is written, under the same artifacts directory and for the same reason.
+const yamlConfigFixtureDir = "test/e2e/.artifacts/config"
+
+// yamlConfigFixture is the file the `yaml-config` variant boots from.
+//
+// It is spelled out here rather than committed beside the cases for two
+// reasons. The environment overrides that go with it are in the variant table
+// below, and the entire subject of the variant is which of the two wins — a
+// reader who has to open a second file to see the other half of that pair
+// cannot check the claim. And the corpus loader reads every .yaml file under
+// test/e2e/corpus as a case, so a configuration file kept next to the cases
+// asserting on it would be loaded as a malformed one.
+//
+// What it has to be is a file an operator would plausibly write: comments, a
+// blank line, a nested section, quoted scalars, a trailing comment. Those are
+// the parts of the SPEC §13 subset a real file uses, and the parser's contract
+// is that anything it cannot handle is a boot failure with a line number rather
+// than a silently different value — so a mistake here takes the variant down
+// instead of weakening a case.
+const yamlConfigFixture = `# mockulus configuration for the E2E ` + "`yaml-config`" + ` variant (SPEC §13).
+#
+# Every key below is asserted on by a case in test/e2e/corpus/config. A value
+# that stopped arriving fails a case rather than quietly stopping being tested.
+
+# The default is false, so near-miss detail in an unmatched 404 can only have
+# come from this file.
+diagnostics_on_unmatched: true
+
+# Quoted, because ` + "`off`" + ` is one of the tokens a YAML reader is entitled to read
+# as a boolean and an operator writing this key will quote it. The environment
+# sets ` + "`on`" + ` over the top: env var beats file, and the two modes disagree about
+# what a response body says, which is what makes the rule observable.
+templating_enabled: "off"
+
+# A nested section, joined into the dotted paths of §13. There is deliberately
+# no connstr here: credentials on their own must not select the Couchbase
+# driver, and the startup summary is where a case can see that they did not.
+couchbase:
+  username: e2e-yaml-user
+  # Single-quoted with a doubled quote in it, which is what a generated password
+  # containing an apostrophe has to be written as. It is the shape that takes
+  # deployments down — the value either fails to parse or authenticates as
+  # something other than what was configured — and the parser refusing it is a
+  # boot failure with a line number rather than a wrong password.
+  #
+  # It is a fixture rather than a secret; the harness needs none by design
+  # (SPEC §22.4). What a case can assert about it is that the pod came up and
+  # that the dump prints the redaction marker in its place.
+  password: 'yaml''file-password'
+
+# Back at the top level after the section, with a trailing comment of the form
+# the parser has to strip without taking the unit along with it.
+max_body_bytes: 1KiB   # deviation #6
+`
 
 // AdminToken is the token the `authed` variant requires. It is a fixture, not a
 // secret: the harness needs no secrets by design (SPEC §22.4).
@@ -204,6 +270,23 @@ var variantEnv = map[string]map[string]string{
 		"MOCKULUS_START_WITHOUT_STORE": "true",
 		"MOCKULUS_COUCHBASE_CONNSTR":   "couchbase://store.invalid",
 	},
+	// MOCKULUS_CONFIG is filled in per run by StartInstance, since the file
+	// does not exist until the run writes it. What belongs here is the half of
+	// the precedence pair the environment owns.
+	VariantYAMLConfig: {
+		// The file sets `off` for this key and this sets `on`. Both cannot be
+		// in force, and the difference between them is a response body rather
+		// than an inference, which is the whole point of contradicting it.
+		"MOCKULUS_TEMPLATING_ENABLED": "on",
+		// Debug for the reason the store lane runs there: the startup dump is
+		// the only surface on which the resolved value of a key that never
+		// appears in a response can be seen at all (SPEC §14.2). The file
+		// deliberately does not set `log.level` — the harness sets it on every
+		// instance it starts, so a file value for it could never win, and a
+		// case reading the dump would be reading the harness rather than the
+		// product.
+		"MOCKULUS_LOG_LEVEL": "debug",
+	},
 }
 
 // t1OnlyVariants are the variants a store topology would silently defeat, with
@@ -215,6 +298,8 @@ var t1OnlyVariants = map[string]string{
 	VariantFileStore: "it points the instance at a directory, so a case cannot ask for it and for a store topology at once",
 	VariantStartWithoutStore: "its whole subject is a store that is absent at boot, " +
 		"and a store topology would hand the instance a working one",
+	VariantYAMLConfig: "the file it boots from names Couchbase credentials whose only claim is " +
+		"that they came out of a file, and a store topology's environment would overwrite exactly those",
 }
 
 // Instance is one running mockulus process together with its captured output.
@@ -264,6 +349,22 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 			"MOCKULUS_TLS_CERT_FILE": fixture.CertFile,
 			"MOCKULUS_TLS_KEY_FILE":  fixture.KeyFile,
 		}
+	}
+
+	if variant == VariantYAMLConfig {
+		path, err := YAMLConfigFixture(yamlConfigFixtureDir)
+		if err != nil {
+			return nil, fmt.Errorf("write the YAML configuration fixture: %w", err)
+		}
+		// Copied rather than written into: variantEnv is shared by every
+		// deployment in the run, and putting a per-run path into it would be a
+		// write to a map another boot may be reading.
+		withFile := make(map[string]string, len(env)+1)
+		for k, v := range env {
+			withFile[k] = v
+		}
+		withFile["MOCKULUS_CONFIG"] = path
+		env = withFile
 	}
 
 	cmd := exec.CommandContext(ctx, binary)
@@ -345,6 +446,32 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 		return nil, err
 	}
 	return inst, nil
+}
+
+var (
+	yamlConfigOnce sync.Once
+	yamlConfigPath string
+	yamlConfigErr  error
+)
+
+// YAMLConfigFixture writes the `yaml-config` variant's file once per run and
+// returns the path to hand mockulus. The path is relative to the runner's
+// working directory, as the file-store fixture's is, because that is the
+// directory the instance inherits.
+func YAMLConfigFixture(dir string) (string, error) {
+	yamlConfigOnce.Do(func() {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			yamlConfigErr = err
+			return
+		}
+		path := filepath.Join(dir, "mockulus.yaml")
+		if err := os.WriteFile(path, []byte(yamlConfigFixture), 0o644); err != nil {
+			yamlConfigErr = err
+			return
+		}
+		yamlConfigPath = path
+	})
+	return yamlConfigPath, yamlConfigErr
 }
 
 // captureLogs records every log line and signals the startup summary.

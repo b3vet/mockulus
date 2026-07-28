@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cfg-yaml-defaults-003
+behaviors: [B-CFG-METRICS-ENABLED, B-CFG-ADMIN-ON-MOCK-PORT]
+# The bottom level of the SPEC §13 precedence chain, on the one instance in the
+# harness where a file is in play at all: a key named in neither the file nor
+# the environment still has to come out at its documented default.
+config: yaml-config
+# n/a: the subject is which of mockulus' own configuration inputs supplied a
+# value, and WireMock has neither of them.
+wm: n/a
+steps:
+  # The failure this guards against is a binder that applies a parsed document
+  # to a fresh Config rather than to the defaulted one. Both keys asserted here
+  # default to true and would come out false under that mistake, which is what
+  # makes them worth asserting: a key defaulting to false could not tell the two
+  # apart, because the wrong answer and the right one are the same value.
+  - logprobe:
+      json_fields:
+        msg: config
+        setting: metrics_enabled=true
+  - logprobe:
+      json_fields:
+        msg: config
+        setting: admin_on_mock_port=true
+
+  # And the dump is checked against the surfaces, not trusted on its own — a
+  # dump that reported a default the process was not honouring would be worse
+  # than no dump. Prometheus has to be able to scrape a file-configured pod.
+  - admin: {port: admin, method: GET, path: /metrics}
+    expect:
+      status: 200
+      body_regex: '(?m)^# HELP mockulus_build_info'
+
+  # And a WireMock client, which addresses /__admin on the mock port by default,
+  # has to reach it there.
+  - admin: {port: mock, method: GET, path: /__admin/health}
+    expect:
+      status: 200
+      body_json_subset: {status: healthy}
