@@ -147,6 +147,16 @@ func (s *Server) pendingAdmin() http.Handler {
 // When it is off, the returned handler is the router itself — an h2c wrapper
 // that nobody asked for would put a type assertion on every request of the hot
 // path for a feature that is not in use (P2).
+//
+// staticcheck reports this package and NewHandler as deprecated, and the
+// replacement it names — http.Server.Protocols with SetUnencryptedHTTP2 — is
+// not one. net/http implements cleartext HTTP/2 by prior knowledge only; the
+// HTTP/1.1 `Upgrade: h2c` handshake has no equivalent there. Migrating was
+// tried and TestH2CEnabledGatesCleartextHTTP2 caught it: the upgrade case
+// answered 200 where it must answer 101 Switching Protocols. So the
+// deprecation is acknowledged and not acted on, because acting on it would
+// quietly drop a capability this package's own tests assert. The exclusion in
+// .golangci.yml points back here.
 func (s *Server) mockHandler(router http.Handler) http.Handler {
 	if !s.cfg.H2CEnabled {
 		return router
@@ -276,7 +286,8 @@ func (s *Server) Ready() bool { return s.ready.Load() }
 // connects so that health and readiness are observable during a slow boot
 // (SPEC §4.4 step 2).
 func (s *Server) StartAdmin() error {
-	ln, err := net.Listen("tcp", ":"+strconv.Itoa(s.cfg.AdminPort))
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", ":"+strconv.Itoa(s.cfg.AdminPort))
 	if err != nil {
 		return fmt.Errorf("bind admin port %d: %w", s.cfg.AdminPort, err)
 	}
@@ -287,7 +298,8 @@ func (s *Server) StartAdmin() error {
 
 // StartMock binds and serves the mock listener.
 func (s *Server) StartMock() error {
-	ln, err := net.Listen("tcp", ":"+strconv.Itoa(s.cfg.Port))
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", ":"+strconv.Itoa(s.cfg.Port))
 	if err != nil {
 		return fmt.Errorf("bind mock port %d: %w", s.cfg.Port, err)
 	}
