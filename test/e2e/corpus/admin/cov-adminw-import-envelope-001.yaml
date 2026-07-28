@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminw-import-envelope-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-ERR-10
+# n/a: this is the same territory as deviation #21 — WireMock answers a bad
+# import payload with an unhandled 500 and applies whatever it managed to read,
+# so there is no envelope on the other side to diff against. The expectations
+# come from SPEC §5.1 and the Appendix B catalog.
+wm: n/a
+steps:
+  # An import with no body at all is malformed rather than an empty batch.
+  # Reading it as "import nothing" would make a truncated upload succeed
+  # silently, and combined with deleteAllNotInImport that is a deployment-wide
+  # delete triggered by a dropped payload.
+  - admin: {method: POST, path: /__admin/mappings/import}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'request body is empty'
+
+  # The endpoint takes the WireMock export envelope, not a bare array of
+  # mappings, and the mapping inside this array is deliberately valid and
+  # complete. That is what makes the refusal a statement about the envelope: a
+  # lenient reader that unwrapped an array here would import a stub the author
+  # never asked it to, from a payload shaped for a different endpoint.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        [{"id": "c0000003-0002-4000-8000-000000000001",
+          "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-import-envelope-001/catalog"},
+          "response": {"status": 200, "body": "smuggled in"}}]
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'import body must be an object with a mappings array'
+
+  # Nothing was taken out of that array: the id names no stub and the path it
+  # described matches nothing. Without this pair the step above would only
+  # assert a status code, and a server that answered 422 and imported anyway
+  # would pass it.
+  - admin: {method: GET, path: /__admin/mappings/c0000003-0002-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-import-envelope-001/catalog}
+    expect: {status: 404}
+
+  # `mappings` present but not an array is the same mistake made one level in —
+  # the shape a hand-edited export or a templating accident produces — and it is
+  # refused with the same code rather than being coerced into a batch of one.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": {"id": "c0000003-0002-4000-8000-000000000002",
+                      "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-import-envelope-001/single"},
+                      "response": {"status": 200, "body": "not a batch"}},
+         "importOptions": {"duplicatePolicy": "OVERWRITE"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10}]
+      body_regex: 'import body must be an object with a mappings array'
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-import-envelope-001/single}
+    expect: {status: 404}
+
+  # A payload truncated in transit fails on the decode rather than on the
+  # missing `mappings` key, so the message names the real fault. Telling an
+  # author their mappings array is missing when their upload was cut in half
+  # sends them to edit a file that is already correct.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: '{"mappings": [{"id": "c0000003-0002-4000-8000-000000000003"'
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10}]
+      body_regex: 'import body must be an object with a mappings array'
+
+  # The control: the very mapping the array in step two carried, wrapped in the
+  # envelope the endpoint documents, imports and serves. So the three refusals
+  # were about the container and not about the mapping, the id, or the path.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "c0000003-0002-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-import-envelope-001/catalog"},
+            "response": {"status": 200, "body": "smuggled in"}}
+         ]}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-import-envelope-001/catalog}
+    expect: {status: 200, body: "smuggled in"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000003-0002-4000-8000-000000000001}
+    expect: {status: 200}

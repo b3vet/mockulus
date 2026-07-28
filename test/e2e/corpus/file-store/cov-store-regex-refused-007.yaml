@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-store-regex-refused-007
+behaviors: [B-ERR-1003, B-MATCH-MATCHES-DOESNOTMATCH]
+# n/a: several of these are patterns java.util.regex accepts, so pinned
+# WireMock registers the stub and mockulus refuses it. That refusal is the
+# choice SPEC §6.6 and the §19 risk table state — 422 only on patterns that do
+# not compile, never a silent difference in what a stub matches — and there is
+# nothing to diff because the disagreement is the point. The two engines
+# underneath have no faithful reading of these constructs, and a stub that
+# matches something other than what its author wrote is worse than one that
+# never registers.
+wm: n/a
+steps:
+  # Every step here asserts three things: the status is 422, the code is the
+  # one Appendix B reserves for a regex, and the pointer names the field. The
+  # pointer is not decoration — it is the difference between an author who can
+  # find the pattern in a document with several matchers in it and one who
+  # cannot.
+
+  # A quantifier after a possessive quantifier. Java rejects `a++?` outright,
+  # and the fallback engine would happily quantify the atomic group the
+  # possessive rewrite emits, so accepting it would invent a meaning Java never
+  # assigned to the pattern.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000131",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-refused-007/possessive",
+                     "bodyPatterns": [{"matches": "a++?"}]},
+         "response": {"status": 200, "body": "never registered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+
+  # Character-class intersection. Neither engine has the syntax, and the
+  # fallback engine reads the ampersands as two more members of the class —
+  # which widens the class instead of narrowing it, so the stub would match
+  # strictly more than its author asked for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000132",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-refused-007/intersection",
+                     "bodyPatterns": [{"matches": "[a-z&&[^bc]]"}]},
+         "response": {"status": 200, "body": "never registered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+
+  # A nested class, which Java unions into its parent and both engines read as
+  # an ordinary bracket member.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000133",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-refused-007/nested-class",
+                     "bodyPatterns": [{"matches": "[a[bc]]"}]},
+         "response": {"status": 200, "body": "never registered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+
+  # `\R` matches a sequence, so a character class cannot hold it — Java says so
+  # too. Both engines would take it for a literal R and quietly add it to the
+  # class.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000134",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-refused-007/class-linebreak",
+                     "bodyPatterns": [{"matches": "[\\R]"}]},
+         "response": {"status": 200, "body": "never registered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+
+  # `\p{InGreek}` names a Unicode *block*, where `\p{IsGreek}` names a script.
+  # Only the script has a table on either engine, so the block is refused
+  # rather than silently answered with the script — which would match a
+  # different, overlapping set of code points and never say so.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000135",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-refused-007/unicode-block",
+                     "bodyPatterns": [{"matches": "\\p{InGreek}+"}]},
+         "response": {"status": 200, "body": "never registered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+
+  # And the case Appendix B 1003 is worded for: a pattern that is not a regular
+  # expression on either engine. No translation is involved; it simply does not
+  # compile, and the refusal happens at registration rather than becoming a
+  # non-match at serve time.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000136",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-refused-007/uncompilable",
+                     "bodyPatterns": [{"matches": "[z-a]"}]},
+         "response": {"status": 200, "body": "never registered"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+
+  # Refused means not registered, not registered-and-inert. Each path answers
+  # 404 because nothing was ever stored under it — a stub that had been kept
+  # with a pattern the engine could not evaluate would be a silent non-match,
+  # which is the outcome the 422 exists to prevent.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-refused-007/intersection
+      body: "a"
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-refused-007/unicode-block
+      body: "a"
+    expect: {status: 404}
+
+  # The refusal is per pattern, not per document: a matcher the engines can
+  # read still registers from the same endpoint immediately afterwards, so the
+  # 422s above are about those patterns rather than about the body matcher.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000137",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-refused-007/accepted",
+                     "bodyPatterns": [{"matches": "[a-z]+"}]},
+         "response": {"status": 200, "body": "registered"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-refused-007/accepted
+      body: "abc"
+    expect: {status: 200, body: "registered"}

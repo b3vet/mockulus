@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-escaping-001
+behaviors: [B-RESP-TRANSFORMERS]
+# Not diffable, and the reason is the finding rather than a technicality.
+# Replayed against pinned WireMock 3.13.2 this body comes back as
+# "esc=[<b>a&b</b>] raw=[<b>a&b</b>] end" — WireMock renders both mustache
+# forms raw, because it configures its Handlebars with escaping switched off
+# and treats {{x}} and {{{x}}} alike. mockulus escapes the double form, which
+# is stock Handlebars and what SPEC §10.1 describes as the engine's own
+# escaping rules; the two disagree on every value carrying <, > or &.
+#
+# That difference is not in the §5.5 deviation list, so it is either an
+# undeclared deviation or a bug, and it is not this case's to settle. What is
+# recorded here is the mockulus behavior, so that whichever way it is settled
+# the change shows up as a failing case rather than as a silent flip.
+wm: n/a
+steps:
+  # Handlebars has two interpolation forms and the difference between them is
+  # a security property, not a formatting preference: {{x}} escapes for HTML
+  # and {{{x}}} does not. A mock server that got this backwards would either
+  # mangle every XML and JSON body a stub renders from the request, or hand a
+  # test harness a page with the caller's markup live in it.
+  #
+  # Both forms read the same value in the same body, so nothing here depends
+  # on what the value is — only on which braces surround it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000b0",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-escaping-001/render"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "esc=[{{request.query.v}}] raw=[{{{request.query.v}}}]{{! this comment and its mustache leave no trace }} end",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The value carries the three characters that matter — an opening angle, a
+  # closing one and a bare ampersand — so the escaped half cannot pass by
+  # handling one of them. The ampersand in particular is the one an
+  # implementation escapes last and double-escapes first.
+  #
+  # The comment is asserted by what is missing: the text between `raw=[…]` and
+  # `end` is a single space, which means the mustache went with its contents.
+  # A comment that rendered as its own source would show up here, and one that
+  # ate the space around it would too.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-escaping-001/render?v=%3Cb%3Ea%26b%3C%2Fb%3E
+    expect:
+      status: 200
+      body: "esc=[&lt;b&gt;a&amp;b&lt;/b&gt;] raw=[<b>a&b</b>] end"
+
+  # The control: a value with nothing to escape renders identically through
+  # both forms. Without it the step above would also be satisfied by an
+  # implementation that escaped on a rule of its own — length, position — that
+  # happened to fire on the first value and not on ordinary text.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-escaping-001/render?v=plain
+    expect:
+      status: 200
+      body: "esc=[plain] raw=[plain] end"

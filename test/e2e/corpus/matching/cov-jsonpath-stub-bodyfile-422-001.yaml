@@ -1,0 +1,180 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-stub-bodyfile-422-001
+behaviors: [B-ERR-10]
+# The name rules and the 422 that carries them are mockulus's own (SPEC
+# Appendix B, §4.3): WireMock resolves a bodyFileName against a directory on
+# disk and answers a bad one at serve time, so there is nothing to diff here.
+wm: n/a
+steps:
+  # A bodyFileName is a key in the files store, and the existence of the file is
+  # deliberately NOT checked at registration — registering a stub before
+  # uploading its file is legal. A name that is MALFORMED is different: it can
+  # never resolve however many files are uploaded, so accepting it means a stub
+  # that registers cleanly and then answers 1022 on the request someone is
+  # debugging at the time.
+
+  # A leading slash is the one worth being blunt about. The name used to have it
+  # trimmed, which turned this document into a stored `etc/passwd` and a 201 —
+  # the caller's name and the stored name then disagree forever, and the request
+  # that looked like traversal got the success.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000090",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/abs"},
+         "response": {"status": 200, "bodyFileName": "/etc/passwd"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/response/bodyFileName"}
+            detail: 'bodyFileName "/etc/passwd" is not allowed: a name is relative to the files store, so it cannot begin with /'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000091",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/climb"},
+         "response": {"status": 200, "bodyFileName": "../secrets.json"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/bodyFileName"}
+            detail: 'bodyFileName "../secrets.json" is not allowed: a name cannot climb out of the files store with .. segments'
+
+  # A name that is not already in cleaned form has two spellings — the one that
+  # was written and the one it reduces to — and a store keyed on the name would
+  # answer for only one of them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000092",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/dot"},
+         "response": {"status": 200, "bodyFileName": "bodies/./greeting.txt"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/bodyFileName"}
+            detail: 'bodyFileName "bodies/./greeting.txt" is not allowed: a name must already be in cleaned form: no . or .. segments, no empty ones, no trailing /'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000093",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/slash"},
+         "response": {"status": 200, "bodyFileName": "bodies/"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/bodyFileName"}
+            detail: 'bodyFileName "bodies/" is not allowed: a name must already be in cleaned form: no . or .. segments, no empty ones, no trailing /'
+
+  # A name reaches the logs and the error catalog, so one that can carry a
+  # newline is one that can forge a log line the first time anything renders it
+  # plainly. The detail escapes the byte rather than echoing it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000094",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/control"},
+         "response": {"status": 200, "bodyFileName": "greeting\n.txt"}}
+    expect:
+      status: 422
+      body_regex: 'a name cannot contain control characters'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/bodyFileName"}
+
+  # A name is bounded so that every driver can address it: the Couchbase driver
+  # keys a file document on its name behind a short prefix and Couchbase stops at
+  # 250-byte keys. An unbounded name is a write the memory store takes and the
+  # Couchbase store rejects — one deployment answering 201 where another answers
+  # 500, which is the difference this refusal exists to remove.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000098",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/long"},
+         "response": {"status": 200, "bodyFileName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+    expect:
+      status: 422
+      body_regex: 'a name is limited to 240 bytes'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/bodyFileName"}
+
+  # The empty name and the wrong type are separate answers from the rules above,
+  # because neither is a name that broke a rule — one is no name at all and the
+  # other is not a string.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000095",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/empty"},
+         "response": {"status": 200, "bodyFileName": ""}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/bodyFileName"}
+            detail: "bodyFileName must not be empty"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000096",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/typed"},
+         "response": {"status": 200, "bodyFileName": 7}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/bodyFileName"}
+            detail: "bodyFileName must be a string"
+
+  - admin: {method: GET, path: /__admin/mappings/c0000007-0000-4000-8000-000000000096}
+    expect: {status: 404}
+
+  # The control. A nested, cleaned, ordinary name is accepted — so the rules
+  # above refuse malformed names rather than refusing directories — and it
+  # resolves for real: the file is uploaded, the stub is registered against it,
+  # and the request gets the file's bytes.
+  - admin:
+      method: PUT
+      path: /__admin/files/cov-jsonpath-stub-bodyfile-422-001/greeting.txt
+      headers: {Content-Type: "text/plain"}
+      body: "hello from a file"
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000097",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-jsonpath-stub-bodyfile-422-001/served"},
+         "response": {"status": 200,
+                      "bodyFileName": "cov-jsonpath-stub-bodyfile-422-001/greeting.txt"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-bodyfile-422-001/served}
+    expect: {status: 200, body: "hello from a file"}

@@ -1,0 +1,136 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cb-settings-outage-001
+behaviors:
+  - B-ADMIN-SETTINGS-POST-SETTINGS-GET
+  - B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED
+  - B-ERR-1020
+# couchbase because the settings document is deliberately the one admin *read*
+# that is not answered from the snapshot: there is one document per deployment
+# and a replica that has not polled since a peer wrote it would otherwise report
+# the value it is about to stop serving (SPEC §5.1). That decision only has
+# consequences against a real store, and this is where they show up.
+#
+# exclusive because settings are deployment-wide — a case that writes them
+# writes every other case's response delay — and because the run's Couchbase is
+# shared by every store deployment.
+requires: [couchbase, exclusive]
+# n/a: WireMock holds its settings in the process that serves them, so it has no
+# store to lose and no cross-replica read to trade off. The delay semantics
+# themselves are pinned by admin-settings-001; what is asserted here comes from
+# SPEC §5.1 and the §4.6 table.
+wm: n/a
+steps:
+  - admin: {method: POST, path: /__admin/settings, body: '{"fixedDelay":1}'}
+    expect: {status: 200}
+
+  # Stored verbatim and read back through the store, not re-rendered from this
+  # pod's compiled snapshot.
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 200
+      body_json: {settings: {fixedDelay: 1}}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000041",
+         "persistent": true,
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-settings-outage-001/order"},
+         "response":{"status":200,"body":"global delay applied"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-settings-outage-001/order}
+    expect: {status: 200, body: "global delay applied"}
+
+  - stop_store: true
+
+  # The cost of that decision, stated plainly. Every other admin read in this
+  # deployment is answered from the snapshot and keeps working; this one goes to
+  # the store on purpose and therefore stops. Reporting a stale document instead
+  # would be the failure the design rejected — a read that contradicts a write
+  # the caller already has a 200 for.
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  # The mapping listing is the control for exactly that: same admin port, same
+  # outage, and it answers, because it is rendered from the snapshot.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: mappings
+          match: {id: "c0000002-0000-4000-8000-000000000041"}
+
+  - admin: {method: POST, path: /__admin/settings, body: '{"fixedDelay":5000}'}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # The settings already compiled into the snapshot keep applying, so an outage
+  # costs the ability to read and change them rather than the ability to serve
+  # under them (P1). A five-second global delay would be plainly visible here if
+  # the refused write above had reached the snapshot on its way to failing.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-settings-outage-001/order}
+    expect: {status: 200, body: "global delay applied"}
+
+  # And a settings document is still validated before it is stored, so a key
+  # mockulus does not implement is refused as the client error it is rather than
+  # being reported as a store outage. The two have opposite fixes, and only one
+  # of them is worth waiting for the cluster to come back.
+  - admin: {method: POST, path: /__admin/settings, body: '{"proxyPassThrough":true}'}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1005
+            title: "Unknown setting"
+            source: {pointer: /proxyPassThrough}
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="get_settings"}', at_least: 1}
+
+  - start_store: true
+
+  # The read answers again on its own, with nothing having restarted.
+  #
+  # What this case deliberately does not claim is that the deployment still has
+  # the settings it had before the outage. Measured on this lane it does not:
+  # the upsert refused above is still in flight when the KV budget runs out, and
+  # the server applies it once it is running again — so a call that answered 503
+  # changes the document afterwards. A KV timeout is an ambiguous outcome by
+  # construction, and the honest recovery assertion is that a write made after
+  # the store is back is the one that wins.
+  - admin: {method: GET, path: /__admin/settings}
+    expect_eventually: {status: 200, within: 60s}
+
+  - admin: {method: POST, path: /__admin/settings, body: '{"fixedDelay":2}'}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/settings}
+    expect_eventually:
+      status: 200
+      within: 30s
+      body_json: {settings: {fixedDelay: 2}}
+
+  # Cleanup. POST replaces the whole document, so an empty object is how a suite
+  # puts the deployment back the way it found it — a global delay left behind
+  # would be inherited by every case that runs here afterwards.
+  - admin: {method: POST, path: /__admin/settings, body: '{}'}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 200
+      body_json: {settings: {}}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000002-0000-4000-8000-000000000041}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-settings-outage-001/order}
+    expect: {status: 404}

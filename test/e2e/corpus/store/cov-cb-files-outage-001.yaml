@@ -1,0 +1,166 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cb-files-outage-001
+behaviors:
+  - B-ADMIN-GET-PUT-DELETE-FILES-NAME-GET-FILES
+  - B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED
+  - B-ERR-1020
+# couchbase because the files collection is where the driver's JSON wrapping
+# lives: bytes are marshalled on the way in and read back through the same
+# base64 string, so a round trip here is a claim about the store rather than
+# about a map (SPEC §7.2). The memory driver hands the same slice back and would
+# pass whatever the wrapping did.
+#
+# exclusive because the run has one Couchbase and every store deployment shares
+# it, so taking it away is a claim on the run rather than on this instance.
+requires: [couchbase, exclusive]
+# n/a: probed against pinned WireMock 3.13.2, its PUT answers 200 where ours
+# answers 201 and its file GET carries no Content-Type — differences
+# responses-body-file-001 already records. The outage half has no counterpart at
+# all: WireMock serves files from the node's disk and has no store to lose. The
+# expectations come from the §4.6 table.
+wm: n/a
+steps:
+  - admin:
+      method: PUT
+      path: /__admin/files/cov-cb-files-outage-001-order.json
+      body: '{"order":"served from the files collection"}'
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000011",
+         "persistent": true,
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-files-outage-001/order"},
+         "response":{"status":200,"bodyFileName":"cov-cb-files-outage-001-order.json"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-files-outage-001/order}
+    expect: {status: 200, body: '{"order":"served from the files collection"}'}
+
+  # Byte-identical out of the store, which is the half of the round trip the
+  # request above cannot make on its own: the snapshot holds an inlined copy, so
+  # a stub could keep serving the right bytes while the stored document was
+  # mangled, and only this read would say so.
+  - admin: {method: GET, path: /__admin/files/cov-cb-files-outage-001-order.json}
+    expect:
+      status: 200
+      body: '{"order":"served from the files collection"}'
+
+  # Listed by name. Asserted by regex rather than by equality: the listing is
+  # deployment-wide and other cases legitimately have files in it.
+  - admin: {method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"cov-cb-files-outage-001-order\.json"'
+
+  - stop_store: true
+
+  # The whole reason bodies are inlined at build time. The file lives in the
+  # store, but serving it does not read the store — the bytes were compiled into
+  # the snapshot when it was built — so a cluster outage costs freshness and not
+  # traffic (P1, SPEC §4.6). A body that came back empty here would mean the
+  # response path had a store read on it that nobody declared.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-files-outage-001/order}
+    expect: {status: 200, body: '{"order":"served from the files collection"}'}
+
+  # The admin side of the same file is the opposite answer, and deliberately so:
+  # this read is of the stored document rather than of the inlined copy, so with
+  # the store away there is nothing to answer with. 503 code 1020 rather than the
+  # 404 an absent file gets — "there is no such file" and "nobody can say" are
+  # different facts, and a suite that conflated them would delete and re-upload
+  # a fixture that was there all along.
+  - admin: {method: GET, path: /__admin/files/cov-cb-files-outage-001-order.json}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  - admin: {method: GET, path: /__admin/files}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # Writes stop the way every other admin write does.
+  - admin:
+      method: PUT
+      path: /__admin/files/cov-cb-files-outage-001-refused.json
+      body: '{"order":"never stored"}'
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - admin: {method: DELETE, path: /__admin/files/cov-cb-files-outage-001-order.json}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="get_file"}', at_least: 1}
+
+  # The refused delete did not take the inlined copy either: a delete that
+  # answered 503 while emptying the snapshot would take the stub's body away on
+  # this pod and nowhere else.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-files-outage-001/order}
+    expect: {status: 200, body: '{"order":"served from the files collection"}'}
+
+  - start_store: true
+
+  # The read path answers again on its own, with nothing having restarted.
+  #
+  # What this case deliberately does not claim is that the refused writes
+  # applied nothing. Measured on this lane, they do not always: a single-document
+  # mutation issued while the store is frozen is still in flight when the KV
+  # budget runs out, and the server applies it as soon as it is running again —
+  # so the DELETE that answered 503 above removes the file afterwards. A KV
+  # timeout is an ambiguous outcome by construction, which is why the refusals
+  # this case does pin are the bulk ones: those fail on the read that chooses
+  # what to touch, so no mutation is ever issued and there is nothing to land
+  # late. The recovery worth asserting is therefore that the paths work again
+  # and that a write made after the store is back is the one that wins.
+  - admin: {method: GET, path: /__admin/files}
+    expect_eventually: {status: 200, within: 60s}
+
+  # Different bytes on purpose: the round trip below is then a claim about this
+  # write rather than about whichever version of the file survived the outage.
+  - admin:
+      method: PUT
+      path: /__admin/files/cov-cb-files-outage-001-order.json
+      body: '{"order":"stored after the outage"}'
+    expect: {status: 201}
+
+  - admin: {method: GET, path: /__admin/files/cov-cb-files-outage-001-order.json}
+    expect:
+      status: 200
+      body: '{"order":"stored after the outage"}'
+
+  # And the stub's reference is live rather than a copy taken once at
+  # registration: the file write bumps the epoch, the rebuild inlines the new
+  # bytes, and the same URL starts answering with them.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-files-outage-001/order}
+    expect_eventually:
+      status: 200
+      within: 60s
+      body: '{"order":"stored after the outage"}'
+
+  # Cleanup. The stub is persistent, so neither reset nor the ephemeral TTL will
+  # remove it, and the files would otherwise stay in a deployment-wide listing
+  # every later case can see. The refused upload is removed unconditionally for
+  # the reason above: whether it landed is exactly what cannot be asserted, and
+  # removing an absent file is not an error.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000002-0000-4000-8000-000000000011}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/files/cov-cb-files-outage-001-order.json}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/files/cov-cb-files-outage-001-refused.json}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/files/cov-cb-files-outage-001-order.json}
+    expect: {status: 404}

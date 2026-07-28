@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-syntax-422-001
+behaviors: [B-MATCH-MATCHESJSONPATH, B-ERR-10]
+# The 422-at-registration contract is mockulus's own. WireMock compiles a
+# JsonPath lazily and reports a bad one differently, so there is no oracle to
+# diff this against; SPEC §6.7 states the rule this case holds — "unsupported
+# syntax → 422 at registration (compile-time), never a silent non-match".
+wm: n/a
+steps:
+  # Fourteen expressions, one per production the parser can refuse, in one
+  # document — and one answer naming all fourteen. Failing fast on the first
+  # would cost a stub author fourteen round trips to fix one file, which is what
+  # the Appendix B "collect, don't fail-fast" rule exists to prevent.
+  #
+  # The order is the order of the array, so the pointers stay reproducible for
+  # anyone diffing two runs, and each pointer reaches the matcher key rather than
+  # stopping at the pattern: a bodyPattern can carry several matchers and only
+  # one of them is the one to fix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-syntax-422-001/refused",
+                     "bodyPatterns": [{"matchesJsonPath": ""},
+                                      {"matchesJsonPath": "customer.id"},
+                                      {"matchesJsonPath": "$."},
+                                      {"matchesJsonPath": "$a"},
+                                      {"matchesJsonPath": "$[0"},
+                                      {"matchesJsonPath": "$[a]"},
+                                      {"matchesJsonPath": "$['a'b]"},
+                                      {"matchesJsonPath": "$[1:x]"},
+                                      {"matchesJsonPath": "$[x:2]"},
+                                      {"matchesJsonPath": "$[?(@.a]"},
+                                      {"matchesJsonPath": "$[?()]"},
+                                      {"matchesJsonPath": "$[?(x == 1)]"},
+                                      {"matchesJsonPath": "$[?(@.a == foo)]"},
+                                      {"matchesJsonPath": "$[0,1]"}]},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonPath"}
+            detail: "JSONPath does not compile: empty JSONPath expression"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/1/matchesJsonPath"}
+            detail: "JSONPath does not compile: a JSONPath expression must start with $"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/2/matchesJsonPath"}
+            detail: "JSONPath does not compile: empty path segment"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/3/matchesJsonPath"}
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/4/matchesJsonPath"}
+            detail: 'JSONPath does not compile: unclosed [ in "$[0"'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/5/matchesJsonPath"}
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/6/matchesJsonPath"}
+            detail: 'JSONPath does not compile: unterminated quoted key (in "$[''a''b]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/7/matchesJsonPath"}
+            detail: 'JSONPath does not compile: invalid slice end "x" (in "$[1:x]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/8/matchesJsonPath"}
+            detail: 'JSONPath does not compile: invalid slice start "x" (in "$[x:2]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/9/matchesJsonPath"}
+            detail: 'JSONPath does not compile: unclosed filter expression (in "$[?(@.a]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/10/matchesJsonPath"}
+            detail: 'JSONPath does not compile: empty filter expression (in "$[?()]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/11/matchesJsonPath"}
+            detail: 'JSONPath does not compile: a filter operand must start with @, got "x" (in "$[?(x == 1)]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/12/matchesJsonPath"}
+            detail: 'JSONPath does not compile: unsupported filter literal "foo" (in "$[?(@.a == foo)]")'
+          # An index union is on §6.7's target list and is where this subset
+          # stops. Refusing it names the gap; compiling it to something that
+          # happens to parse is how a stub silently never matches.
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/13/matchesJsonPath"}
+            detail: 'JSONPath does not compile: unsupported bracket expression "0,1" (in "$[0,1]")'
+
+  # Rejection is all-or-nothing: fourteen problems, zero writes.
+  - admin: {method: GET, path: /__admin/mappings/c0000007-0000-4000-8000-000000000001}
+    expect: {status: 404}
+  - request: {port: mock, method: POST, path: /e2e/cov-jsonpath-syntax-422-001/refused, body: '{"a":"x"}'}
+    expect: {status: 404}
+
+  # The control that makes the refusals mean something. Each of these three is
+  # the corrected spelling of one refused above — a quoted key, a slice with a
+  # numeric end, a filter with a quoted literal — and the stub registers and
+  # matches for real. Without it, a parser that refused every expression would
+  # pass the steps above.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-syntax-422-001/accepted",
+                     "bodyPatterns": [{"matchesJsonPath": "$['a']"},
+                                      {"matchesJsonPath": "$.items[1:2]"},
+                                      {"matchesJsonPath": "$.tags[?(@.kind == 'foo')]"}]},
+         "response": {"status": 200, "body": "accepted"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-syntax-422-001/accepted
+      body: '{"a":"x","items":[1,2,3],"tags":[{"kind":"foo"}]}'
+    expect: {status: 200, body: "accepted"}
+
+  # …and all three are load-bearing criteria rather than expressions that parse
+  # and then match anything: changing only the filter's operand loses the match.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-syntax-422-001/accepted
+      body: '{"a":"x","items":[1,2,3],"tags":[{"kind":"bar"}]}'
+    expect: {status: 404}
+
+  # The slice is load-bearing too: a two-element array has no index 1..2 to
+  # select once the second element is the last one removed.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-syntax-422-001/accepted
+      body: '{"a":"x","items":[1],"tags":[{"kind":"foo"}]}'
+    expect: {status: 404}

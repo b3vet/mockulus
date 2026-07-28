@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-store-file-scenarios-002
+behaviors:
+  - B-CFG-FILE-ROOT
+  - B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE
+  - B-ADMIN-SCENARIOS-GET
+  - B-ADMIN-SCENARIOS-RESET-POST
+  - B-ADMIN-SCENARIOS-NAME-STATE-PUT
+config: file-store
+# Exclusive because the two endpoints below are deployment-wide: the reset
+# clears every scenario the instance holds, and the listing is the instance's
+# whole set. A case running alongside this one would have its scenario put back
+# to Started under it.
+requires: [exclusive]
+# n/a: the oracle container cannot be pointed at this fixture directory, so
+# there is nothing to diff. What is compatible here is the scenario semantics
+# themselves, and those are diffed by the scenario corpus on the default
+# variant; this case is about them surviving the read-only driver.
+wm: n/a
+steps:
+  # Scenario state is the one thing the file driver takes a write for, and the
+  # exception is load-bearing rather than a convenience. The engine reads an
+  # absent scenario gate as "no gate", so a driver that refused these writes
+  # would leave every stub of a scenario matching at once — the project would
+  # look like it was serving, and would serve the wrong step of the sequence.
+
+  # Start from a known point rather than from whatever a previous run left. The
+  # reset is also the first assertion: on a driver that refused it, this is a
+  # 503 and nothing below can run.
+  - admin: {method: POST, path: /__admin/scenarios/reset}
+    expect: {status: 200}
+
+  # A scenario exists because stubs mention it (SPEC §9.1). These three come
+  # from `mappings/cov-store-scenarios.json` and nothing registered them, so
+  # the possible states are derived from a project directory read at boot.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match:
+            id: "cov-store-file-tickets"
+            name: "cov-store-file-tickets"
+            state: "Started"
+            possibleStates: ["Refunded", "Reissued", "Started"]
+
+  # The stub document carries the three scenario fields as the project wrote
+  # them. Asserting this separately from the behavior below is what tells a
+  # failure apart: a scenario that never advances because the driver dropped
+  # `newScenarioState` on the way in looks identical, from the mock port, to
+  # one that never advances because the state write was refused.
+  - admin: {method: GET, path: /__admin/mappings/c0000008-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "c0000008-0000-4000-8000-000000000001"
+        scenarioName: "cov-store-file-tickets"
+        requiredScenarioState: "Started"
+        newScenarioState: "Reissued"
+
+  # The same request three times, answered differently each time. That is the
+  # whole of the contract: the first call is served by the Started stub and
+  # moves the scenario on, and the move has to be written somewhere the next
+  # call reads it back from.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-scenarios-002/ticket}
+    expect: {status: 200, body: "issued"}
+
+  # The second transition is the interesting one. The first wrote a state
+  # document that did not exist; this one has to replace a document that does,
+  # against the token it was read under. A driver that only handled the first
+  # would answer "issued" here and the sequence would never advance.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-scenarios-002/ticket}
+    expect: {status: 200, body: "reissued"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-scenarios-002/ticket}
+    expect: {status: 200, body: "refunded"}
+
+  # The last stub names no new state, so the scenario stops there rather than
+  # wrapping round to Started.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-scenarios-002/ticket}
+    expect: {status: 200, body: "refunded"}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: "cov-store-file-tickets", state: "Refunded"}
+
+  # Driving the state from the admin API is the other write this driver takes.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/cov-store-file-tickets/state
+      body: '{"state": "Started"}'
+    expect: {status: 200}
+
+  # And it took: the sequence starts over. Asserting the listing alone would
+  # not prove that, because a state the matcher never consults would still read
+  # back from the listing that stored it.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-scenarios-002/ticket}
+    expect: {status: 200, body: "issued"}
+
+  # A scenario no stub defines is a 404, not a state document created on
+  # demand. The validation is against the snapshot, so a typo'd name is
+  # reported rather than driving a scenario nothing can match.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/cov-store-file-nonexistent/state
+      body: '{"state": "Started"}'
+    expect:
+      status: 404
+      body_json_subset:
+        errors:
+          - code: 1031
+
+  # Back to Started for the next run, and the second half of the reset's
+  # contract: after it, every scenario reads as Started (SPEC §9.4).
+  - admin: {method: POST, path: /__admin/scenarios/reset}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: "cov-store-file-tickets", state: "Started"}

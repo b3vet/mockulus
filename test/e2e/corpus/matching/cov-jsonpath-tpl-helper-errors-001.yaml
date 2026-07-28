@@ -1,0 +1,178 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-tpl-helper-errors-001
+behaviors: [B-TPL-JSONPATH]
+# The split between what is refused at registration and what can only fail at
+# serve time is deviation #13, and the error text mockulus renders into the body
+# is its own. WireMock answers these with Jetty's HTML error page, so there is
+# no body to diff.
+wm: n/a
+steps:
+  # The `jsonPath` helper shares its compiled-path implementation with the
+  # matcher, so a stub that matches on an expression and then renders the same
+  # expression cannot disagree with itself about what it selects. The control
+  # comes first: the helper renders the selected value into the body.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000100",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-tpl-helper-errors-001/id"},
+         "response": {"status": 200, "headers": {"Content-Type": "text/plain"},
+                      "body": "id={{jsonPath request.body '$.customer.id'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/id
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id=AB1"}
+
+  # A body that is not JSON is where the helper and the matcher part company,
+  # and deliberately. For a matcher it is a plain non-match (SPEC §6.7); for a
+  # template there is nothing to render, so it is a serve-time failure whose text
+  # goes into the body (SPEC §10.4). Rendering an empty string instead would give
+  # a 200 carrying `id=`, which reads like a customer with a blank id.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/id
+      body: 'not json at all'
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'jsonPath: the document is not valid JSON'
+
+  # The stub is untouched by the failure and keeps serving the next request.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/id
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id=AB1"}
+
+  # A document argument that resolves to nothing at all is its own message
+  # rather than "not valid JSON", because the author's mistake is the first
+  # argument and not the payload — `request.query.order` is a query parameter
+  # this request does not carry.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000101",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-tpl-helper-errors-001/nodoc"},
+         "response": {"status": 200, "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{jsonPath request.query.order '$.a'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/nodoc
+      body: '{"a":1}'
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'jsonPath: no document given'
+
+  # An expression that does not compile fails here rather than at registration:
+  # the helper takes its expression as an argument, so it is not a string the
+  # registration-time parse could have looked at. The message is the compiler's
+  # own, which is what makes the typo findable.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000102",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-tpl-helper-errors-001/badexpr"},
+         "response": {"status": 200, "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{jsonPath request.body '$['}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/badexpr
+      body: '{"a":1}'
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'jsonPath: unclosed \['
+
+  # The two argument mistakes: too few arguments, and an expression that is not
+  # a string. Both are reported as what they are rather than being coerced —
+  # `jsonPath request.body 5` could plausibly be read as `$[5]`, and guessing
+  # would make a broken template render a value.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000103",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-tpl-helper-errors-001/arity"},
+         "response": {"status": 200, "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{jsonPath request.body}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/arity
+      body: '{"a":1}'
+    expect:
+      status: 500
+      body_regex: 'jsonPath takes a document and an expression'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000104",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-tpl-helper-errors-001/operand"},
+         "response": {"status": 200, "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{jsonPath request.body 5}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/operand
+      body: '{"a":1}'
+    expect:
+      status: 500
+      body_regex: 'the jsonPath expression must be a string'
+
+  # The helper's first argument does not have to be raw text. Nesting one call
+  # inside another hands it a value that has already been decoded, and it has to
+  # be taken as the document rather than re-parsed as one — re-parsing it would
+  # turn every composed lookup into "not valid JSON".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000105",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-tpl-helper-errors-001/nested"},
+         "response": {"status": 200, "headers": {"Content-Type": "text/plain"},
+                      "body": "id={{jsonPath (jsonPath request.body '$.customer') '$.id'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/nested
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id=AB1"}
+
+  # …and the composition is a real lookup rather than a value that fell through:
+  # a document whose inner object carries a different id renders that one.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-tpl-helper-errors-001/nested
+      body: '{"customer":{"id":"ZZ9"},"id":"AB1"}'
+    expect: {status: 200, body: "id=ZZ9"}

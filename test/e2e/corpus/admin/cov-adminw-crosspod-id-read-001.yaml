@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminw-crosspod-id-read-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-GET
+requires: [couchbase, multi-pod]
+# n/a: a single WireMock has one process and one copy of its stubs, so it has no
+# way to be asked for a mapping a peer registered. The expectation comes from
+# SPEC §5.1 and §8.
+wm: n/a
+steps:
+  # Registered on one replica only. Nothing in this case waits for the epoch
+  # poll, which is what separates it from the propagation cases: those assert
+  # that a stub arrives everywhere eventually, this one asserts that reading it
+  # by id does not depend on its having arrived.
+  - admin:
+      pod: 0
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0006-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-crosspod-id-read-001/receipt"},
+         "response": {"status": 200, "body": "registered on pod 0"}}
+    expect: {status: 201}
+
+  # Pod 1 wrote nothing and has had no interval to converge, so the id it is
+  # being asked for is very likely not in its snapshot yet. It answers from the
+  # store instead of 404ing, and it answers with the same document pod 0
+  # returned. This is what makes register-then-read work against a load-balanced
+  # deployment: a client library that creates a stub and immediately fetches it
+  # back has no way to pin both calls to the same replica, so a snapshot-only
+  # lookup would fail for it intermittently and only under a load balancer —
+  # the worst shape a bug can take.
+  - admin:
+      pod: 1
+      method: GET
+      path: /__admin/mappings/c0000003-0006-4000-8000-000000000001
+    expect:
+      status: 200
+      body_json:
+        id: "c0000003-0006-4000-8000-000000000001"
+        uuid: "c0000003-0006-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/cov-adminw-crosspod-id-read-001/receipt}
+        response: {status: 200, body: "registered on pod 0"}
+
+  # The third replica, asked the same question, because two pods agreeing could
+  # still be one pod having converged.
+  - admin:
+      pod: 2
+      method: GET
+      path: /__admin/mappings/c0000003-0006-4000-8000-000000000001
+    expect:
+      status: 200
+      body_json_subset:
+        id: "c0000003-0006-4000-8000-000000000001"
+        response: {body: "registered on pod 0"}
+
+  # The negative that keeps the two reads above honest. The fallback must not
+  # turn every id into a hit: an id nothing was registered under is still the
+  # bare 404 of §5.1, on a replica that wrote nothing, and it is that answer
+  # rather than a 503 or an empty document.
+  - admin:
+      pod: 1
+      method: GET
+      path: /__admin/mappings/c0000003-0006-4000-8000-0000000000ff
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # Cleanup on a replica that did not create it, so the delete is also a second
+  # statement that the store rather than the local snapshot decides what exists.
+  - admin:
+      pod: 1
+      method: DELETE
+      path: /__admin/mappings/c0000003-0006-4000-8000-000000000001
+    expect: {status: 200}
+
+  - admin:
+      pod: 0
+      method: GET
+      path: /__admin/mappings/c0000003-0006-4000-8000-000000000001
+    expect_eventually: {status: 404, within: 30s}
+
+  - request:
+      pod: 0
+      port: mock
+      method: GET
+      path: /e2e/cov-adminw-crosspod-id-read-001/receipt
+    expect_eventually: {status: 404, within: 30s}

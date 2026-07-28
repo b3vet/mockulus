@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-definite-emptiness-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A negative index is a DEFINITE path — it selects at most one node — so the
+  # bare form asks §6.7's node question rather than the "is the hit list empty"
+  # question an indefinite path asks. It is also the one definite shape mockulus
+  # answers by decoding the body rather than by reading it where it lies, since a
+  # single forward pass has no length to count back from, so this stub is the
+  # only place in the corpus where the emptiness rule is asserted against the
+  # tree evaluator. The two have to give the same answers; the steps below are
+  # the same rules the scanning paths are held to.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000020",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-definite-emptiness-001/last",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[-1]"}]},
+         "response": {"status": 200, "body": "last",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":["x"]}'
+    expect: {status: 200, body: "last"}
+
+  # The emptiness test applies to COLLECTIONS only. An empty array and an empty
+  # object are not present values…
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":[[]]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":[{}]}'
+    expect: {status: 404}
+
+  # …but an empty string, `false` and `0` are, which is the trio a generic
+  # emptiness test gets wrong. Each of these three would be a 404 under one.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":[""]}'
+    expect: {status: 200, body: "last"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":[false]}'
+    expect: {status: 200, body: "last"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":[0]}'
+    expect: {status: 200, body: "last"}
+
+  # A selected null is not a present value, and neither is selecting nothing.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":[null]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":[]}'
+    expect: {status: 404}
+
+  # An index step over something that is not an array selects nothing. Both of
+  # these are documents an evaluator could plausibly answer for — the object by
+  # counting its members, the string by counting its characters — and neither is
+  # what an array index means.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":{"a":1}}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/last
+      body: '{"items":"abc"}'
+    expect: {status: 404}
+
+  # Continuing past the indexed element is the other half: a child step over a
+  # scalar is a plain non-match, never an error, so a document whose last element
+  # is a string simply does not match rather than failing the request.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000021",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-definite-emptiness-001/brand",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[-1].brand"}]},
+         "response": {"status": 200, "body": "brand",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/brand
+      body: '{"items":[{"brand":"visa"}]}'
+    expect: {status: 200, body: "brand"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/brand
+      body: '{"items":["scalar"]}'
+    expect: {status: 404}
+  # It really is the LAST element the index names: a document whose earlier
+  # element would satisfy the path does not match because of it.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-definite-emptiness-001/brand
+      body: '{"items":[{"brand":"visa"},{"other":1}]}'
+    expect: {status: 404}

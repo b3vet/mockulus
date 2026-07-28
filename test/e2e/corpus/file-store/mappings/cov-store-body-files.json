@@ -1,0 +1,37 @@
+{
+  "mappings": [
+    {
+      "id": "c0000008-0000-4000-8000-000000000004",
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/cov-store-file-unreadable-003/intact"
+      },
+      "response": {
+        "status": 200,
+        "body": "the neighbour of an unreadable file still serves"
+      }
+    },
+    {
+      "id": "c0000008-0000-4000-8000-000000000005",
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/cov-store-file-unreadable-003/readable-body"
+      },
+      "response": {
+        "status": 200,
+        "bodyFileName": "cov-store-present.txt"
+      }
+    },
+    {
+      "id": "c0000008-0000-4000-8000-000000000006",
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/cov-store-file-unreadable-003/unreadable-body"
+      },
+      "response": {
+        "status": 200,
+        "bodyFileName": "cov-store-gone.bin"
+      }
+    }
+  ]
+}

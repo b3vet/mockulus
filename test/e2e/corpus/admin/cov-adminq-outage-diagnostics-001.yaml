@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminq-outage-diagnostics-001
+behaviors:
+  - B-ADMIN-REQUESTS-UNMATCHED-GET
+  - B-ADMIN-REQUESTS-UNMATCHED-NEAR-MISSES-GET
+  - B-ADMIN-NEAR-MISSES-REQUEST-POST
+  - B-ADMIN-NEAR-MISSES-REQUEST-PATTERN-POST
+  - B-ADMIN-REQUESTS-REMOVE-POST
+  - B-ERR-1020
+config: journal
+# couchbase because the journal has no in-memory copy: every one of these calls
+# is a store read, and what a read does when the store is gone is a property of
+# the driver rather than of the handler. On the memory store the same steps
+# would prove that a map is still a map.
+#
+# exclusive because the run has one Couchbase and every store deployment shares
+# it, so taking it away is a claim on the run rather than on this instance.
+requires: [couchbase, exclusive]
+# n/a: WireMock records into the process that serves the request, so it has no
+# store to lose. The expectations come from the §4.6 degraded-mode table.
+wm: n/a
+steps:
+  # Persistent, so the outage below cannot be the thing that removes it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000004-0000-4000-8000-000000000007",
+         "persistent": true,
+         "request":{"method":"GET","urlPath":"/e2e/cov-adminq-outage-diagnostics-001/served"},
+         "response":{"status":200,"body":"served"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminq-outage-diagnostics-001/missed}
+    expect: {status: 404}
+
+  # Waiting for the entry also absorbs this deployment's first journal query,
+  # which is not the query the outage below is about.
+  - admin: {method: GET, path: /__admin/requests/unmatched}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {url: /e2e/cov-adminq-outage-diagnostics-001/missed}
+
+  - stop_store: true
+
+  # Every journal-backed diagnostic refuses, and the code says why. Answering
+  # 200 with an empty list is the failure mode that matters here: a team reading
+  # `unmatched: []` during an outage concludes every call matched, and a
+  # `verify(never())` written against that list passes for a reason that has
+  # nothing to do with the code under test.
+  - admin: {method: GET, path: /__admin/requests/unmatched}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - admin: {method: GET, path: /__admin/requests/unmatched/near-misses}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: '{"urlPath":"/e2e/cov-adminq-outage-diagnostics-001/missed"}'
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # A criteria-driven delete refuses before it deletes anything, rather than
+  # removing whatever part of the journal it could still read.
+  - admin:
+      method: POST
+      path: /__admin/requests/remove
+      body: '{"urlPath":"/e2e/cov-adminq-outage-diagnostics-001/missed"}'
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # And the one diagnostic that is not journal-backed keeps working, which is
+  # the whole reason it is a separate endpoint: `/near-misses/request` ranks the
+  # loaded snapshot against a request the caller describes, so the person
+  # debugging a stub that will not match still gets an answer on a deployment
+  # whose store has gone away. If it had been served from the journal it would
+  # be refusing here alongside the rest.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request
+      body: '{"method":"GET","url":"/e2e/cov-adminq-outage-diagnostics-001/serve"}'
+    expect:
+      status: 200
+      body_json_contains:
+        - path: nearMisses
+          match:
+            stubMapping: {id: "c0000004-0000-4000-8000-000000000007"}
+            matchResult:
+              differences:
+                - kind: url
+                  expected: /e2e/cov-adminq-outage-diagnostics-001/served
+                  actual: /e2e/cov-adminq-outage-diagnostics-001/serve
+
+  - start_store: true
+
+  # Retried on the next call, with nothing having restarted and no operator
+  # having intervened.
+  - admin: {method: GET, path: /__admin/requests/unmatched}
+    expect_eventually:
+      status: 200
+      within: 60s
+      body_json_contains:
+        - path: requests
+          match: {url: /e2e/cov-adminq-outage-diagnostics-001/missed}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/remove
+      body: '{"urlPath":"/e2e/cov-adminq-outage-diagnostics-001/missed"}'
+    expect: {status: 200}
+
+  # Cleanup: a persistent stub is what neither reset nor expiry removes, so this
+  # one would otherwise be handed to every case that runs here afterwards.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000004-0000-4000-8000-000000000007}
+    expect: {status: 200}

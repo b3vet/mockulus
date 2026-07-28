@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-store-regex-possessive-005
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2): WireMock renders a
+# near-miss table and mockulus does not. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A possessive quantifier is Java syntax neither engine underneath parses,
+  # and it is not a tuning hint: `X++` matches greedily and then refuses to
+  # give any of it back, so it changes which subjects match. The rewrite is to
+  # an atomic group, and the only way to see that it happened is a subject the
+  # two readings disagree about.
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000111",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-possessive-005/possessive",
+                     "bodyPatterns": [{"matches": "[0-9]++[0-9a-z]"}]},
+         "response": {"status": 200, "body": "possessive"}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          bodyPatterns:
+            - matches: "[0-9]++[0-9a-z]"
+
+  # The same pattern without the second `+`, on its own path. It is the control
+  # for everything below: the two patterns differ by one character, and every
+  # subject they disagree on is a subject the possessive rewrite decides.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000112",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-possessive-005/greedy",
+                     "bodyPatterns": [{"matches": "[0-9]+[0-9a-z]"}]},
+         "response": {"status": 200, "body": "greedy"}}
+    expect: {status: 201}
+
+  # Digits then a letter satisfies both readings: the possessive run takes the
+  # digits and the trailing class takes the letter, with nothing to give back.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-possessive-005/possessive
+      body: "12a"
+    expect: {status: 200, body: "possessive"}
+
+  # All digits is where they part. A greedy `[0-9]+` hands its last digit back
+  # so the trailing class can take it; a possessive one does not, and the match
+  # fails. A build that dropped the rewrite — or emitted a plain `+` and a
+  # stray literal — answers 200 here.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-possessive-005/possessive
+      body: "123"
+    expect: {status: 404}
+
+  # And the same subject against the greedy twin, which is what makes the step
+  # above a statement about the possessive quantifier rather than about the
+  # subject, the anchoring, or the body matcher.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-possessive-005/greedy
+      body: "123"
+    expect: {status: 200, body: "greedy"}

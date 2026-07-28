@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-codecs-args-001
+behaviors: [B-TPL-BASE64-URLENCODE, B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL]
+# The decode failures carry Go's own diagnostics, which pinned WireMock cannot
+# be expected to match word for word; SPEC §10.4 fixes where the text goes, not
+# what it says. templating-base64-urlencode-001 holds the differentially
+# verified half of this §10.3 row.
+wm: n/a
+steps:
+  # `decode` is the option that turns each of these helpers around, and it is
+  # the only one whose input can be invalid: encoding accepts every byte
+  # sequence, decoding does not. A mock that stands in for a service reading
+  # base64 headers or percent-encoded identifiers will be handed malformed
+  # input by whatever is under test, on purpose — that is what the test is
+  # for — so this is a path the mock walks in normal use, not an edge.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000060",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-codecs-args-001/b64"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{base64 request.query.v decode=true}}] y=[{{base64 request.query.v}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # One value, decoded and encoded in the same body. That pairing is the
+  # control that `decode` is read at all: a helper that ignored the option
+  # renders the same string twice, and both halves of this line are needed to
+  # see that it did not.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-codecs-args-001/b64?v=aGVsbG8=
+    expect:
+      status: 200
+      body: "x=[hello] y=[YUdWc2JHOD0=]"
+
+  # Input that is not base64. Returning the input unchanged is what a lenient
+  # decoder does, and it is indistinguishable from a successful decode to
+  # everything downstream.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-codecs-args-001/b64?v=not-base64%21%21
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'base64 decode:'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000061",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-codecs-args-001/url"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{urlEncode request.query.v decode=true}}] y=[{{urlEncode request.query.v}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `%2B` on the wire is a literal plus once the query model has decoded it, so
+  # the template sees "a+b". Decoding that again yields a space and encoding it
+  # yields "%2B" back: the two halves disagree about what a plus means, which
+  # is precisely the confusion this helper exists to let a stub resolve
+  # explicitly rather than by accident.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-codecs-args-001/url?v=a%2Bb
+    expect:
+      status: 200
+      body: "x=[a b] y=[a%2Bb]"
+
+  # A percent escape that is not one. The value reaches the template unchanged
+  # — the query model leaves what it cannot decode alone — and asking the
+  # helper to decode it is the refusal, with the offending escape quoted so the
+  # author can see which of several it was.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-codecs-args-001/url?v=%ZZ
+    expect:
+      status: 500
+      body_regex: 'urlEncode decode: invalid URL escape "%ZZ"'
+
+  # A call carrying its options and no subject at all. These render as nothing,
+  # and the literals around them are the assertion: a helper that reached for
+  # its first argument without checking there was one would panic, and a panic
+  # inside a render is not a 500 with a message — it is the whole response
+  # gone, and on an unlucky path the process with it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000062",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-codecs-args-001/options"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "before[{{base64 decode=true}}][{{urlEncode decode=true}}][{{number decimals=2}}]after",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/cov-tmpl-codecs-args-001/options}
+    expect:
+      status: 200
+      body: "before[][][]after"
+
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}

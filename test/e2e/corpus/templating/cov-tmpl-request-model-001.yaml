@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-request-model-001
+behaviors: [B-RESP-TRANSFORMERS, B-REQ-QUERYPARAMETERS]
+# `request.id` and the `pathSegments` alias set are [DH] rows of SPEC §10.2,
+# and the correlation-header source of the id is a mockulus reading of them
+# rather than a verified WireMock one. What the query model does with a
+# malformed escape is likewise ours. Recorded here, not diffed.
+wm: n/a
+steps:
+  # `request.id` is what a stub interpolates into a correlation field, and its
+  # whole value is that it can be traced. When the caller already carries an
+  # id, the response has to echo *that* one — a template that minted a fresh
+  # id regardless would render something that looks exactly as correct and
+  # matches nothing in anybody's logs.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000b1",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-request-model-001/identity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "id=[{{request.id}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-request-model-001/identity
+      headers: {X-Request-Id: "cov-tmpl-request-model-001-corr"}
+    expect:
+      status: 200
+      body: "id=[cov-tmpl-request-model-001-corr]"
+
+  # The same stub with no correlation header. It has to produce an id anyway,
+  # and a version-4 UUID rather than a counter or an empty field: a stub whose
+  # id was blank half the time is one whose id nobody downstream can rely on.
+  # The version and variant nibbles are pinned, so thirty-two random hex
+  # characters with dashes in the right places is still a failure.
+  - request: {method: GET, path: /e2e/cov-tmpl-request-model-001/identity}
+    expect:
+      status: 200
+      body_regex: '^id=\[[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\]$'
+
+  # The query model, given the query strings that actually arrive rather than
+  # the tidy ones. Everything below is something a client library emits.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000b2",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-request-model-001/query"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "tags=[{{request.query.tag}}/{{request.query.tag.[1]}}/{{request.query.tag.[2]}}] empty=[{{request.query.n}}] pct=[{{request.query.pct}}] segs=[{{request.pathSegments}}] oob=[{{request.pathSegments.[9]}}] bracket=[{{request.query.[tag}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `tag` appears three times. Two occurrences already grow the value into an
+  # indexable list; the third is the one that says the growth is general
+  # rather than a special case for a pair — an implementation that rebuilt the
+  # list from the bare value and the newcomer keeps only the first and the
+  # last, and renders "a/c/" here.
+  #
+  # The `&&` in the middle of the query is an empty pair, which has to be
+  # skipped rather than recorded under the empty name; `n=` is a parameter
+  # that is present with no value, which is a different thing and stays.
+  #
+  # `pct` is an escape that cannot be decoded. The model leaves it alone
+  # instead of dropping the parameter or failing the request: whatever the
+  # caller sent is what the stub is being asked about, and a matcher or a
+  # template downstream may well be looking for exactly those characters.
+  #
+  # `segs` is the segment list interpolated whole, which has to read as its
+  # elements rather than as a Go value; `oob` indexes past the end and renders
+  # nothing; `bracket` is a path whose bracket never closes, which costs the
+  # author an empty field rather than the response.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-request-model-001/query?tag=a&&tag=b&tag=c&n=&pct=50%ZZ
+    expect:
+      status: 200
+      body: "tags=[a/b/c] empty=[] pct=[50%ZZ] segs=[e2e, cov-tmpl-request-model-001, query] oob=[] bracket=[]"

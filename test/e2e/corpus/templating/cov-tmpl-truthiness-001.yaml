@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-truthiness-001
+behaviors: [B-TPL-IF-UNLESS-EACH-WITH-LOOKUP]
+# Handlebars' emptiness rule is not written out in SPEC §10, and the values
+# tested here are the Go shapes mockulus's own helpers return rather than
+# anything the pinned oracle would produce from the same source. The
+# expectations are recorded from this implementation's stated rule — false,
+# nothing, zero and the empty collection are falsy — not diffed.
+wm: n/a
+steps:
+  # {{#if}} decides which half of a response gets rendered, so what counts as
+  # empty is load-bearing. The values that reach it are rarely strings: they
+  # are the results of other helpers — a subtraction, a count, a generated
+  # list — and each of those is a separate branch of the emptiness rule with
+  # its own way of being wrong.
+  #
+  # The rule is stated as "everything else is truthy", which means a *missing*
+  # branch reads as true. That makes the falsy side the one worth asserting:
+  # a type nobody wrote a case for renders the {{#if}} body and looks fine
+  # until the day the value is zero.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000a0",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-truthiness-001/kinds"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "num=[{{#if (math request.query.n '-' 1)}}t{{else}}f{{/if}}] cnt=[{{#if (size request.query.s)}}t{{else}}f{{/if}}] lst=[{{#if (range request.query.lo request.query.hi)}}t{{else}}f{{/if}}] segs=[{{#if request.pathSegments}}t{{else}}f{{/if}}] lit=[{{#if false}}t{{else}}f{{/if}}{{#if true}}t{{else}}f{{/if}}{{#unless false}}t{{else}}f{{/unless}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The empty side. `num` is a subtraction that comes out at zero — the
+  # arithmetic result a template most often branches on, and the one a rule
+  # without a number branch reports as present. `cnt` is a count of nothing.
+  # `lst` is a generated list with no elements.
+  #
+  # `segs` has no empty form to offer — a request always has a path — so it is
+  # here as the control that the list branch is not a blanket false: an
+  # emptiness test written with its comparison inverted passes every step
+  # above and fails this one.
+  #
+  # `lit` pins the two boolean literals and {{#unless}} against them, which is
+  # what stops a parser that read `false` as the non-empty string "false" from
+  # rendering the wrong branch of every guard written that way.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-truthiness-001/kinds?n=1&s=&lo=2&hi=1
+    expect:
+      status: 200
+      body: "num=[f] cnt=[f] lst=[f] segs=[t] lit=[ftt]"
+
+  # The same template, the same three constructs, non-empty values. Every
+  # field but `segs` and `lit` flips, so none of them can be a constant.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-truthiness-001/kinds?n=2&s=ab&lo=1&hi=2
+    expect:
+      status: 200
+      body: "num=[t] cnt=[t] lst=[t] segs=[t] lit=[ftt]"

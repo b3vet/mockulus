@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-matchers-combinator-depth-001
+behaviors:
+  - B-MATCH-AND-OR-NOT
+  - B-REQ-HEADERS
+  - B-ERR-10
+# n/a: the bound is mockulus' own. WireMock's parser accepts nesting into the
+# thousands, so matching it would not bound anything, and a document refused
+# here registers there — which is why this case is not diffed and why the
+# accepted side below matters as much as the refused one.
+wm: n/a
+#
+# Every level of a nested combinator re-reads the whole document below it: an
+# operand arrives as raw JSON and decoding one costs a validating scan plus a
+# copy of everything inside it. That makes compiling a chain of combinators
+# quadratic in the document, and one admin POST is then a denial of service
+# against every team sharing the deployment. The bound is what stops that, and
+# it is invisible in ordinary use — which is exactly why it needs a case: it
+# costs nothing to delete, breaks no test that does not name it, and the failure
+# it prevents only shows up in production.
+#
+# Refusing is safe in the way P3 asks for: the stub never registers, so nothing
+# silently matches differently.
+steps:
+  # Twenty deep registers, and — the part that matters — the whole chain is
+  # actually evaluated. A guard that clamped the depth instead of refusing past
+  # it would compile a truncated tree here, and the two requests below would
+  # then answer whatever the truncated tree happened to say.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000007",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-combinator-depth-001/deep",
+                     "headers": {"X-Cov-Depth": {"not": {"not": {"not": {"not": {"not":
+                       {"not": {"not": {"not": {"not": {"not":
+                       {"not": {"not": {"not": {"not": {"not":
+                       {"not": {"not": {"not": {"not": {"not":
+                       {"equalTo": "gold"}}}}}}}}}}}}}}}}}}}}}}},
+         "response": {"status": 200, "body": "deep"}}
+    expect: {status: 201}
+
+  # An even number of negations is the matcher underneath them, so the criterion
+  # is `equalTo "gold"` after twenty levels of walking. The pair of requests is
+  # the control: a tree stopped short at any level answers one of them wrongly.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-matchers-combinator-depth-001/deep
+      headers: {X-Cov-Depth: gold}
+    expect: {status: 200, body: "deep"}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-matchers-combinator-depth-001/deep
+      headers: {X-Cov-Depth: silver}
+    expect: {status: 404}
+
+  # One level further is refused, and the pointer walks down to the level that
+  # broke the bound rather than blaming the criterion as a whole — a mapping
+  # this deep came out of a tool, and its author needs to see how far it got.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000008",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-combinator-depth-001/deeper",
+                     "headers": {"X-Cov-Depth": {"not": {"not": {"not": {"not": {"not":
+                       {"not": {"not": {"not": {"not": {"not":
+                       {"not": {"not": {"not": {"not": {"not":
+                       {"not": {"not": {"not": {"not": {"not":
+                       {"not": {"equalTo": "gold"}}}}}}}}}}}}}}}}}}}}}}}},
+         "response": {"status": 200, "body": "deeper"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            detail: "matchers may not nest more than 20 combinators deep"
+
+  # Nothing was written: the refusal is the whole answer, not a warning beside a
+  # stored mapping.
+  - admin: {method: GET, path: /__admin/mappings/c0000005-0000-4000-8000-000000000008}
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-matchers-combinator-depth-001/deeper
+      headers: {X-Cov-Depth: gold}
+    expect: {status: 404}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000005-0000-4000-8000-000000000007}
+    expect: {status: 200}

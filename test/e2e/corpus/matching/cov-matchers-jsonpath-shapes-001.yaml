@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-matchers-jsonpath-shapes-001
+behaviors:
+  - B-MATCH-MATCHESJSONPATH
+  - B-REQ-BODYPATTERNS
+  - B-ERR-10
+wm: verified
+# Body comparison is given up rather than only the unmatched 404, because the
+# refusals below are worded differently on the two servers by design — mockulus
+# answers with the Appendix B envelope, WireMock with its own (deviation #14).
+# What is diffed is that both refuse the same documents and accept the same
+# ones, which is what decides whether a mappings file can move between them.
+wm_ignore: ["$body"]
+#
+# matchesJsonPath is the one matcher with two shapes: a bare expression, which
+# asks whether the path selects anything, and an object carrying the expression
+# plus an inner matcher applied to what it selected. Two shapes behind one key
+# is where a parser gets lenient — it reads whichever it recognises and ignores
+# the rest — and a stub compiled from the half that was understood is a stub
+# that silently asks less than it says. Each step below writes one malformed
+# spelling and requires a refusal that names where the problem is.
+steps:
+  # Neither shape: an array is not an expression and has no expression in it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/refused",
+                     "bodyPatterns": [{"matchesJsonPath": ["$.a", "$.b"]}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonPath"}
+            detail: "matchesJsonPath takes an expression string or an object with an expression"
+
+  # The object shape without the expression is the mistake that matters most: an
+  # implementation that took the inner matcher and defaulted the path would
+  # apply `equalTo` to the whole body and quietly answer a different question.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/refused",
+                     "bodyPatterns": [{"matchesJsonPath": {"equalTo": "A-1"}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonPath"}
+            detail: "matchesJsonPath object form needs an expression"
+
+  # An expression that is present but not a string. Refused as a document
+  # problem rather than handed to the path compiler, so the author is told the
+  # field is the wrong type instead of being shown a parse error for `5`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/refused",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": 5, "equalTo": "A-1"}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonPath"}
+            detail: "expression must be a string"
+
+  # An expression that does not compile is refused in both shapes, and both are
+  # asked: the object form reaches the compiler down a second code path, and a
+  # build that compiled the bare form and stored the object form uncompiled
+  # would pass a case that only wrote one of them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/refused",
+                     "bodyPatterns": [{"matchesJsonPath": "$[["}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      # The path compiler's own reason follows the colon, so the detail is
+      # asserted by its stable prefix.
+      body_regex: 'JSONPath does not compile'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonPath"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/refused",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$[[", "equalTo": "A-1"}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'JSONPath does not compile'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonPath"}
+
+  # Whatever the object carries besides the expression is compiled as an
+  # ordinary matcher, which means an ordinary matcher's refusals apply to it —
+  # and the pointer descends past matchesJsonPath to the operand that is wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/refused",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.order.sku", "equalTo": 9}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonPath/equalTo"}
+            detail: "equalTo takes a string"
+
+  # Six refusals, one path: none of them may have left a stub behind.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-jsonpath-shapes-001/refused
+      body: '{"order":{"sku":"A-1"}}'
+    expect: {status: 404}
+
+  # The bare shape, spelled properly. It asks about selection alone, so it holds
+  # for any value the path finds.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/bare",
+                     "bodyPatterns": [{"matchesJsonPath": "$.order.sku"}]},
+         "response": {"status": 200, "body": "bare"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-jsonpath-shapes-001/bare
+      body: '{"order":{"sku":"A-1"}}'
+    expect: {status: 200, body: "bare"}
+
+  # A path that selects nothing is a non-match, and so is a path whose node is
+  # null: absence and a null value are the same answer to "did you find one?".
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-jsonpath-shapes-001/bare
+      body: '{"order":{}}'
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-jsonpath-shapes-001/bare
+      body: '{"order":{"sku":null}}'
+    expect: {status: 404}
+
+  # A body that is not JSON is a plain non-match rather than an error: the
+  # request is still answered, with the 404 of a request nothing matched.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-jsonpath-shapes-001/bare
+      body: 'sku=A-1'
+    expect: {status: 404}
+
+  # The object shape, spelled properly, asks a strictly narrower question than
+  # the bare one: the path has to select something AND the inner matcher has to
+  # hold for it. The value is text on both sides, because a decimal crossing
+  # into the inner matcher is a recorded divergence (DIVERGENCES J6) and this
+  # case is not the place to relitigate it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-jsonpath-shapes-001/nested",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.order.sku",
+                                                           "equalTo": "A-1"}}]},
+         "response": {"status": 200, "body": "nested"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-jsonpath-shapes-001/nested
+      body: '{"order":{"sku":"A-1"}}'
+    expect: {status: 200, body: "nested"}
+
+  # The step that tells the two shapes apart. The path selects here, so the bare
+  # form would match — only the inner matcher can say no.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-jsonpath-shapes-001/nested
+      body: '{"order":{"sku":"B-2"}}'
+    expect: {status: 404}

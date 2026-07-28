@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-store-file-unreadable-003
+behaviors:
+  - B-CFG-FILE-ROOT
+  - B-ERR-1022
+  - B-METRIC-SNAPSHOT-QUARANTINED-TOTAL
+  - B-ADMIN-GET-PUT-DELETE-FILES-NAME-GET-FILES
+config: file-store
+# n/a: WireMock's answer to a project file it cannot open is to refuse to
+# start, which is the behavior SPEC §6.9 deliberately deviates from. There is
+# nothing to diff because the disagreement is the point.
+wm: n/a
+steps:
+  # Malformed is already covered by config-file-store-quarantine-003. This case
+  # is the other half: a file that is present in the listing and cannot be
+  # opened at all. The fixture spells it as a dangling symlink because that is
+  # the shape a project actually arrives in — a link into a volume that was not
+  # mounted, or into a sibling checkout that is not there — and because it is
+  # the only unreadable file a repository can carry, permission bits not being
+  # something git records.
+
+  # The read failure is reported by name. Without this line an operator has a
+  # stub that is missing from a directory that looks complete, and no way to
+  # find out which file it came from.
+  - logprobe:
+      json_fields:
+        msg: "mapping file cannot be read; it will be quarantined"
+        file: cov-store-unreadable.json
+
+  # The walk carried on past it. This is the load-bearing part: a driver that
+  # returned the read error from the walk would abort the rebuild and cost the
+  # project every stub in the directory, which for a local-development driver
+  # means one bad symlink takes the whole mock server down.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-unreadable-003/intact}
+    expect: {status: 200, body: "the neighbour of an unreadable file still serves"}
+
+  # It is counted, under the same reason any other undecodable document is
+  # counted under: the driver hands the builder an empty mapping rather than
+  # dropping the file, so quarantine happens in the one place that counts it.
+  # A floor rather than an equality — the counter is deployment-wide and a
+  # rebuild re-counts what is still broken. Two, because the fixture also holds
+  # the truncated `broken.json`, and a driver that silently swallowed one of
+  # the two would still satisfy a floor of one.
+  - metricsprobe:
+      series: mockulus_snapshot_quarantined_total{reason="decode"}
+      at_least: 2
+
+  # The other half of the tree, where an unreadable file is not a failed load
+  # at all: `__files/` holds response bodies, and one that cannot be read costs
+  # only the stubs that name it (SPEC §6.9).
+  - logprobe:
+      json_fields:
+        msg: "body file cannot be read; stubs naming it will serve an error"
+        file: cov-store-gone.bin
+
+  # It is absent from the file store rather than present and empty. That is the
+  # distinction worth pinning: a driver that recorded zero bytes for a file it
+  # could not read would leave every stub naming it serving an empty 200, which
+  # is indistinguishable from a stub that meant to return nothing.
+  - admin: {method: GET, path: /__admin/files/cov-store-gone.bin}
+    expect:
+      status: 404
+      body_json_subset:
+        errors:
+          - code: 10
+
+  # And the stub naming it says so at serve time, with the code reserved for
+  # exactly this (Appendix B 1022). Not a quarantined stub — the stub is fine —
+  # and not an empty 200.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-unreadable-003/unreadable-body}
+    expect:
+      status: 500
+      body_json_subset:
+        errors:
+          - code: 1022
+
+  # The control on all of the above: a readable fixture in the same directory
+  # still resolves, so what failed is the one file and not `__files/` as a
+  # whole.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-unreadable-003/readable-body}
+    expect: {status: 200, body: "served from __files/cov-store-present.txt"}
+
+  - admin: {method: GET, path: /__admin/files/cov-store-present.txt}
+    expect: {status: 200, body: "served from __files/cov-store-present.txt"}
+
+  # Nested fixtures are addressable by the name the project writes, with
+  # forward slashes whatever separator the host uses — the name is a name in
+  # the project, not a path on the machine serving it.
+  - admin: {method: GET, path: /__admin/files/nested/deep.txt}
+    expect: {status: 200, body: "nested body file"}

@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-diagnostics-describe-001
+behaviors: [B-MATCH-MATCHESJSONPATH, B-CFG-DIAGNOSTICS-ON-UNMATCHED]
+config: diagnostics
+# The unmatched body is outside the strict-compat surface either way (deviation
+# #2/#18), so the near-miss text has no oracle to diff against.
+wm: n/a
+steps:
+  # A near-miss report is only worth printing if it names the criterion that did
+  # not line up, and for a JSONPath criterion that means the expression AS
+  # WRITTEN. "a body pattern did not match" sends the author back to re-read a
+  # stub they have already re-read; "$.customer.id -> equalTo AB1, got …" is the
+  # answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000110",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/cov-jsonpath-diagnostics-describe-001/orders",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.customer.id",
+                                                           "equalTo": "AB1"}}]},
+         "response": {"status": 200, "body": "orders",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control: turning the knob on must not disturb matching, so the stub that
+  # matches still serves its own response.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-diagnostics-describe-001/orders
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "orders"}
+
+  # The near-miss names this stub by id and then renders the criterion: the
+  # expression, the inner matcher it feeds, and the body that was compared. The
+  # id anchors the match, because the report is deployment-wide and every other
+  # case's stubs are candidates for it too.
+  #
+  # Asserted by regex rather than byte for byte: §6.8 sets the bar at helpful
+  # and stable, not fixed, and the wording is outside the compatibility surface.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-diagnostics-describe-001/orders
+      body: '{"customer":{"id":"ZZ9"}}'
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body_regex: 'c0000007-0000-4000-8000-000000000110[\s\S]*matchesJsonPath "\$\.customer\.id" -> equalTo "AB1"'
+
+  # The bare form has no inner matcher to describe, and the negated spelling has
+  # to render as itself: reporting a doesNotMatchJsonPath as a matchesJsonPath
+  # would tell the author the opposite of what the stub asks for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000111",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/cov-jsonpath-diagnostics-describe-001/allowed",
+                     "bodyPatterns": [{"doesNotMatchJsonPath": "$.blocked"}]},
+         "response": {"status": 200, "body": "allowed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-diagnostics-describe-001/allowed
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "allowed"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-diagnostics-describe-001/allowed
+      body: '{"blocked":true}'
+    expect:
+      status: 404
+      headers: {Content-Type: "text/plain;charset=UTF-8"}
+      body_regex: 'c0000007-0000-4000-8000-000000000111[\s\S]*doesNotMatchJsonPath "\$\.blocked"'
+
+  # Both stubs are removed again, so the deployment-wide near-miss reports every
+  # other case on this variant sees do not grow a permanent pair of entries.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000007-0000-4000-8000-000000000110}
+    expect: {status: 200}
+  - admin: {method: DELETE, path: /__admin/mappings/c0000007-0000-4000-8000-000000000111}
+    expect: {status: 200}

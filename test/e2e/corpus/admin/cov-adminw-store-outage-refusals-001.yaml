@@ -1,0 +1,232 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminw-store-outage-refusals-001
+behaviors:
+  - B-ERR-1020
+  - B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED
+  - B-METRIC-STORE-ERRORS-TOTAL
+  - B-ADMIN-MAPPINGS-REMOVE-BY-METADATA-POST
+# The run has one Couchbase and every store deployment shares it, so taking it
+# away is a claim on the run rather than on this deployment.
+requires: [couchbase, exclusive]
+# n/a: WireMock keeps its stubs in the process that serves them, so it has no
+# store to lose and no degraded mode to answer with. The expectations come from
+# the §4.6 table and the Appendix B catalog.
+wm: n/a
+steps:
+  # Persistent, because the outage below is long enough that an ephemeral stub
+  # could expire underneath it, and the case is about refusals rather than about
+  # a TTL. The metadata tag is what the two search endpoints are aimed at.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0005-4000-8000-000000000001",
+         "persistent": true,
+         "metadata": {"suite": "cov-adminw-store-outage-refusals-001"},
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-store-outage-refusals-001/ledger"},
+         "response": {"status": 200, "body": "compiled before the outage"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-store-outage-refusals-001/ledger}
+    expect: {status: 200, body: "compiled before the outage"}
+
+  - stop_store: true
+
+  # The half of §4.6 that matters most: mock traffic never touches the store, so
+  # a cluster outage is not a traffic outage.
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-store-outage-refusals-001/ledger}
+    expect: {status: 200, body: "compiled before the outage"}
+
+  # Reads split on whether the snapshot can answer them. An id this pod is not
+  # holding falls through to the store, and when the store cannot answer, the
+  # honest reply is 1020 rather than 404: a suite polling for a stub a peer
+  # registered would read a 404 as "it was never created" and register its own
+  # copy, which is how an outage turns into duplicate stubs that outlive it.
+  # The same call is repeated after recovery below, where it does answer 404 —
+  # one request, two answers, which is what makes this one a statement about
+  # the store rather than about the id.
+  - admin: {method: GET, path: /__admin/mappings/c0000003-0005-4000-8000-0000000000ff}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  # A create that names its own id has to read the store before it can know
+  # whether that id is free. The read failing is not "the id is free" — treating
+  # it as one would let the create overwrite a stub another suite registered,
+  # which is exactly the collision the 109 of §5.1 exists to prevent — so it is
+  # refused with 1020 like every other write.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0005-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-store-outage-refusals-001/refused"},
+         "response": {"status": 200, "body": "never registered"}}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="get_stub"}', at_least: 1}
+
+  # The deployment-wide deletes and the two collection-wide rewrites are refused
+  # at the first store call each of them makes, and each failure is counted
+  # under its own operation. The label is what tells an operator whether the
+  # store is refusing everything or only one class of call, so a handler that
+  # reported someone else's operation name would send the diagnosis the wrong
+  # way even though the status code was right.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="delete_all_stubs"}', at_least: 1}
+
+  - admin: {method: POST, path: /__admin/mappings/reset}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="delete_ephemeral_stubs"}', at_least: 1}
+
+  # Save is the one that would be most tempting to answer 200 for: on a node
+  # with a local snapshot there is a sense in which nothing needs doing. But the
+  # durable act it performs is clearing the TTL in the store (deviation #4), so
+  # a 200 here would promise durability the deployment did not get.
+  - admin: {method: POST, path: /__admin/mappings/save}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="mark_all_persistent"}', at_least: 1}
+
+  # An import whose mappings carry no id needs a sequence number allocated
+  # before it can write, and that allocation is a store round trip.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"request": {"method": "GET", "urlPath": "/e2e/cov-adminw-store-outage-refusals-001/imported"},
+            "response": {"status": 200, "body": "never imported"}}
+         ]}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="next_seq"}', at_least: 1}
+
+  # A batch is validated whole before anything is written, and part of that
+  # validation is looking up the ids it names. The lookup failing stops the
+  # batch at validation, so the import is refused before its first write rather
+  # than halfway through it — the atomicity of §5.1 has to survive the store
+  # being gone, not only a bad mapping.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "c0000003-0005-4000-8000-000000000003",
+            "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-store-outage-refusals-001/batch"},
+            "response": {"status": 200, "body": "never imported"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": true}}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # The two metadata searches read every document in the deployment rather than
+  # this pod's snapshot, and during an outage that read is what they cannot do.
+  # Falling back to the local snapshot would be the wrong kind of available: a
+  # cleanup call that only saw one replica's stubs would report a successful
+  # removal and leave the rest of the deployment tagged, and find and remove
+  # have to agree on the candidate set or "found 3, removed 0" becomes the
+  # report a CI job acts on.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"cov-adminw-store-outage-refusals-001\"}"}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - admin:
+      method: POST
+      path: /__admin/mappings/remove-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"cov-adminw-store-outage-refusals-001\"}"}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="load_all"}', at_least: 1}
+
+  # Nothing any of the refused calls described took effect. Two of them were
+  # deployment-wide deletes, one carried deleteAllNotInImport and one was a
+  # removal by metadata aimed at this stub's own tag, so a partial application
+  # would have taken it with them — the fact that it still answers is what makes
+  # 1020 a rejection rather than a report on a write that had already started.
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-store-outage-refusals-001/ledger}
+    expect: {status: 200, body: "compiled before the outage"}
+
+  - admin: {method: GET, path: /__admin/mappings/c0000003-0005-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "c0000003-0005-4000-8000-000000000001"
+        response: {body: "compiled before the outage"}
+
+  # And none of the refused writes left a stub behind either.
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-store-outage-refusals-001/refused}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-store-outage-refusals-001/imported}
+    expect: {status: 404}
+
+  - start_store: true
+
+  # Recovery is asserted with a read rather than a write, because a poll that
+  # writes cannot safely be retried. An unknown id is the cheapest call that has
+  # to leave the snapshot: 503 while the store is away, 404 once it answers.
+  - admin: {method: GET, path: /__admin/mappings/c0000003-0005-4000-8000-0000000000ff}
+    expect_eventually: {status: 404, within: 60s}
+
+  # The search that answered 1020 answers with the stub instead, on the same
+  # matcher document. That is what pins the two refusals above on the outage
+  # rather than on the matcher, and it is the control the whole case needs: a
+  # server that answered 503 to every search would have passed this case up to
+  # here without a working search endpoint at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"cov-adminw-store-outage-refusals-001\"}"}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "c0000003-0005-4000-8000-000000000001"
+        meta: {total: 1}
+      within: 60s
+
+  # Cleanup: a persistent stub is what neither reset nor expiry removes, so
+  # leaving it behind would hand it to every exclusive case that follows. That
+  # the delete succeeds is also the write path reporting itself healthy again.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000003-0005-4000-8000-000000000001}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-store-outage-refusals-001/ledger}
+    expect: {status: 404}

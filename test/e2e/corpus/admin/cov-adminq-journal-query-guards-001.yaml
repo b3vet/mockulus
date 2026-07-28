@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminq-journal-query-guards-001
+behaviors:
+  - B-ADMIN-REQUESTS-COUNT-POST
+  - B-ADMIN-REQUESTS-UNMATCHED-GET
+  - B-ADMIN-REQUESTS-UNMATCHED-NEAR-MISSES-GET
+  - B-ADMIN-NEAR-MISSES-REQUEST-POST
+  - B-ADMIN-NEAR-MISSES-REQUEST-PATTERN-POST
+  - B-ERR-10
+config: journal
+# n/a: the error bodies are ours (Appendix B), and the near-miss endpoints sit
+# outside the strict-compat surface by §6.8. WireMock rejects an unparseable
+# `since` too and names the same parameter, but it does not answer in this
+# envelope, so there is nothing to diff byte for byte.
+wm: n/a
+steps:
+  # Every journal query endpoint runs over a window, and `since` is what sets
+  # it. A `since` that is not a timestamp is refused rather than dropped:
+  # ignoring it would answer a windowed verification with the whole journal, so
+  # a `verify(exactly(1))` written to look at the last minute would silently
+  # count every call the deployment has ever served. The error names the
+  # parameter, because "malformed request" alone does not tell a caller which of
+  # their two inputs was wrong.
+  - admin:
+      method: POST
+      path: "/__admin/requests/count?since=yesterday"
+      body: '{"urlPath":"/e2e/cov-adminq-journal-query-guards-001/orders"}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: since}
+      body_regex: 'yesterday is not an ISO-8601 timestamp'
+
+  # The control that pins the refusal on the value and not on the parameter
+  # existing: the same call with a parseable `since` answers normally.
+  - admin:
+      method: POST
+      path: "/__admin/requests/count?since=2000-01-01T00:00:00Z"
+      body: '{"urlPath":"/e2e/cov-adminq-journal-query-guards-001/orders"}'
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # The same guard on the endpoints that read the window without criteria.
+  - admin: {method: GET, path: "/__admin/requests/unmatched?since=yesterday"}
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10, source: {pointer: since}}]
+
+  - admin: {method: GET, path: "/__admin/requests/unmatched?since=2000-01-01T00:00:00Z"}
+    expect: {status: 200, body_json_subset: {requestJournalDisabled: false}}
+
+  - admin: {method: GET, path: "/__admin/requests/unmatched/near-misses?since=yesterday"}
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10, source: {pointer: since}}]
+
+  # And on the pattern endpoint, which reaches the window only after the pattern
+  # itself compiles.
+  - admin:
+      method: POST
+      path: "/__admin/near-misses/request-pattern?since=yesterday"
+      body: '{"urlPath":"/e2e/cov-adminq-journal-query-guards-001/orders"}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10, source: {pointer: since}}]
+
+  # An empty body is refused rather than read as "no criteria". Criteria with
+  # nothing in them match every recorded call, so a client that sent an empty
+  # verification — a serialisation that produced nothing, a truncated write —
+  # would be told its call happened however many times the journal is long.
+  - admin: {method: POST, path: /__admin/requests/count}
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10}]
+      body_regex: 'request body is empty'
+
+  - admin: {method: POST, path: /__admin/near-misses/request-pattern}
+    expect: {status: 422, body_regex: 'request body is empty'}
+
+  # The request endpoint refuses an empty body too, rather than reading it as a
+  # description of nothing and ranking every stub against `GET /`. The defaults
+  # it fills in are for the fields a description left out, not for a description
+  # that never arrived.
+  - admin: {method: POST, path: /__admin/near-misses/request}
+    expect: {status: 422, body_regex: 'request body is empty'}
+
+  # A pattern is compiled by the stub compiler, so a matcher a stub cannot use
+  # is refused here in the same words and with a pointer into the same document
+  # shape. Accepting it and quietly ranking against a pattern that dropped the
+  # clause would report distances for a question nobody asked.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"urlPath":"/e2e/cov-adminq-journal-query-guards-001/orders",
+         "bodyPatterns":[{"matchesXPath":"/order/sku"}]}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            source: {pointer: /request/bodyPatterns/0/matchesXPath}
+
+  # With both inputs wrong the pattern wins, because it is checked first. That
+  # ordering is worth pinning: the pattern is the thing the caller wrote, and
+  # being told only about the query parameter would send them to fix the input
+  # that was going to be rejected either way.
+  - admin:
+      method: POST
+      path: "/__admin/near-misses/request-pattern?since=yesterday"
+      body: |
+        {"urlPath":"/e2e/cov-adminq-journal-query-guards-001/orders",
+         "bodyPatterns":[{"matchesXPath":"/order/sku"}]}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            source: {pointer: /request/bodyPatterns/0/matchesXPath}
+
+  # The request endpoint takes a logged-request description rather than a
+  # pattern, so a body that is not JSON at all fails there with a message about
+  # the description instead of about a matcher.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request
+      body: 'not-json'
+    expect:
+      status: 422
+      body_json_subset:
+        errors: [{code: 10}]
+      body_regex: 'the body must describe a request'

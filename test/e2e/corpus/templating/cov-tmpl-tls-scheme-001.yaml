@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-tls-scheme-001
+behaviors: [B-RESP-TRANSFORMERS, B-CFG-TLS-CERT-FILE-TLS-KEY-FILE]
+# The oracle's mock port is not TLS-wrapped in this harness, so replaying this
+# case against it would compare an https rendering with an http one. The
+# expectation is SPEC §10.2's — `request.scheme` and `request.baseUrl` describe
+# the connection the request arrived on.
+wm: n/a
+# The tls variant wraps the mock listener with a generated certificate. It is
+# the only way to observe the https branch of the request model: nothing about
+# a stub document can make a cleartext listener report itself as secure, and
+# nothing should.
+config: tls
+steps:
+  # `request.baseUrl` is what a stub interpolates into a Location header, a
+  # callback URL or a HATEOAS link, and its scheme is the one thing about it
+  # that cannot be recovered downstream: a client handed http:// for a port
+  # that only speaks TLS does not get a redirect, it gets a handshake failure
+  # — or, worse, reaches a plaintext listener somewhere else that answers.
+  #
+  # Every other corpus case runs against a cleartext port, so "https" is a
+  # value the request model has no other opportunity to be wrong about.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000d0",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-tls-scheme-001/callback"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "Location": "{{request.baseUrl}}/e2e/cov-tmpl-tls-scheme-001/next"},
+                      "body": "scheme=[{{request.scheme}}] base=[{{request.baseUrl}}] host=[{{request.host}}] port=[{{request.port}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The scheme is asserted three ways in one exchange: on its own, as the
+  # prefix of the base URL, and in a templated response header — because the
+  # header is the form that actually ships, and header values go through the
+  # same renderer by a different route than the body does.
+  #
+  # `host` and `port` are pinned as separate fields so a base URL assembled by
+  # string concatenation cannot pass by leaving the port on the host: the
+  # split between them is what a stub relies on when it needs one without the
+  # other.
+  - request: {method: GET, path: /e2e/cov-tmpl-tls-scheme-001/callback}
+    expect:
+      status: 200
+      headers_contain:
+        Location: "https://127.0.0.1:"
+      body_regex: '^scheme=\[https\] base=\[https://127\.0\.0\.1:\d+\] host=\[127\.0\.0\.1\] port=\[\d+\]$'

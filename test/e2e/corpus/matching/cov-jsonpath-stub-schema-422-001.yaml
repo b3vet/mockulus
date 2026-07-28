@@ -1,0 +1,254 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-stub-schema-422-001
+behaviors: [B-ERR-10, B-STUB-REQUEST]
+# The catalog codes, the JSON pointers and the collect-everything rule are
+# mockulus's own (SPEC Appendix B). WireMock's deserializer stops at the first
+# problem it cannot map and reports it in a different envelope, so these answers
+# have no oracle to diff against.
+wm: n/a
+steps:
+  # Seven independent schema violations in one document — one at the top level,
+  # two in the scenario fields, four inside the request object — and one answer
+  # naming all seven with the pointer that locates each. A stub author fixing a
+  # mappings file by trial and error pays one round trip per problem when a
+  # validator fails fast; that is the cost this rule exists to remove.
+  #
+  # The order is the document walk: the top-level fields first, then the request
+  # object's in the order the request is parsed. Pinning it keeps the answer
+  # reproducible for anyone diffing two runs.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000070",
+         "persistent": "yes",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "Done",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-schema-422-001/collected",
+                     "headers": ["not", "an", "object"],
+                     "pathParameters": {"id": {"equalTo": "1"}},
+                     "basicAuthCredentials": {"username": "u"},
+                     "bodyPatterns": {"matches": "x"}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/persistent"}
+            detail: "persistent must be a boolean"
+          # A state without a scenario to hold it is meaningless. Ignoring the
+          # field would give a stub that serves unconditionally while its author
+          # believes it is gated.
+          - code: 10
+            source: {pointer: "/requiredScenarioState"}
+            detail: "requiredScenarioState needs a scenarioName"
+          - code: 10
+            source: {pointer: "/newScenarioState"}
+            detail: "newScenarioState needs a scenarioName"
+          - code: 10
+            source: {pointer: "/request/headers"}
+            detail: "headers must be a JSON object"
+          # Half a credential pair cannot be checked against anything, and a
+          # stub that silently dropped it would match unauthenticated requests.
+          - code: 10
+            source: {pointer: "/request/basicAuthCredentials"}
+            detail: "basicAuthCredentials needs both username and password"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns"}
+            detail: "bodyPatterns must be an array of matchers"
+          # pathParameters has nothing to bind against without a template, so
+          # every criterion in it is one that can never be satisfied.
+          - code: 10
+            source: {pointer: "/request/pathParameters"}
+            detail: "pathParameters needs a urlPathTemplate to bind against"
+
+  # Rejection is all-or-nothing: seven problems, zero writes.
+  - admin: {method: GET, path: /__admin/mappings/c0000007-0000-4000-8000-000000000070}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-schema-422-001/collected}
+    expect: {status: 404}
+
+  # The URL criteria are mutually exclusive. Two of them state two different
+  # intents, and picking one — whichever the field order happens to leave last —
+  # would silently serve requests the other one excludes.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000071",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-schema-422-001/two",
+                     "urlPattern": "/e2e/cov-jsonpath-stub-schema-422-001/.*"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request"}
+            detail: "only one URL criterion may be given, found urlPath, urlPattern"
+
+  # A path criterion that does not start with / can never match a request line,
+  # so it is a stub that would register and then never serve. The identifier in
+  # the same document is a number, which is a second problem at a second pointer
+  # — and it too has to be refused rather than stringified, because a client
+  # that chose an id would be handed back one it did not choose.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": 72,
+         "request": {"urlPath": "e2e/cov-jsonpath-stub-schema-422-001/relative"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/id"}
+            detail: "id must be a string"
+          - code: 10
+            source: {pointer: "/request/urlPath"}
+            detail: "urlPath must start with /"
+
+  # The type errors are reported against the field that carries them rather than
+  # against the whole document, which is what makes the pointer worth having.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000073",
+         "request": {"urlPath": 7},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/urlPath"}
+            detail: "urlPath must be a string"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000074",
+         "request": "GET /e2e/cov-jsonpath-stub-schema-422-001/thing",
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request"}
+            detail: "request must be a JSON object"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000075",
+         "request": {"urlPath": "/e2e/cov-jsonpath-stub-schema-422-001/creds",
+                     "basicAuthCredentials": "u:p"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/basicAuthCredentials"}
+            detail: "basicAuthCredentials must be an object with username and password"
+
+  # The control. Every field the first document got wrong is spelled correctly
+  # here, in one stub, and it registers. Without it a validator that refused
+  # every document with a `persistent`, a scenario state, a headers object, a
+  # credential pair or a bodyPatterns array would satisfy every step above.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000076",
+         "persistent": false,
+         "scenarioName": "cov-jsonpath-stub-schema-422-001",
+         "requiredScenarioState": "Started",
+         "newScenarioState": "Started",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/cov-jsonpath-stub-schema-422-001/fixed",
+                     "headers": {"X-Cov-Jsonpath": {"equalTo": "yes"}},
+                     "basicAuthCredentials": {"username": "u", "password": "p"},
+                     "bodyPatterns": [{"contains": "ok"}]},
+         "response": {"status": 200, "body": "fixed"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-stub-schema-422-001/fixed
+      headers: {X-Cov-Jsonpath: "yes", Authorization: "Basic dTpw"}
+      body: "ok"
+    expect: {status: 200, body: "fixed"}
+
+  # …and each of the three criteria is load-bearing, so the control proves the
+  # document was accepted AND understood rather than accepted and half ignored.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-stub-schema-422-001/fixed
+      headers: {Authorization: "Basic dTpw"}
+      body: "ok"
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-stub-schema-422-001/fixed
+      headers: {X-Cov-Jsonpath: "yes"}
+      body: "ok"
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-stub-schema-422-001/fixed
+      headers: {X-Cov-Jsonpath: "yes", Authorization: "Basic dTpw"}
+      body: "no"
+    expect: {status: 404}
+
+  # The other half of what a request object means: stating no URL criterion at
+  # all is legal and matches any URL, which is WireMock's anyUrl(). The stub
+  # below is selected by its header alone, so a build that had started requiring
+  # one of the five URL fields would refuse a document WireMock accepts.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000077",
+         "request": {"method": "POST",
+                     "headers": {"X-Cov-Jsonpath-Anyurl": {"equalTo": "yes"}}},
+         "response": {"status": 200, "body": "anyurl"}}
+    expect: {status: 201}
+
+  # Two different paths, one stub: the URL really is not a criterion here.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-stub-schema-422-001/anyurl-one
+      headers: {X-Cov-Jsonpath-Anyurl: "yes"}
+    expect: {status: 200, body: "anyurl"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-stub-schema-422-001/anyurl-two
+      headers: {X-Cov-Jsonpath-Anyurl: "yes"}
+    expect: {status: 200, body: "anyurl"}
+
+  # …and the header still is, so "matches any URL" has not become "matches
+  # anything". This is also what keeps the stub out of every other case's way on
+  # the instance the two of them share.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-stub-schema-422-001/anyurl-one
+    expect: {status: 404}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000007-0000-4000-8000-000000000077}
+    expect: {status: 200}

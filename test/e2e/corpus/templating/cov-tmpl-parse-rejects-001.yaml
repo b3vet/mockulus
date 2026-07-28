@@ -1,0 +1,212 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-parse-rejects-001
+behaviors: [B-ERR-1002, B-DEV-DEVIATION-13]
+# Every step here is the registration half of deviation #13, which pinned
+# WireMock does not have: it accepts each of these documents with a 201 and
+# discovers the problem on the first request. There is no oracle answer to diff
+# a 422 against, so the expectations are SPEC §10.4's — parse errors are 422
+# code 1002 — rather than a recorded WireMock response.
+wm: n/a
+steps:
+  # templating-render-error-001 pins one malformed template. This case is the
+  # taxonomy, because "the parser rejects bad input" is only worth as much as
+  # the *reason* it gives: an author holding a 422 has to be able to find the
+  # character that caused it, and a parser that answered every malformed
+  # template with one generic message would pass a single-shape test and be
+  # useless in practice. Each step below is a different mistake, and each is
+  # asserted on the detail that distinguishes it from the others.
+
+  # An empty mustache. The offset is part of the assertion: a message without
+  # one leaves the author scanning a 4 KB body by eye.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/empty"},
+         "response": {"status": 200, "body": "value={{}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1002
+            title: "Template error"
+            source: {pointer: "/response/body"}
+      body_regex: 'empty expression at offset 6'
+
+  # A closing tag with nothing open. The interesting failure this prevents is
+  # the silent one: a parser that ignored an unmatched close would serve the
+  # body with the tag stripped, and the author would never learn that the
+  # {{#if}} they thought they wrote is missing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/stray-close"},
+         "response": {"status": 200, "body": "value={{/if}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: '\{\{/if\}\} closes a block that was never opened'
+
+  # A close that does not match its open. This is the copy-paste failure —
+  # a block rewritten from {{#each}} to {{#if}} with the closing tag left
+  # behind — and the message has to name both tags or it is a riddle.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/mismatched"},
+         "response": {"status": 200, "body": "{{#if request.query.tier}}gold{{/each}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: '\{\{/each\}\} does not close \{\{#if\}\}'
+
+  # {{else}} outside any block. A parser that treated it as an ordinary path
+  # would render nothing there and the author would read the blank as their
+  # data being absent rather than their template being wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/stray-else"},
+         "response": {"status": 200, "body": "value={{else}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: '\{\{else\}\} outside a block at offset 6'
+
+  # A quoted argument that never closes. The tokenizer has to say so rather
+  # than swallow the rest of the mustache as one long string literal, which is
+  # what a scanner without an end-of-input check does.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/unterminated"},
+         "response": {"status": 200, "body": "value={{concat \"abc}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: 'unterminated quoted argument \(in \\"concat'
+
+  # The same mistake in a block header. It is a separate path through the
+  # parser and it carries a separate piece of context — "in block {{#if …}}" —
+  # so the two are asserted apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000006",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/bad-header"},
+         "response": {"status": 200, "body": "{{#if \"abc}}gold{{/if}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: 'unterminated quoted argument \(in block \{\{#if'
+
+  # A non-block helper opened as a block. This is the message that has to
+  # teach: the four names are listed, because an author who wrote {{#concat}}
+  # is guessing at the block vocabulary and the 422 is where they find out
+  # what it is.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000007",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/block-helper"},
+         "response": {"status": 200, "body": "{{#concat request.query.a}}x{{/concat}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: '\\"concat\\" cannot open a block; block helpers are if, unless, each and with'
+
+  # The mistake is in the {{else}} branch, and the opening branch is
+  # well-formed. A parser that validated only the branch it reached first
+  # would take this document and then 500 on exactly the requests that took
+  # the else — the intermittent failure that is hardest to attribute.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000008",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/else-branch"},
+         "response": {"status": 200, "body": "{{#if request.query.tier}}gold{{else}}{{}}{{/if}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: 'empty expression at offset 38'
+
+  # An empty subexpression. Handlebars composes helpers by nesting calls in
+  # parentheses, and `()` is what is left when the inner call is deleted; it
+  # has to be a refusal rather than a silent nil argument that then makes the
+  # outer helper produce a plausible wrong answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000009",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/empty-sub"},
+         "response": {"status": 200, "body": "value={{concat ()}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: 'empty expression \(in \\"concat \(\)\\"\)'
+
+  # A named argument whose value is missing. `offset=` reads as a complete
+  # token to a splitter that only looks for the `=`, so the check that the
+  # right-hand side is non-empty is its own step.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-00000000000a",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/empty-hash"},
+         "response": {"status": 200, "body": "value={{now offset=}}",
+                      "transformers": ["response-template"]}}
+    expect:
+      status: 422
+      body_regex: 'empty operand \(in \\"now offset=\\"\)'
+
+  # Nothing above was stored: a refused document must not leave a half-built
+  # stub behind, or the next author to POST the corrected version collides
+  # with a mapping that was never accepted.
+  - admin: {method: GET, path: /__admin/mappings/c0000006-0000-4000-8000-000000000001}
+    expect: {status: 404}
+  - admin: {method: GET, path: /__admin/mappings/c0000006-0000-4000-8000-000000000008}
+    expect: {status: 404}
+
+  # The control, and it is what makes the ten refusals above mean something: a
+  # template built from the same pieces — a quoted argument, a named argument
+  # with a value, a subexpression, an if/else with both branches and a
+  # matching close — registers and serves. Without it every step here would
+  # also pass on a server that rejected all templating outright.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-00000000000b",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-parse-rejects-001/well-formed"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "{{#if request.query.tier}}{{concat (upper request.query.tier) \"!\"}}{{else}}none{{/if}} at {{number 2.5 decimals=1}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-parse-rejects-001/well-formed?tier=gold
+    expect:
+      status: 200
+      body: "GOLD! at 2.5"
+
+  - request: {method: GET, path: /e2e/cov-tmpl-parse-rejects-001/well-formed}
+    expect:
+      status: 200
+      body: "none at 2.5"

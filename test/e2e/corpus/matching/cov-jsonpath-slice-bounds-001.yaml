@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-slice-bounds-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A slice bound may count from the end, which is what lets a stub name "the
+  # last element" of an array whose length it does not know. The nested form is
+  # used throughout so the assertion is about WHICH elements were selected: the
+  # bare form would only say that something was, and every slice below selects
+  # something.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000030",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-slice-bounds-001/tail",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[-1:]",
+                                                           "equalTo": "c"}}]},
+         "response": {"status": 200, "body": "tail",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/tail
+      body: '{"items":["a","b","c"]}'
+    expect: {status: 200, body: "tail"}
+
+  # The same three elements in a different order do not match, so `-1:` is the
+  # last element and not "any element" — the reading a slice that had lost its
+  # negative bound and clamped to 0 would give.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/tail
+      body: '{"items":["c","b","a"]}'
+    expect: {status: 404}
+
+  # A one-element array is its own last element, which is the boundary where an
+  # off-by-one in the negative arithmetic shows up.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/tail
+      body: '{"items":["c"]}'
+    expect: {status: 200, body: "tail"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/tail
+      body: '{"items":[]}'
+    expect: {status: 404}
+
+  # A slice over something that is not an array selects nothing. A string is the
+  # document to try it with, because slicing one is a thing several languages do
+  # and "c" really is inside "abc": an evaluator that slid into substring
+  # semantics would match here.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/tail
+      body: '{"items":"abc"}'
+    expect: {status: 404}
+
+  # A negative END bound is the complement: everything except the last element.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000031",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-slice-bounds-001/head",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[:-1]",
+                                                           "equalTo": "c"}}]},
+         "response": {"status": 200, "body": "head",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/head
+      body: '{"items":["c","b","a"]}'
+    expect: {status: 200, body: "head"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/head
+      body: '{"items":["a","b","c"]}'
+    expect: {status: 404}
+  # The last element is excluded even when it is the only one, which leaves an
+  # empty selection rather than the whole array.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/head
+      body: '{"items":["c"]}'
+    expect: {status: 404}
+
+  # An empty array has no last element to leave out, so the complement of it is
+  # empty too rather than the whole array — the answer an implementation gives
+  # when a bound that counted back past the beginning is used unclamped.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-slice-bounds-001/head
+      body: '{"items":[]}'
+    expect: {status: 404}

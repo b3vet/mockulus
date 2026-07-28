@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminw-metadata-refusals-001
+behaviors:
+  - B-ADMIN-MAPPINGS-FIND-BY-METADATA-POST
+  - B-ADMIN-MAPPINGS-REMOVE-BY-METADATA-POST
+  - B-ERR-1000
+  - B-ERR-10
+# n/a: the matcher document is compiled with mockulus' own matcher set and the
+# refusals carry the Appendix B catalog codes, which WireMock has no equivalent
+# of. The find/remove pair itself is §5.1 behavior; only its error envelope is
+# ours.
+wm: n/a
+steps:
+  # Two stubs tagged with this case's own suite name, so every search below
+  # selects by identity rather than by whatever else is registered on the
+  # shared instance.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0003-4000-8000-000000000001",
+         "metadata": {"suite": "cov-adminw-metadata-refusals-001", "tier": "gold"},
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-metadata-refusals-001/gold"},
+         "response": {"status": 200, "body": "gold"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0003-4000-8000-000000000002",
+         "metadata": {"suite": "cov-adminw-metadata-refusals-001", "tier": "silver"},
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-metadata-refusals-001/silver"},
+         "response": {"status": 200, "body": "silver"}}
+    expect: {status: 201}
+
+  # The body of a search *is* the matcher, so an absent body is not "match
+  # everything" — it is a missing argument. Reading it as a match-all would make
+  # remove-by-metadata with a dropped payload delete every tagged stub in the
+  # deployment, which is the single most destructive thing this endpoint can be
+  # asked to do.
+  - admin: {method: POST, path: /__admin/mappings/find-by-metadata}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'request body is empty'
+
+  - admin: {method: POST, path: /__admin/mappings/remove-by-metadata}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'request body is empty'
+
+  # A matcher mockulus has not implemented yet is refused by name with the
+  # deferred-feature code, not with the generic malformed one. The distinction
+  # is what a team acts on: 1000 with the roadmap link means "wait for it", 10
+  # means "you made a typo", and answering the first as the second sends people
+  # hunting for a mistake that is not in their document.
+  - admin:
+      method: POST
+      path: /__admin/mappings/remove-by-metadata
+      body: '{"equalToXml": "<suite>cov-adminw-metadata-refusals-001</suite>"}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1000
+            source: {pointer: "/equalToXml"}
+            title: "Unsupported feature"
+      body_regex: 'ROADMAP'
+
+  # Each key is classified on its own rather than the whole document taking the
+  # verdict of the first one examined: a deferred matcher and an unknown one in
+  # the same body produce one 1000 and one 10. A search whose author has both
+  # problems needs both answers, or fixing the typo just uncovers the other.
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: '{"equalToXml": "<suite/>", "closeEnoughTo": "gold"}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/closeEnoughTo"}
+          - code: 1000
+            source: {pointer: "/equalToXml"}
+      body_regex: 'unknown matcher closeEnoughTo'
+
+  # The refusals removed nothing. remove-by-metadata is the call a CI runner
+  # makes to leave a shared deployment clean, so a rejected one that had already
+  # walked part of the collection would delete another suite's stubs and report
+  # a 422 for it.
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-metadata-refusals-001/gold}
+    expect: {status: 200, body: "gold"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-metadata-refusals-001/silver}
+    expect: {status: 200, body: "silver"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings/find-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"cov-adminw-metadata-refusals-001\"}",
+         "ignoreExtraElements": true}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "c0000003-0003-4000-8000-000000000001"
+          - id: "c0000003-0003-4000-8000-000000000002"
+        meta: {total: 2}
+
+  # The control, and the cleanup in one call: the same endpoint with a matcher
+  # it does support removes exactly the two stubs and says which. That is what
+  # pins the four refusals on the matcher documents rather than on the endpoint
+  # being broken or the stubs being unreachable.
+  - admin:
+      method: POST
+      path: /__admin/mappings/remove-by-metadata
+      body: |
+        {"equalToJson": "{\"suite\":\"cov-adminw-metadata-refusals-001\"}",
+         "ignoreExtraElements": true}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "c0000003-0003-4000-8000-000000000001"
+          - id: "c0000003-0003-4000-8000-000000000002"
+        meta: {total: 2}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-metadata-refusals-001/gold}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-metadata-refusals-001/silver}
+    expect: {status: 404}

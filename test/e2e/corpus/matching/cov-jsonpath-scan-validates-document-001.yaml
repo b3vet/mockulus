@@ -1,0 +1,367 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-scan-validates-document-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+# Which of mockulus's two JSONPath evaluators answered a request is
+# mockulus-specific: WireMock has one, so there is no oracle for the agreement
+# this case asserts. D-OPEN-14 is the decision, and SPEC §6.7's "a body that is
+# not valid JSON is a plain non-match" is the rule both halves have to obey.
+wm: n/a
+steps:
+  # A definite path is answered off the body as it arrived, without building a
+  # tree (D-OPEN-14). That shortcut is only safe if the pass VALIDATES THE WHOLE
+  # DOCUMENT rather than stopping once it has the node, so every negative below
+  # is a document whose leading part is fine and whose tail is not: a scanner
+  # that returned as soon as it found `$.card.brand` would match all of them.
+  #
+  # The second stub is the control from the other side. `$..brand` is indefinite,
+  # which keeps the tree evaluation over an encoding/json decode, and it is
+  # pointed at the same documents throughout. The two engines are asserted to
+  # agree; a scan that admitted a body the decoder rejects would be a stub that
+  # matches or not depending on which expression its author happened to write.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000050",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-scan-validates-document-001/scanned",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.card.brand",
+                                                           "equalTo": "visa"}}]},
+         "response": {"status": 200, "body": "scanned",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000051",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-scan-validates-document-001/decoded",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$..brand",
+                                                           "equalTo": "visa"}}]},
+         "response": {"status": 200, "body": "decoded",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The document both stubs are built around.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"}}'
+    expect: {status: 200, body: "scanned"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"}}'
+    expect: {status: 200, body: "decoded"}
+
+  # Trailing content after a complete document. This is the one a client hits
+  # for real, by concatenating two payloads or by retrying into a dirty buffer.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"}} junk'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"}} junk'
+    expect: {status: 404}
+
+  # A truncated document: the node is complete, the object never closes.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"}'
+    expect: {status: 404}
+
+  # A missing separator between two well-formed members.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"} "x":1}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"} "x":1}'
+    expect: {status: 404}
+
+  # JSON's number grammar is the strict one, and each of these is something a
+  # general-purpose number parser accepts: a leading zero, a bare minus, a
+  # trailing point, an exponent with no digits after it.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":01}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"},"n":01}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":-}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":1.}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":1e}'
+    expect: {status: 404}
+
+  # A magnitude past what a float64 can hold is a decode error, and one decode
+  # error rejects the whole document — so the scan has to refuse it too, rather
+  # than walking past a number it never intends to read.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":1e400}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"},"n":1e400}'
+    expect: {status: 404}
+
+  # The control for that refusal, and the one that keeps it from becoming
+  # "reject anything with an exponent": 1e308 is inside float64's range and a
+  # negative exponent on a negative number is ordinary JSON. Both must match.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":1e308}'
+    expect: {status: 200, body: "scanned"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"},"n":1e308}'
+    expect: {status: 200, body: "decoded"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":-1.5e-3}'
+    expect: {status: 200, body: "scanned"}
+
+  # String escapes: an escape nothing defines, and a \u with a non-hex digit in
+  # it. Both are inside a member the path never selects, which is exactly why
+  # they are worth sending.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"s":"\q"}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"},"s":"\q"}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"s":"\u00zz"}'
+    expect: {status: 404}
+
+  # An unterminated string swallows the rest of the document.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"s":"open}'
+    expect: {status: 404}
+
+  # A raw control character inside a string — a real tab rather than the two
+  # characters that spell one. encoding/json refuses it, so the scan does too;
+  # accepting it here would make a body that the decoder rejects match.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: "{\"card\":{\"brand\":\"visa\"},\"s\":\"a\tb\"}"
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: "{\"card\":{\"brand\":\"visa\"},\"s\":\"a\tb\"}"
+    expect: {status: 404}
+
+  # …and its control: the same tab written as the escape JSON defines for it is
+  # a valid document and matches. Without this step the rule above would be
+  # satisfied by refusing every string containing the letter a.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"s":"a\tb"}'
+    expect: {status: 200, body: "scanned"}
+
+  # The same rule inside an array, which the scan walks with a separate loop:
+  # a missing separator, an element that never arrives, and an array that never
+  # closes are each a document encoding/json rejects.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"xs":[1 2]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":"visa"},"xs":[1 2]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"xs":[1,]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"xs":[1'
+    expect: {status: 404}
+
+  # …and its control: a well-formed array in the same position matches, so the
+  # rule above is about the malformation and not about arrays.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"xs":[1,2]}'
+    expect: {status: 200, body: "scanned"}
+
+  # A member whose key is not a string, and one with no colon after it. Both are
+  # shapes a hand-written fixture picks up from a language whose object literals
+  # are laxer than JSON.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},1:2}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"k" 1}'
+    expect: {status: 404}
+
+  # The malformation inside the member the path actually selects, rather than
+  # beside it: an unquoted value where the node should be.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":visa}}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/decoded
+      body: '{"card":{"brand":visa}}'
+    expect: {status: 404}
+
+  # A document that ends mid-escape and one that ends mid-number: the scan has
+  # to run out of input without reading past the end of the body.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"s":"a\'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: '{"card":{"brand":"visa"},"n":-'
+    expect: {status: 404}
+
+  # Selecting THROUGH an array rather than through an object exercises the other
+  # half of the same pass, and it has the same obligation: the element the path
+  # selects has to be valid, and so does everything after it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000052",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-scan-validates-document-001/indexed",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[0].brand",
+                                                           "equalTo": "visa"}}]},
+         "response": {"status": 200, "body": "indexed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/indexed
+      body: '{"items":[{"brand":"visa"}]}'
+    expect: {status: 200, body: "indexed"}
+
+  # The selected element is itself malformed…
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/indexed
+      body: '{"items":[{"brand":vis}]}'
+    expect: {status: 404}
+
+  # …and the array never closes after it, which a pass that stopped at the node
+  # would never notice.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/indexed
+      body: '{"items":[{"brand":"visa"}'
+    expect: {status: 404}
+
+  # A later element is malformed, so the whole array is still walked after the
+  # one the path wanted was found.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/indexed
+      body: '{"items":[{"brand":"visa"},{"brand":01}]}'
+    expect: {status: 404}
+
+  # An empty body is not a document at all, and is a non-match rather than an
+  # error — the same answer a body of prose gets.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-validates-document-001/scanned
+      body: ''
+    expect: {status: 404}

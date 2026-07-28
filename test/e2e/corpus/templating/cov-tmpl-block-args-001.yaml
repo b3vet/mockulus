@@ -1,0 +1,265 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-block-args-001
+behaviors: [B-TPL-IF-UNLESS-EACH-WITH-LOOKUP, B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL]
+# A block helper given the wrong number of arguments is a serve-time refusal
+# whose wording is mockulus's own, and pinned WireMock's Handlebars reports
+# these differently; SPEC §10.4 fixes only that the text lands in the body.
+wm: n/a
+steps:
+  # A block helper takes exactly one argument, and a second one is not a typo
+  # that can be ignored. {{#if a b}} is what an author writes when they mean
+  # "if either" or "if both", and both readings are wrong: whichever argument
+  # an implementation silently dropped, the block would take a branch the
+  # author did not ask for on some requests and the right one on others.
+
+  # The control first: all four blocks with one argument each, driven twice so
+  # every branch is taken. Without it the eight refusals below would also pass
+  # on a server where block helpers had stopped working entirely.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000090",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/ok"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "if=[{{#if request.query.a}}y{{else}}n{{/if}}] unless=[{{#unless request.query.a}}y{{else}}n{{/unless}}] each=[{{#each (range 1 2)}}{{this}}{{/each}}] with=[{{#with request.query}}{{a}}{{/with}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/ok?a=set
+    expect: {status: 200, body: "if=[y] unless=[n] each=[12] with=[set]"}
+
+  - request: {method: GET, path: /e2e/cov-tmpl-block-args-001/ok}
+    expect: {status: 200, body: "if=[n] unless=[y] each=[12] with=[]"}
+
+  # Each of the four with a second argument. They are separate stubs because
+  # the message names the helper, and a single implementation shared by all
+  # four could otherwise report the wrong one and never be noticed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000091",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/if-arity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#if request.query.a request.query.b}}y{{/if}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/if-arity?a=1&b=2
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: '\{\{#if\}\} takes exactly one argument'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000092",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/unless-arity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#unless request.query.a request.query.b}}y{{/unless}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/unless-arity?a=1&b=2
+    expect:
+      status: 500
+      body_regex: '\{\{#unless\}\} takes exactly one argument'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000093",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/each-arity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#each request.query.a request.query.b}}y{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/each-arity?a=1&b=2
+    expect:
+      status: 500
+      body_regex: '\{\{#each\}\} takes exactly one argument'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000094",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/with-arity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#with request.query.a request.query.b}}y{{/with}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/with-arity?a=1&b=2
+    expect:
+      status: 500
+      body_regex: '\{\{#with\}\} takes exactly one argument'
+
+  # The other way a block can fail: the one argument it has is a subexpression
+  # that cannot be evaluated. The block has to give up rather than treat the
+  # failure as a falsy value, because "the helper errored" and "the collection
+  # was empty" are the same rendering — an else branch — and only one of them
+  # is something the author wants shipped.
+  #
+  # Each of the three blocks that take a value evaluates its argument in its
+  # own code path, so each gets a control request and a failing one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000095",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/if-arg"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#if (range request.query.lo request.query.hi)}}y{{else}}n{{/if}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/if-arg?lo=1&hi=2
+    expect: {status: 200, body: "x=[y]"}
+
+  # An empty list is the else branch — the rendering a swallowed error would
+  # be mistaken for — and the step after it is the same template with an
+  # unusable bound.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/if-arg?lo=2&hi=1
+    expect: {status: 200, body: "x=[n]"}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/if-arg?lo=q&hi=2
+    expect: {status: 500, body_regex: '"q" is not a number'}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000096",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/each-arg"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#each (range request.query.lo request.query.hi)}}{{this}}{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/each-arg?lo=1&hi=2
+    expect: {status: 200, body: "x=[12]"}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/each-arg?lo=q&hi=2
+    expect: {status: 500, body_regex: '"q" is not a number'}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000097",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/with-arg"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#with (range request.query.lo request.query.hi)}}{{size .}}{{else}}n{{/with}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # {{#with}} pushes the value it was given, and {{.}} inside reads it back —
+  # three elements pushed, three counted. A block that pushed its own scope
+  # wrapper instead of the value would count something else here.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/with-arg?lo=1&hi=3
+    expect: {status: 200, body: "x=[3]"}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/with-arg?lo=3&hi=1
+    expect: {status: 200, body: "x=[n]"}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/with-arg?lo=q&hi=2
+    expect: {status: 500, body_regex: '"q" is not a number'}
+
+  # The third place a block can fail is inside its body, once iteration has
+  # already started. Output written by earlier iterations is discarded with
+  # everything else — a template that stopped at the failing element and served
+  # what it had would hand a client a truncated collection with a 200 on it,
+  # which is the one outcome nobody downstream can detect.
+  #
+  # The list and the map are separate loops in the iterator, so each gets its
+  # own stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000098",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/each-body"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#each request.pathSegments}}{{#if request.query.boom}}{{math this '+' 1}}{{/if}};{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Without the query parameter the arithmetic is skipped and all three
+  # iterations run, which is the control: the same stub, the same list, a 200.
+  - request: {method: GET, path: /e2e/cov-tmpl-block-args-001/each-body}
+    expect: {status: 200, body: "x=[;;;]"}
+
+  # With it, the first element is a path segment the arithmetic cannot use.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/each-body?boom=1
+    expect: {status: 500, body_regex: '"e2e" is not a number'}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-00000000009a",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-args-001/each-map"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{#each request.cookies}}{{math this '+' 1}};{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Two numeric cookies iterate and increment in key order.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/each-map
+      headers: {Cookie: "a=1; b=2"}
+    expect: {status: 200, body: "x=[2;3;]"}
+
+  # One that is not a number takes the whole render down with it.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-args-001/each-map
+      headers: {Cookie: "a=x"}
+    expect: {status: 500, body_regex: '"x" is not a number'}
+
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}

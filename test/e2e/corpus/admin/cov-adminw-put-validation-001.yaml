@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminw-put-validation-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-ERR-10
+  - B-ERR-1000
+# n/a: the catalog codes and the `source` pointers are mockulus' own (Appendix
+# B), and WireMock answers these bodies with its own unstructured errors, so
+# there is no single-node oracle for the envelope. What is being pinned is that
+# a rejected replacement leaves the stub it addressed exactly as it was.
+wm: n/a
+steps:
+  # The stub every rejection below is aimed at. It has to exist, because PUT
+  # resolves the id before it looks at the body: aiming these at an unknown id
+  # would test the 404 that wmv-admin-put-unknown-id-001 already owns rather
+  # than the validation that follows it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0001-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-put-validation-001/order"},
+         "response": {"status": 200, "body": "first edition"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-put-validation-001/order}
+    expect: {status: 200, body: "first edition"}
+
+  # An empty body against an id that does exist is malformed rather than an
+  # instruction to blank the stub. A replacement is a whole document by
+  # definition, so "no document" has to be refused: a PUT whose payload was
+  # dropped by a proxy or a misconfigured client would otherwise quietly turn a
+  # working stub into a catch-all made entirely of defaults.
+  - admin: {method: PUT, path: /__admin/mappings/c0000003-0001-4000-8000-000000000001}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'request body is empty'
+
+  # The replacement path collects every problem in one answer, the way the
+  # create path does (Appendix B: collect, do not fail fast). The two problems
+  # here are deliberately of different kinds and in different places — an
+  # unknown top-level field and a deferred matcher nested inside a body pattern
+  # — so a loop that stopped at the first one, or one that only ever walked the
+  # top level, would report a shorter list than this.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/c0000003-0001-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/cov-adminw-put-validation-001/order",
+                     "bodyPatterns": [{"equalToXml": "<order/>"}]},
+         "response": {"status": 200},
+         "nosuchfield": 1}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/nosuchfield"}
+            title: "Malformed request"
+          - code: 1000
+            source: {pointer: "/request/bodyPatterns/0/equalToXml"}
+            title: "Unsupported feature"
+
+  # A pattern that compiles on neither engine is refused with the regex code
+  # rather than the generic malformed one, because the author needs to know the
+  # field parsed fine and the expression is what does not.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/c0000003-0001-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPathPattern": "/e2e/cov-adminw-put-validation-001/["},
+         "response": {"status": 200, "body": "never applied"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1003
+            source: {pointer: "/request/urlPathPattern"}
+      body_regex: 'does not compile'
+
+  # The point of all four refusals: the stub is byte-for-byte what it was.
+  # Compilation happens before anything is written (SPEC §4.3), so a rejected
+  # replacement is not a partial one — a PUT that had already deleted the old
+  # document before discovering the new one was invalid would leave the id
+  # naming nothing, which is the worst outcome of the three.
+  - admin: {method: GET, path: /__admin/mappings/c0000003-0001-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "c0000003-0001-4000-8000-000000000001"
+        uuid: "c0000003-0001-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/cov-adminw-put-validation-001/order}
+        response: {status: 200, body: "first edition"}
+
+  # And the serving snapshot was not touched either, so nothing the refused
+  # documents described ever reached a request.
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-put-validation-001/order}
+    expect: {status: 200, body: "first edition"}
+
+  # The control the refusals need. The same replacement, with the one offending
+  # element removed, is applied — so the four 422s were statements about those
+  # elements and not about PUT, about this id, or about the stub being busy.
+  # It also moves the stub to a second path, which is what makes "replaced"
+  # observable: a merge would leave the old criterion in place beside the new.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/c0000003-0001-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/cov-adminw-put-validation-001/invoice"},
+         "response": {"status": 200, "body": "second edition"}}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "c0000003-0001-4000-8000-000000000001"
+        response: {body: "second edition"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-put-validation-001/invoice}
+    expect: {status: 200, body: "second edition"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-put-validation-001/order}
+    expect: {status: 404}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000003-0001-4000-8000-000000000001}
+    expect: {status: 200}

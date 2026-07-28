@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cb-journal-outage-001
+behaviors:
+  - B-ADMIN-REQUESTS-ID-GET
+  - B-ADMIN-REQUESTS-ID-DELETE
+  - B-ADMIN-REQUESTS-DELETE
+  - B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED
+  - B-ERR-1020
+config: journal
+# couchbase because the journal is the one collection with no in-memory copy
+# anywhere: every verification call is a store read, and what those calls do
+# when the store is gone is a property of the driver rather than of the handler.
+# On the memory store the same steps would prove that a map is still a map.
+#
+# exclusive because emptying the journal and then asserting it is empty is a
+# claim about the whole collection, and because the run's store is shared.
+requires: [couchbase, exclusive]
+# n/a: WireMock records on the request path into the process that serves it, so
+# it has neither a store to lose nor an eventual visibility window. That gap is
+# deviation #10; the expectations here come from §4.6 and §11.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000021",
+         "persistent": true,
+         "request":{"method":"GET",
+                    "urlPathPattern":"/e2e/cov-cb-journal-outage-001/(before|during|after)"},
+         "response":{"status":200,"body":"served"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-journal-outage-001/before}
+    expect: {status: 200, body: "served"}
+
+  # Recording is off the request path and the query behind verification is
+  # served by a secondary index, so the entry arrives within a window rather
+  # than immediately (§11.4, deviation #10). Waiting for it here also absorbs
+  # the one-off cost of this deployment's first journal query, which is not the
+  # steady state anything below is asserting.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/cov-cb-journal-outage-001/before"}'
+    expect_eventually:
+      status: 200
+      within: 30s
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # An id nobody minted. A bare 404 is the not-found a WireMock client library
+  # already handles, and getting it here means the lookup really went to the
+  # journal and came back empty-handed — the answer the 503 further down has to
+  # be distinguishable from.
+  - admin: {method: GET, path: /__admin/requests/c0000002-0000-4000-8000-0000000000ff}
+    expect: {status: 404}
+
+  # Removing an entry that is not there is not an error. A suite tearing down
+  # after a flaky run deletes ids it is no longer sure about, and a 404 or a 500
+  # here would turn its cleanup into a failure of its own.
+  - admin: {method: DELETE, path: /__admin/requests/c0000002-0000-4000-8000-0000000000ff}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # Empty means empty, envelope and all: an entry that survived the purge but
+  # dropped out of the default page would read the same under a subset check.
+  # Polled, because the purge removes documents by key while the query that
+  # reads them back is served by an index that catches up on its own schedule —
+  # the same eventual visibility the entry arrived under.
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      within: 30s
+      body_json:
+        requests: []
+        meta: {total: 0}
+        requestJournalDisabled: false
+
+  - stop_store: true
+
+  # The request path never waits on the journal, and this is where that stops
+  # being a design note: the store is gone, and the response is unaffected
+  # because recording happens after the response has been written and off the
+  # request's goroutine (SPEC §11.2, D3).
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-journal-outage-001/during}
+    expect: {status: 200, body: "served"}
+
+  # The sharpest claim in this file. A verification read has no snapshot to fall
+  # back to, so it says it cannot answer instead of answering. 404 here would
+  # tell a suite "that call never happened" and 200 with an empty list would
+  # tell it "your service was never called" — both are false, both look like the
+  # product under test is broken, and both are the kind of failure a team spends
+  # a day on. 503 code 1020 says the mock server cannot tell, which is the truth.
+  - admin: {method: GET, path: /__admin/requests/c0000002-0000-4000-8000-0000000000ff}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - admin: {method: DELETE, path: /__admin/requests/c0000002-0000-4000-8000-0000000000ff}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # A purge walks the collection before it removes anything, so it fails on the
+  # read like every other bulk call — and a suite told 200 here would go on to
+  # verify against entries it believed were gone.
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="query_journal"}', at_least: 1}
+
+  # What the outage does cost. The entry for the request above cannot be
+  # written, so it is dropped — and counted and named, because a journal that
+  # quietly lost entries would leave verification under-reporting with nothing
+  # anywhere saying why.
+  - metricsprobe: {series: mockulus_journal_dropped_total, at_least: 1, within: 60s}
+
+  - logprobe: {contains: "journal batch failed; entries dropped"}
+
+  - start_store: true
+
+  # Recording resumes on its own, with nothing restarted and no operator having
+  # intervened: the flusher buffers nothing across the outage, so there is no
+  # backlog to reconcile and no state to repair (§4.4).
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-journal-outage-001/after}
+    expect: {status: 200, body: "served"}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPath":"/e2e/cov-cb-journal-outage-001/after"}'
+    expect_eventually:
+      status: 200
+      within: 60s
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # Cleanup: the journal is deployment-wide and the stub is persistent, so both
+  # would otherwise be handed to whatever runs here next. The purge goes last,
+  # because the unmatched request below is recorded too.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000002-0000-4000-8000-000000000021}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-journal-outage-001/after}
+    expect: {status: 404}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}

@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-range-limit-001
+behaviors: [B-TPL-RANGE, B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL]
+# The ten-thousand-element limit is a mockulus safeguard; WireMock builds the
+# list until the heap runs out, so the refusal has no oracle answer. The
+# accepted side is the §10.3 contract and is differentially verified by
+# templating-range-001.
+wm: n/a
+steps:
+  # templating-range-001 pins what `range` produces from bounds a stub author
+  # wrote. Here the bounds come off the query string, which is the shape that
+  # matters for safety: the size of what the server allocates is chosen by the
+  # caller, and `range` allocates its whole list before the output cap ever
+  # sees a byte. The cap alone therefore does not protect this path — the
+  # element limit does, and it is the only thing standing between a mock
+  # deployment and one request that asks for a hundred million integers.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000070",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-range-limit-001/rows"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "rows=[{{#each (range request.query.from request.query.to)}}{{this}};{{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The control: bounds from the request, both ends inclusive.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/rows?from=3&to=5
+    expect: {status: 200, body: "rows=[3;4;5;]"}
+
+  # Bounds the wrong way round are an empty list, not an error and not a list
+  # counting downwards. A stub whose bounds come from a paging parameter meets
+  # this on the page after the last one, and the correct answer there is no
+  # rows.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/rows?from=5&to=3
+    expect: {status: 200, body: "rows=[]"}
+
+  # Each bound spoiled in turn: they are converted by separate calls, and a
+  # check on one of them only is a check that passes half the time.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/rows?from=a&to=5
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: '"a" is not a number'
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/rows?from=1&to=z
+    expect: {status: 500, body_regex: '"z" is not a number'}
+
+  # Only one bound. `range` with a single argument reads as "count to n" in
+  # several other template languages, so the one-argument form is a thing
+  # people write on purpose; it has to be refused rather than guessed at,
+  # because guessing the missing end means guessing how many rows the caller
+  # gets.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000071",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-range-limit-001/arity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{#each (range request.query.from)}}{{this}}{{/each}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/arity?from=3
+    expect:
+      status: 500
+      body_regex: 'range takes a lower and an upper bound'
+
+  # The limit itself, counted rather than rendered so the assertion is about
+  # the size of the list and not about ten thousand semicolons.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000072",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-range-limit-001/count"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "n={{size (range request.query.from request.query.to)}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Exactly at the limit, and it is served. The pair of steps below is what
+  # makes this a boundary rather than a threshold somewhere in the region of
+  # ten thousand: one more element is the difference between them, and an
+  # off-by-one in either direction fails one of the two.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/count?from=1&to=10000
+    expect: {status: 200, body: "n=10000"}
+
+  # And the same width starting from zero, so the limit is on how many
+  # elements were asked for rather than on how large the upper bound is.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/count?from=0&to=9999
+    expect: {status: 200, body: "n=10000"}
+
+  # One past it. The message carries both the request and the limit, because
+  # the operator reading it has to decide whether the template is wrong or the
+  # limit is too low, and cannot do that from either number alone.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/count?from=1&to=10001
+    expect:
+      status: 500
+      body_regex: 'range of 10001 exceeds the 10000 limit'
+
+  # The same bad bound, this time inside another helper's argument rather than
+  # a block's. A failing subexpression has to abandon the whole render there
+  # too: `size` handed a value it cannot count would otherwise report 0, and a
+  # rendered zero is a number the reader has no reason to doubt.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/count?from=a&to=5
+    expect: {status: 500, body_regex: '"a" is not a number'}
+
+  # The stub is not quarantined by having been driven past the limit: a caller
+  # who can disable a mock for everyone else by asking it for too much has
+  # found a denial of service of a different kind.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-range-limit-001/count?from=1&to=10000
+    expect: {status: 200, body: "n=10000"}
+
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}

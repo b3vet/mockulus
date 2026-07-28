@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminq-nearmiss-request-echo-001
+behaviors:
+  - B-ADMIN-NEAR-MISSES-REQUEST-POST
+  - B-ERR-1010
+# Deliberately the default variant, with no journal. `/near-misses/request` is
+# handed a request and ranks the stub mappings against it, so it has no journal
+# to consult — and the deployment anyone debugging a stub that will not match is
+# standing in front of is exactly the one that never turned journaling on.
+wm: n/a
+# n/a: near-miss scoring is outside the strict-compat surface by §6.8, and the
+# echoed document below is ours rather than WireMock's rendered diff text.
+steps:
+  # One stub, so the snapshot is never empty and the endpoint has something to
+  # rank. Which mapping ranks first is not this case's business — the listing is
+  # deployment-global and every other case's stubs are in it — so the
+  # assertions below are on the field every entry carries identically: the
+  # server's reading of the request that was described to it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000004-0000-4000-8000-000000000005",
+         "request":{"method":"GET","urlPath":"/e2e/cov-adminq-nearmiss-request-echo-001/orders"},
+         "response":{"status":200,"body":"orders"}}
+    expect: {status: 201}
+
+  # A description with nothing in it. The defaults are the contract: a client
+  # deserializing the echoed request expects a method, a URL and three maps, and
+  # `null` in any of them takes down the whole diagnostic rather than one field
+  # of it. `headers: {}` asserts the field is an object — a null would fail the
+  # comparison — which is the failure this defends against.
+  - admin: {method: POST, path: /__admin/near-misses/request, body: '{}'}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request:
+              method: GET
+              url: "/"
+              body: ""
+              headers: {}
+              cookies: {}
+              queryParams: {}
+
+  # A described URL carrying a repeated parameter, an empty value and an empty
+  # pair. The echo splits it the way a recorded journal entry carries a query —
+  # one `key`/`values` object per parameter — so a client can deserialize the
+  # echoed request with the same type it deserializes an entry with, rather than
+  # discovering that one of the two is a bare string.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request
+      body: '{"url":"/e2e/cov-adminq-nearmiss-request-echo-001/orders?channel=web&channel=mobile&&flag="}'
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request:
+              method: GET
+              url: "/e2e/cov-adminq-nearmiss-request-echo-001/orders?channel=web&channel=mobile&&flag="
+              queryParams:
+                channel: {key: channel, values: [web, mobile]}
+                flag: {key: flag, values: [""]}
+      # The empty pair between the two ampersands must not become a parameter of
+      # its own. A subset comparison would ignore an extra key, so the shape is
+      # pinned literally instead: Go serialises a map with its keys sorted, and
+      # a phantom "" would sort ahead of "channel" and break this.
+      body_regex: '"queryParams":\{"channel":\{"key":"channel","values":\["web","mobile"\]\},"flag":'
+
+  # The two endpoints that do need the journal say so on this same instance,
+  # which is what makes the 200s above a statement about this endpoint rather
+  # than about the variant. Answering them from the request endpoint instead
+  # would hand a caller a different question's answer in the body shape they
+  # asked for.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: '{"urlPath":"/e2e/cov-adminq-nearmiss-request-echo-001/orders"}'
+    expect:
+      status: 500
+      body_json_subset:
+        errors: [{code: 1010}]
+
+  - admin: {method: GET, path: /__admin/requests/unmatched/near-misses}
+    expect:
+      status: 500
+      body_json_subset:
+        errors: [{code: 1010}]
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000004-0000-4000-8000-000000000005}
+    expect: {status: 200}

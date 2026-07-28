@@ -1,0 +1,169 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-now-offsets-001
+behaviors: [B-TPL-NOW, B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL]
+# Two servers cannot render the same instant, so a clock has no differential
+# oracle. The expectations below are the §10.3 options asserted as shape, the
+# way templating-now-001 records them, and the refusals are mockulus's own
+# wording.
+wm: n/a
+steps:
+  # templating-now-001 pins the day, the year, two offsets in years and the
+  # two epoch spellings. The units in between are the ones a stub actually
+  # reaches for — an expiry an hour out, a token valid for ninety seconds —
+  # and each is a separate conversion that can be wired to the wrong constant.
+  #
+  # A short offset is invisible in any format coarse enough to assert on, so
+  # each unit here is given a count that adds up to roughly a century. That is
+  # what makes the assertion sharp: an hour read as a minute lands sixty times
+  # too close and renders a 20xx year, a second read as a minute lands in the
+  # fourth millennium BC. Only the right conversion puts all four in the
+  # 1900s.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000c0",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-now-offsets-001/units"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "sec={{now offset='-3155760000 seconds' format='yyyy'}} min={{now offset='-52596000 minutes' format='yyyy'}} hour={{now offset='-876600 hours' format='yyyy'}} month={{now offset='-1217 months' format='yyyy'}} ahead={{now offset='876600 hours' format='yyyy'}} iso={{now format='yyyy-MM-dd\\'T\\'HH:mm:ss'}} odd={{now format=\"yyyy'T\"}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `ahead` is the same count of hours with the sign flipped and lands in the
+  # 2100s, so an offset that was parsed and then applied unsigned — the common
+  # way to get this wrong — fails on one of the two.
+  #
+  # `iso` is the format string every recorded WireMock fixture carries, and it
+  # is here for the quoting rather than the date: the T is a quoted literal
+  # inside a quoted argument, so the escape has to survive the tokenizer and
+  # then be removed before the layout is read. A T that reached the formatter
+  # still quoted, or one that was treated as a pattern letter, renders
+  # something other than a plain "T" between the date and the time.
+  #
+  # `odd` is a format whose quote never closes. It cannot be a panic and it
+  # cannot swallow the rest of the response — the remainder is taken as
+  # literal text, which is the reading that loses the least.
+  - request: {method: GET, path: /e2e/cov-tmpl-now-offsets-001/units}
+    expect:
+      status: 200
+      body_regex: '^sec=19\d\d min=19\d\d hour=19\d\d month=19\d\d ahead=21\d\d iso=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d odd=20\d\dT$'
+
+  # The offset from the request, which is how a stub lets a caller ask for a
+  # token that expired yesterday. Every one of the three refusals below is
+  # therefore reachable by whoever is driving the mock.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000c1",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-now-offsets-001/offset"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{now offset=request.query.o format='yyyy'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The control. A zero offset is a legitimate one, so "renders the current
+  # year" here is what the three refusals are measured against.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/offset?o=0+days
+    expect:
+      status: 200
+      body_regex: '^x=20\d\d$'
+
+  # An offset with no unit at all. Guessing a unit is the tempting recovery
+  # and there is no safe guess: seconds and days differ by five orders of
+  # magnitude, and a token that expires in the wrong one fails a test suite
+  # somewhere far from here.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/offset?o=soon
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'offset "soon" should look like "3 days"'
+
+  # The right shape with an unusable count. It is a different message from the
+  # one above because it is a different fix — the caller has the unit right
+  # and the number wrong.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/offset?o=many+days
+    expect:
+      status: 500
+      body_regex: 'offset "many days" does not start with a number'
+
+  # A unit outside the set. Quoting it back is what tells the author whether
+  # they misspelled a supported unit or asked for one that does not exist.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/offset?o=3+fortnights
+    expect:
+      status: 500
+      body_regex: 'unknown offset unit "fortnights"'
+
+  # The offset computed by another helper rather than read straight off the
+  # request. A named argument is evaluated on its own path, so a failure
+  # inside one has its own chance to be swallowed — and an offset silently
+  # dropped renders the current time, which is a plausible answer to a
+  # question about an expiry that was meant to be in the past.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000c3",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-now-offsets-001/computed"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{now offset=(substring request.query.o request.query.k) format='yyyy'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/computed?o=0+days&k=0
+    expect:
+      status: 200
+      body_regex: '^x=20\d\d$'
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/computed?o=0+days&k=x
+    expect: {status: 500, body_regex: '"x" is not a number'}
+
+  # The timezone option, also from the request.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-0000000000c2",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-now-offsets-001/zone"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{now timezone=request.query.z format='XXX'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # A real zone whose offset from UTC is +10:00 or +11:00 depending on the
+  # season. A timezone that was accepted and ignored renders "Z" and fails
+  # this whatever the date.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/zone?z=Australia/Sydney
+    expect:
+      status: 200
+      body_regex: '^x=\+1[01]:00$'
+
+  # A zone that does not exist. Falling back to UTC would render a timestamp
+  # that is wrong by hours and looks entirely plausible — the worst kind of
+  # answer a mock clock can give.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-now-offsets-001/zone?z=Mars/Olympus
+    expect:
+      status: 500
+      body_regex: 'unknown timezone "Mars/Olympus"'
+
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}

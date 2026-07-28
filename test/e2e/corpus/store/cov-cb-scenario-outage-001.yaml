@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cb-scenario-outage-001
+behaviors:
+  - B-STUB-SCENARIONAME-REQUIREDSCENARIOSTATE-NEWSCENARIOSTATE
+  - B-ADMIN-SCENARIOS-GET
+  - B-ADMIN-SCENARIOS-NAME-STATE-PUT
+  - B-ADMIN-SCENARIOS-RESET-POST
+  - B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED
+  - B-ERR-1020
+# couchbase because a transition is a compare-and-swap against a shared
+# document, and the three writes it can make are three different store calls:
+# an insert when no state document exists yet, a replace at the CAS the read
+# returned, and an unconditional write for the admin endpoint that sets a state
+# outright (SPEC §9.3). The memory driver collapses all three into a map
+# assignment, so a walk on T1 exercises one of them at most.
+#
+# exclusive because the reset is deployment-wide and because the run's one
+# Couchbase is shared by every store deployment.
+requires: [couchbase, exclusive]
+# n/a: WireMock keeps scenario state in the process that serves it, so there is
+# no CAS, no shared document and no store to lose. The expectations come from
+# SPEC §9 and the §4.6 table.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000031",
+         "persistent": true,
+         "scenarioName":"cov-cb-scenario-outage-001",
+         "requiredScenarioState":"Started",
+         "newScenarioState":"ordered",
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-scenario-outage-001/order"},
+         "response":{"status":200,"body":"no order yet"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000032",
+         "persistent": true,
+         "scenarioName":"cov-cb-scenario-outage-001",
+         "requiredScenarioState":"ordered",
+         "newScenarioState":"shipped",
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-scenario-outage-001/order"},
+         "response":{"status":200,"body":"ordered"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000033",
+         "persistent": true,
+         "scenarioName":"cov-cb-scenario-outage-001",
+         "requiredScenarioState":"shipped",
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-scenario-outage-001/order"},
+         "response":{"status":200,"body":"shipped"}}
+    expect: {status: 201}
+
+  # The first transition of a scenario nobody has walked: there is no state
+  # document, so the write has to create one. A driver that only knew how to
+  # overwrite would fail here and leave the flow stuck on its first step.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-scenario-outage-001/order}
+    expect: {status: 200, body: "no order yet"}
+
+  # The second one moves a document that now exists, at the version the gate was
+  # checked at. Getting "no order yet" again would mean the first transition was
+  # acknowledged and lost.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-scenario-outage-001/order}
+    expect: {status: 200, body: "ordered"}
+
+  # And a stub with no newScenarioState leaves the flow where it is, which is
+  # what makes a terminal state terminal.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-scenario-outage-001/order}
+    expect: {status: 200, body: "shipped"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-scenario-outage-001/order}
+    expect: {status: 200, body: "shipped"}
+
+  # The listing reads the stored state and the possible states off the stubs
+  # that define them. Found by name, because the listing is deployment-wide.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {id: cov-cb-scenario-outage-001, name: cov-cb-scenario-outage-001, state: shipped}
+
+  # Setting a state directly is the unconditional write: no gate to re-check and
+  # no CAS to lose, because a suite that says "put this flow back at the start"
+  # is not racing anybody, it is overruling them.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/cov-cb-scenario-outage-001/state
+      body: '{"state":"ordered"}'
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: cov-cb-scenario-outage-001, state: ordered}
+
+  # The state the admin call wrote is the one matching reads, not merely the one
+  # the listing reports: a set that moved a document the request path does not
+  # consult would pass the step above and change nothing a test can see. This
+  # also walks the flow back to shipped for the outage below.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-scenario-outage-001/order}
+    expect: {status: 200, body: "ordered"}
+
+  - stop_store: true
+
+  # Scenario state is the one thing with no snapshot copy by design (§9.1), so
+  # every admin call that touches it stops with the store.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/cov-cb-scenario-outage-001/state
+      body: '{"state":"Started"}'
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # A reset is a bulk read followed by a removal per key, so it fails on the
+  # read rather than emptying part of the collection. A suite told 200 here
+  # would restart its flow from a state the deployment never went back to.
+  - admin: {method: POST, path: /__admin/scenarios/reset}
+    expect:
+      status: 503
+      body_json_subset:
+        errors: [{code: 1020}]
+
+  # What is *not* answered with 1020, and the reason it is worth a step: whether
+  # a scenario exists at all is decided against the compiled snapshot, before
+  # any store call is made. An unknown name is still a 404 with the store away,
+  # so a client's typo is named as a typo during an outage rather than being
+  # reported as a cluster problem it cannot fix.
+  - admin:
+      method: PUT
+      path: /__admin/scenarios/cov-cb-scenario-outage-001-typo/state
+      body: '{"state":"ordered"}'
+    expect: {status: 404}
+
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="list_scenarios"}', at_least: 1}
+
+  - start_store: true
+
+  # The listing answers again on its own, with nothing having restarted.
+  #
+  # What this case deliberately does not claim is that the flow is still where
+  # the last successful transition left it. Measured on this lane it is not: the
+  # state write refused above is still in flight when the request's budget runs
+  # out, and the server applies it once it is running again — so a call that
+  # answered 503 moves the scenario afterwards. A KV timeout is an ambiguous
+  # outcome by construction. The refusal this case can pin is the reset's, which
+  # fails on the bulk read that chooses the keys and therefore issues no removal
+  # at all; and the recovery worth asserting is the one a suite resuming after
+  # an outage actually performs — put the flow somewhere known, then walk it.
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect_eventually:
+      status: 200
+      within: 60s
+      body_json_contains:
+        - path: scenarios
+          match: {name: cov-cb-scenario-outage-001}
+
+  # The same call that was refused during the outage succeeds now, which is what
+  # makes that 503 a refusal rather than a failure the deployment carried
+  # forward. Every scenario reads back as Started once its document is gone.
+  - admin: {method: POST, path: /__admin/scenarios/reset}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect_eventually:
+      status: 200
+      within: 30s
+      body_json_contains:
+        - path: scenarios
+          match: {name: cov-cb-scenario-outage-001, state: Started}
+
+  # And transitions work again from there, with no state left over from the
+  # outage: the gate matches at Started and the write that advances it is taken.
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-scenario-outage-001/order}
+    expect: {status: 200, body: "no order yet"}
+
+  - admin: {method: GET, path: /__admin/scenarios}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: scenarios
+          match: {name: cov-cb-scenario-outage-001, state: ordered}
+
+  # Cleanup. The stubs are persistent so reset will not remove them, and the
+  # scenario only disappears when the last stub naming it does.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000002-0000-4000-8000-000000000031}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000002-0000-4000-8000-000000000032}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000002-0000-4000-8000-000000000033}
+    expect: {status: 200}
+
+  - admin: {method: POST, path: /__admin/scenarios/reset}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-scenario-outage-001/order}
+    expect: {status: 404}
