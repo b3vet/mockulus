@@ -82,13 +82,24 @@ spdx: ## Verify every mockulus-authored source file carries an SPDX header
 # what stops THIRD_PARTY_LICENSES from becoming a record that was true once.
 LICENSE_ALLOWLIST := Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC
 
+# Both halves resolve the graph for the platform that actually ships. A build
+# graph is per-GOOS, and `prometheus/client_golang` reaches `prometheus/procfs`
+# only on Linux — so a report generated on a developer's macOS omits an
+# Apache-2.0 dependency that is inside every image we publish, and the
+# attribution file is then wrong about the artifact rather than about the
+# working directory it was generated in.
+LICENSE_GOOS   := linux
+LICENSE_GOARCH := amd64
+
 .PHONY: license-check
 license-check: ## Verify every module in the shipped binary's graph is on the allowlist
-	go-licenses check ./cmd/... ./internal/... --allowed_licenses=$(LICENSE_ALLOWLIST)
+	GOOS=$(LICENSE_GOOS) GOARCH=$(LICENSE_GOARCH) \
+		go-licenses check ./cmd/... ./internal/... --allowed_licenses=$(LICENSE_ALLOWLIST)
 
 .PHONY: license-report
 license-report: ## Regenerate THIRD_PARTY_LICENSES from the module graph
-	go-licenses report ./cmd/mockulus --template=.github/licenses.tpl \
+	GOOS=$(LICENSE_GOOS) GOARCH=$(LICENSE_GOARCH) \
+		go-licenses report ./cmd/mockulus --template=.github/licenses.tpl \
 		--ignore $(MODULE) > THIRD_PARTY_LICENSES
 
 .PHONY: image
