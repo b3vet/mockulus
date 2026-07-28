@@ -3,6 +3,8 @@ id: scenario-admin-set-state-001
 behaviors:
   - B-ADMIN-SCENARIOS-NAME-STATE-PUT
   - B-ERR-1031
+  - B-DEV-DEVIATION-33
+  - B-DEV-DEVIATION-34
 # n/a: the statuses are §5.1's and the codes are Appendix B's. WireMock answers
 # an unsupported target state 422 with its own code 11, so the rejected halves
 # of this case cannot be diffed against it; the measurement is recorded in

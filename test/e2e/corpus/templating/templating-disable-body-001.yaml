@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: templating-disable-body-001
-behaviors: [B-RESP-TRANSFORMERPARAMETERS]
+behaviors: [B-RESP-TRANSFORMERPARAMETERS, B-DEV-DEVIATION-31]
 # n/a, and the reason is a measurement rather than a preference: pinned
 # WireMock 3.13.2 has no `disableBodyTemplating` parameter at all. Its
 # transformer reads one parameter, `disableBodyFileTemplating`, and that one

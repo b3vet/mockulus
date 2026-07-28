@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-multivalue-anyof-001
+behaviors: [B-DEV-DEVIATION-29, B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-QUERYPARAMETERS]
+# Deviation #29. Selection among the values of a repeated key is plain any-of
+# here: the criterion holds when any value satisfies it, and the others are not
+# consulted. WireMock picks the value at minimum edit distance and matches that
+# one instead, which answers differently when a key carries a near miss
+# alongside something the criterion accepts.
+#
+# `wm: n/a` because the two servers disagree by design. Reproducing WireMock
+# would put a distance computation on the matching hot path, against §16.3 rule
+# 1, to serve a corner that needs a multi-valued key *and* a sibling at non-zero
+# distance before it is observable at all.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de290001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-multivalue-anyof-001/tenant",
+                     "queryParameters": {"tenant": {"equalTo": "acme", "caseInsensitive": true}}},
+         "response": {"status": 200, "body": "tenant"}}
+    expect: {status: 201}
+
+  # The single-valued case, where the two servers agree and there is no
+  # selection to make. It is here so a failure below can be read as being about
+  # selection rather than about folding.
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-anyof-001/tenant?tenant=ACME"}
+    expect: {status: 200, body: "tenant"}
+
+  # The deviation. Two values, one of which the criterion accepts and one of
+  # which is a near miss. Any-of answers on the accepting value; a
+  # minimum-distance selection can land on the other one and refuse.
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-anyof-001/tenant?tenant=acmX&tenant=ACME"}
+    expect: {status: 200, body: "tenant"}
+
+  # And any-of is not "anything goes": with no accepting value the criterion
+  # still fails, which is what separates this from a criterion that stopped
+  # being evaluated.
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-anyof-001/tenant?tenant=acmX"}
+    expect: {status: 404}
+
+  # The same rule with an empty operand, which is the sharpest form of it: an
+  # empty string is at distance zero from an empty value and at distance zero
+  # from nothing else, so a distance-ranking implementation has no ordering to
+  # work with and WireMock refuses the request. Any-of has nothing to rank and
+  # simply finds the value that matches.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de290001-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-multivalue-anyof-001/blank",
+                     "queryParameters": {"x": {"equalTo": ""}}},
+         "response": {"status": 200, "body": "blank"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-anyof-001/blank?x="}
+    expect: {status: 200, body: "blank"}
+
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-anyof-001/blank?x=&x=v"}
+    expect: {status: 200, body: "blank"}
+
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-anyof-001/blank?x=v"}
+    expect: {status: 404}
