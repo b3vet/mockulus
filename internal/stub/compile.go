@@ -134,11 +134,16 @@ type ChunkedDribble struct {
 type CompiledResponse struct {
 	Status int
 	// StatusMessage is the HTTP/1.1 reason phrase, already encoded for the
-	// status line by reasonPhrase. Empty means the stub asked for none, and the
-	// canonical phrase for the status code is sent instead. HTTP/2 has no such
-	// field, so it is dropped there (SPEC §5.5 deviation #7).
+	// status line by reasonPhrase. HTTP/2 has no such field, so it is dropped
+	// there (SPEC §5.5 deviation #7).
 	StatusMessage string
-	Headers       []Header
+	// HasStatusMessage records that the key was present, which is not the same
+	// question as whether StatusMessage is empty. `"statusMessage": ""` asks
+	// for a blank reason phrase — HTTP/1.1 allows one, and WireMock sends it —
+	// where an omitted key asks for the canonical phrase for the status code.
+	// Reading the empty string as "unset" answered the first with the second.
+	HasStatusMessage bool
+	Headers          []Header
 	// Body is the response body in wire form, resolved at compile or snapshot
 	// build time so the request path never reads a file (P1).
 	Body []byte
