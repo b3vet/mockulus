@@ -17,7 +17,7 @@ var benchTemplateBody = []byte(`{"amount":1299,"currency":"EUR","card":{"brand":
 // BenchmarkBuildContext is the per-request cost of assembling the model of
 // SPEC §10.2, which a templated stub pays before a single node is rendered.
 func BenchmarkBuildContext(b *testing.B) {
-	req := httptest.NewRequest("POST", "/api/v2/payments/000509/authorize?trace=abc123",
+	req := httptest.NewRequestWithContext(b.Context(), "POST", "/api/v2/payments/000509/authorize?trace=abc123",
 		strings.NewReader(string(benchTemplateBody)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -43,7 +43,7 @@ func BenchmarkBuildContextLargeBody(b *testing.B) {
 	for i := range body {
 		body[i] = byte('a' + i%26)
 	}
-	req := httptest.NewRequest("POST", "/api/v2/payments/000509/authorize", nil)
+	req := httptest.NewRequestWithContext(b.Context(), "POST", "/api/v2/payments/000509/authorize", nil)
 	req.Header.Set("Content-Type", "application/json")
 
 	b.ReportAllocs()
@@ -64,7 +64,8 @@ func BenchmarkRenderTemplated(b *testing.B) {
 		b.Fatalf("compile: %v", err)
 	}
 
-	req := httptest.NewRequest("POST", "/api/v2/payments/000509/authorize", strings.NewReader(string(benchTemplateBody)))
+	req := httptest.NewRequestWithContext(b.Context(), "POST", "/api/v2/payments/000509/authorize",
+		strings.NewReader(string(benchTemplateBody)))
 	req.Header.Set("Content-Type", "application/json")
 
 	b.ReportAllocs()

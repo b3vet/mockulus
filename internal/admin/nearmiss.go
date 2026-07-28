@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,7 @@ func (h *Handler) nearMissesForRequest(w http.ResponseWriter, r *http.Request) {
 	echoed := describedRequestDoc(desc)
 
 	out := make([]map[string]any, 0, wmcompat.NearMissCount)
-	for _, miss := range scoreAgainstSnapshot(snap, desc) {
+	for _, miss := range scoreAgainstSnapshot(r.Context(), snap, desc) {
 		out = append(out, map[string]any{
 			"request":     echoed,
 			"stubMapping": stubDocument(snap, miss.StubID),
@@ -107,7 +108,7 @@ func (h *Handler) nearMissesForPattern(w http.ResponseWriter, r *http.Request) {
 		e := &events[i]
 		scored = append(scored, patternMiss{
 			event: e,
-			miss:  scoreOne(pattern.stub, recordedRequestDesc(e)),
+			miss:  scoreOne(r.Context(), pattern.stub, recordedRequestDesc(e)),
 		})
 	}
 	rankPatternMisses(scored)
@@ -151,7 +152,7 @@ func (h *Handler) unmatchedNearMisses(w http.ResponseWriter, r *http.Request) {
 		if e.Matched {
 			continue
 		}
-		for _, miss := range scoreAgainstSnapshot(snap, recordedRequestDesc(e)) {
+		for _, miss := range scoreAgainstSnapshot(r.Context(), snap, recordedRequestDesc(e)) {
 			out = append(out, map[string]any{
 				"request":     e.RequestRaw,
 				"stubMapping": stubDocument(snap, miss.StubID),
@@ -266,15 +267,15 @@ func flattenRecorded(source map[string]any) map[string]string {
 }
 
 // scoreAgainstSnapshot ranks the snapshot's stubs against a described request.
-func scoreAgainstSnapshot(snap *match.Snapshot, desc nearMissRequest) []wmcompat.NearMiss {
-	pr, release := parseDescribed(desc)
+func scoreAgainstSnapshot(ctx context.Context, snap *match.Snapshot, desc nearMissRequest) []wmcompat.NearMiss {
+	pr, release := parseDescribed(ctx, desc)
 	defer release()
 	return snap.NearMisses(pr, wmcompat.NearMissCount)
 }
 
 // scoreOne measures a single compiled pattern against a described request.
-func scoreOne(cs *stub.CompiledStub, desc nearMissRequest) wmcompat.NearMiss {
-	pr, release := parseDescribed(desc)
+func scoreOne(ctx context.Context, cs *stub.CompiledStub, desc nearMissRequest) wmcompat.NearMiss {
+	pr, release := parseDescribed(ctx, desc)
 	defer release()
 	return match.ScoreRequest(cs, pr)
 }
@@ -284,9 +285,11 @@ func scoreOne(cs *stub.CompiledStub, desc nearMissRequest) wmcompat.NearMiss {
 // A synthetic http.Request is constructed rather than a parallel parsing path,
 // so the near-miss answer is computed by exactly the machinery that decides a
 // real match — a diagnostic that disagreed with the matcher would be worse than
-// none.
-func parseDescribed(desc nearMissRequest) (*match.ParsedRequest, func()) {
-	req := httptest.NewRequest(defaultMethod(desc.Method), defaultURL(desc.URL),
+// none. It carries the admin call's context for the same reason: the scoring is
+// work done on behalf of that one caller, and nothing it reaches should outlive
+// them.
+func parseDescribed(ctx context.Context, desc nearMissRequest) (*match.ParsedRequest, func()) {
+	req := httptest.NewRequestWithContext(ctx, defaultMethod(desc.Method), defaultURL(desc.URL),
 		strings.NewReader(desc.Body))
 	for name, value := range desc.Headers {
 		req.Header.Set(name, value)
@@ -332,17 +335,20 @@ func queryParamsOf(url string) map[string]any {
 	if i < 0 {
 		return out
 	}
+	// The values are gathered per name first and wrapped afterwards, so a
+	// repeated parameter accumulates into a slice this function still holds by
+	// its own type rather than one it has to recover out of the document it is
+	// building.
+	values := map[string][]string{}
 	for _, pair := range strings.Split(url[i+1:], "&") {
 		if pair == "" {
 			continue
 		}
 		name, value, _ := strings.Cut(pair, "=")
-		entry, repeated := out[name].(map[string]any)
-		if !repeated {
-			out[name] = map[string]any{"key": name, "values": []string{value}}
-			continue
-		}
-		entry["values"] = append(entry["values"].([]string), value)
+		values[name] = append(values[name], value)
+	}
+	for name, vs := range values {
+		out[name] = map[string]any{"key": name, "values": vs}
 	}
 	return out
 }

@@ -111,7 +111,7 @@ func run() error {
 	// restarts — over and over, into a backoff that outlasts the outage it was
 	// reacting to. Binding first means the pod can say "alive, not ready" for
 	// as long as it takes. The admin API is installed once it has a store.
-	if err := srv.StartAdmin(); err != nil {
+	if err = srv.StartAdmin(); err != nil {
 		return err
 	}
 

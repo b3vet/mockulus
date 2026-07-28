@@ -3,6 +3,7 @@
 package jsonpath
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,7 +36,7 @@ type term struct {
 // parseFilter compiles the inside of ?( ).
 func parseFilter(src string) (*filter, error) {
 	if src == "" {
-		return nil, fmt.Errorf("empty filter expression")
+		return nil, errors.New("empty filter expression")
 	}
 
 	f := &filter{}
@@ -49,7 +50,7 @@ func parseFilter(src string) (*filter, error) {
 			conj = append(conj, t)
 		}
 		if len(conj) == 0 {
-			return nil, fmt.Errorf("empty filter clause")
+			return nil, errors.New("empty filter clause")
 		}
 		f.or = append(f.or, conj)
 	}

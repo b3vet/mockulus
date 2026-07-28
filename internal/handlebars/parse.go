@@ -21,6 +21,7 @@
 package handlebars
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -266,7 +267,7 @@ func parseExpression(src string) (*Expression, error) {
 		return nil, err
 	}
 	if len(tokens) == 0 {
-		return nil, fmt.Errorf("empty expression")
+		return nil, errors.New("empty expression")
 	}
 
 	// A single token is a bare path or literal, never a helper call.
@@ -317,7 +318,7 @@ func splitHashArg(tok string) (key, value string, isHash bool) {
 
 func parseOperand(tok string) (*Expression, error) {
 	if tok == "" {
-		return nil, fmt.Errorf("empty operand")
+		return nil, errors.New("empty operand")
 	}
 	// A subexpression: {{#each (range 1 3)}} passes one helper's result to
 	// another, which is how Handlebars composes without temporaries.
@@ -449,7 +450,7 @@ func tokenizeArgs(src string) ([]string, error) {
 		}
 	}
 	if quote != 0 {
-		return nil, fmt.Errorf("unterminated quoted argument")
+		return nil, errors.New("unterminated quoted argument")
 	}
 	flush()
 	return tokens, nil

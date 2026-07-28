@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -132,7 +133,7 @@ func (e *Executor) runStep(ctx context.Context, c *Case, dep *Deployment, step S
 	case step.Admin != nil:
 		return e.httpStep(ctx, c, dep, step, step.Admin, portAdmin, res)
 	}
-	return fmt.Errorf("step carries no action")
+	return errors.New("step carries no action")
 }
 
 // storeStep takes the run's store away or gives it back (SPEC §4.6).
@@ -143,7 +144,7 @@ func (e *Executor) runStep(ctx context.Context, c *Case, dep *Deployment, step S
 // Docker, which is the harness' side of P2.
 func (e *Executor) storeStep(ctx context.Context, running bool) error {
 	if e.pool == nil {
-		return fmt.Errorf("stop_store needs the run's container lane, which this executor has none of")
+		return errors.New("stop_store needs the run's container lane, which this executor has none of")
 	}
 	cb, err := e.pool.couchbaseLane(ctx)
 	if err != nil {
@@ -211,16 +212,27 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, dep *Deployment,
 		expect, eventually = step.ExpectEventually, true
 	}
 	if expect == nil {
-		return fmt.Errorf("an http step must carry expect or expect_eventually")
+		return errors.New("an http step must carry expect or expect_eventually")
+	}
+
+	// The polling window is read up front rather than beside the loop that uses
+	// it: a malformed `within` is a defect in the case, and the case should fail
+	// on that rather than on whatever the first attempt happens to return.
+	var window time.Duration
+	if eventually {
+		window, err = expect.WithinDuration()
+		if err != nil {
+			return fmt.Errorf("within: %w", err)
+		}
 	}
 
 	var ourResponse *NormalizedResponse
 
-	do := func() (string, error) {
+	do := func() error {
 		req, err := http.NewRequestWithContext(ctx, strings.ToUpper(hs.Method), base+hs.Path,
 			strings.NewReader(body))
 		if err != nil {
-			return "", err
+			return err
 		}
 		for k, v := range hs.Headers {
 			if v == "" {
@@ -241,12 +253,12 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, dep *Deployment,
 
 		resp, err := dep.Client().Do(req)
 		if err != nil {
-			return "", err
+			return err
 		}
 		defer func() { _ = resp.Body.Close() }()
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return "", err
+			return err
 		}
 
 		res.Transcript = append(res.Transcript, fmt.Sprintf("%s %s -> %d\n%s",
@@ -256,28 +268,23 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, dep *Deployment,
 		// second copy of the answer would change the server's state.
 		ourResponse = Normalize(resp, respBody)
 
-		return "", assertResponse(expect, resp, respBody)
+		return assertResponse(expect, resp, respBody)
 	}
 
 	if !eventually {
-		if _, err := do(); err != nil {
+		if err := do(); err != nil {
 			return err
 		}
 		return e.diffAgainstOracle(ctx, c, hs, body, ourResponse, port == portMock, res)
 	}
 
-	window, err := expect.WithinDuration()
-	if err != nil {
-		return fmt.Errorf("within: %w", err)
-	}
 	// Bounded polling, never a bare sleep (SPEC §19.1 zero-flake policy).
 	deadline := time.Now().Add(window)
 	var last error
 	for {
-		if _, err := do(); err == nil {
+		last = do()
+		if last == nil {
 			return nil
-		} else {
-			last = err
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("not satisfied within %s: %w", window, last)
@@ -346,7 +353,7 @@ func (e *Executor) body(hs *HTTPStep) (string, error) {
 		return hs.Body, nil
 	}
 	if hs.Body != "" {
-		return "", fmt.Errorf("a step may set body or body_file, not both")
+		return "", errors.New("a step may set body or body_file, not both")
 	}
 	data, err := os.ReadFile(filepath.Join(e.corpusDir, hs.BodyFile))
 	if err != nil {
@@ -429,7 +436,7 @@ func reasonPhraseOf(status string) string {
 func assertJSONEqual(want any, body []byte) error {
 	var got any
 	if err := json.Unmarshal(body, &got); err != nil {
-		return fmt.Errorf("response is not JSON: %v", err)
+		return fmt.Errorf("response is not JSON: %w", err)
 	}
 	wantNorm := normalizeYAMLValue(want)
 	if !reflect.DeepEqual(got, wantNorm) {
@@ -445,7 +452,7 @@ func assertJSONEqual(want any, body []byte) error {
 func assertJSONSubset(want any, body []byte) error {
 	var got any
 	if err := json.Unmarshal(body, &got); err != nil {
-		return fmt.Errorf("response is not JSON: %v", err)
+		return fmt.Errorf("response is not JSON: %w", err)
 	}
 	return jsonSubset(normalizeYAMLValue(want), got, "$")
 }
@@ -460,7 +467,7 @@ func assertJSONSubset(want any, body []byte) error {
 func assertJSONContains(want JSONContains, body []byte) error {
 	var doc any
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return fmt.Errorf("response is not JSON: %v", err)
+		return fmt.Errorf("response is not JSON: %w", err)
 	}
 	node, err := jsonLookup(doc, want.Path)
 	if err != nil {
@@ -807,7 +814,7 @@ func matchLogs(logs []string, probe *LogProbe) error {
 		}
 		return fmt.Errorf("logs: no JSON line carries %v", probe.JSONFields)
 	}
-	return fmt.Errorf("logprobe carries no assertion")
+	return errors.New("logprobe carries no assertion")
 }
 
 func matchesFields(entry map[string]any, want map[string]string) bool {

@@ -164,7 +164,7 @@ func TestTheDocumentIsInTheSDKsOwnEncoding(t *testing.T) {
 	}
 
 	state := gocb.NewMutationState()
-	if err := json.Unmarshal(doc, state); err != nil {
+	if err = json.Unmarshal(doc, state); err != nil {
 		t.Fatalf("the SDK could not read its own encoding back: %v", err)
 	}
 	back, err := state.MarshalJSON()
@@ -222,7 +222,7 @@ func TestAHighUUIDStillReachesTheScanRequirement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if err := json.Unmarshal(naive, gocb.NewMutationState()); err == nil {
+	if err = json.Unmarshal(naive, gocb.NewMutationState()); err == nil {
 		t.Fatal("the SDK now reads an unsigned UUID; the two renderings can collapse into one")
 	}
 

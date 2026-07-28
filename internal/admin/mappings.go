@@ -124,7 +124,7 @@ func (h *Handler) listMappings(w http.ResponseWriter, r *http.Request) {
 
 	mappings := make([]json.RawMessage, 0, len(page))
 	for _, cs := range page {
-		mappings = append(mappings, json.RawMessage(cs.Raw))
+		mappings = append(mappings, cs.Raw)
 	}
 
 	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
@@ -137,7 +137,7 @@ func (h *Handler) listMappings(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getMapping(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if cs, ok := h.engine.Snapshot().ByID(id); ok {
-		wmcompat.WriteJSON(w, http.StatusOK, json.RawMessage(cs.Raw))
+		wmcompat.WriteJSON(w, http.StatusOK, cs.Raw)
 		return
 	}
 
@@ -152,7 +152,7 @@ func (h *Handler) getMapping(w http.ResponseWriter, r *http.Request) {
 		h.storeError(w, "get_stub", err)
 		return
 	}
-	wmcompat.WriteJSON(w, http.StatusOK, json.RawMessage(stored.Mapping))
+	wmcompat.WriteJSON(w, http.StatusOK, stored.Mapping)
 }
 
 // deleteMapping removes one stub.

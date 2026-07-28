@@ -148,9 +148,9 @@ func firstValue(values []string) string {
 }
 
 func truncateBody(body []byte) string {
-	const max = 200
-	if len(body) > max {
-		return string(body[:max]) + "…"
+	const maxBytes = 200
+	if len(body) > maxBytes {
+		return string(body[:maxBytes]) + "…"
 	}
 	return string(body)
 }

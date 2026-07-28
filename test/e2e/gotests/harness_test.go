@@ -11,6 +11,7 @@ package gotests
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -58,7 +59,12 @@ func mockulusBinary(t *testing.T) string {
 		}
 		buildPath = filepath.Join(buildDir, "mockulus")
 		// `go test` runs with the package directory as its working directory.
-		cmd := exec.Command("go", "build", "-o", buildPath, "./cmd/mockulus")
+		// The binary is built once and used by every case, so the build is not
+		// bound to the context of whichever case happened to ask for it first:
+		// that case being cancelled would be recorded here as a build failure,
+		// and every case after it would fail for a reason belonging to a test it
+		// never ran in.
+		cmd := exec.CommandContext(context.Background(), "go", "build", "-o", buildPath, "./cmd/mockulus")
 		cmd.Dir = filepath.Join("..", "..", "..")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build mockulus: %w\n%s", err, out)
@@ -116,7 +122,12 @@ func start(t *testing.T, env map[string]string) *mockulus {
 func launch(t *testing.T, env map[string]string) *mockulus {
 	t.Helper()
 
-	cmd := exec.Command(mockulusBinary(t))
+	// The child is deliberately not tied to the test's context. That context is
+	// cancelled before the cleanups run, so binding the process to it would kill
+	// it outright before stop() ever got to signal: every instance in the package
+	// would go by SIGKILL, taking with it the lines it writes on the way out —
+	// which are where a failure to shut down explains itself.
+	cmd := exec.CommandContext(context.Background(), mockulusBinary(t))
 	cmd.Env = append(os.Environ(),
 		"MOCKULUS_PORT=0",
 		"MOCKULUS_ADMIN_PORT=0",
@@ -256,7 +267,7 @@ func (m *mockulus) waitReady(t *testing.T) {
 		default:
 		}
 
-		resp, err := harnessClient.Get(m.adminURL("/readyz"))
+		resp, err := httpGet(t.Context(), harnessClient, m.adminURL("/readyz"))
 		if err == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
@@ -274,6 +285,28 @@ func (m *mockulus) waitReady(t *testing.T) {
 // live here.
 var harnessClient = &http.Client{Timeout: 30 * time.Second}
 
+// httpGet and httpPost do what (*http.Client).Get and .Post do, with the
+// caller's context carried on the request. These cases poll processes that are
+// on their way out, and a request left in flight by a case that has already
+// finished would go on holding a connection open against an instance nobody is
+// watching any more; the context is what ends it alongside its test.
+func httpGet(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(req)
+}
+
+func httpPost(ctx context.Context, client *http.Client, url, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return client.Do(req)
+}
+
 // mockURL and adminURL address the two listeners.
 func (m *mockulus) mockURL(path string) string  { return "http://" + m.mockAddr + path }
 func (m *mockulus) adminURL(path string) string { return "http://" + m.adminAddr + path }
@@ -284,7 +317,7 @@ func (m *mockulus) adminURL(path string) string { return "http://" + m.adminAddr
 func (m *mockulus) registerStub(t *testing.T, mapping string) {
 	t.Helper()
 
-	resp, err := harnessClient.Post(m.adminURL("/__admin/mappings"),
+	resp, err := httpPost(t.Context(), harnessClient, m.adminURL("/__admin/mappings"),
 		"application/json", strings.NewReader(mapping))
 	if err != nil {
 		t.Fatalf("register stub: %v", err)

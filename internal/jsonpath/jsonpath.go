@@ -19,6 +19,7 @@
 package jsonpath
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -130,10 +131,10 @@ const (
 func Compile(expr string) (*Path, error) {
 	src := strings.TrimSpace(expr)
 	if src == "" {
-		return nil, fmt.Errorf("empty JSONPath expression")
+		return nil, errors.New("empty JSONPath expression")
 	}
 	if !strings.HasPrefix(src, "$") {
-		return nil, fmt.Errorf("a JSONPath expression must start with $")
+		return nil, errors.New("a JSONPath expression must start with $")
 	}
 
 	p := &Path{Source: expr, definite: true}
@@ -212,7 +213,7 @@ func readName(s string) (name, rest string, err error) {
 		i++
 	}
 	if i == 0 {
-		return "", "", fmt.Errorf("empty path segment")
+		return "", "", errors.New("empty path segment")
 	}
 	return s[:i], s[i:], nil
 }
@@ -251,7 +252,7 @@ func parseBracket(inner string) (step, bool, error) {
 
 	case strings.HasPrefix(inner, "?("):
 		if !strings.HasSuffix(inner, ")") {
-			return step{}, false, fmt.Errorf("unclosed filter expression")
+			return step{}, false, errors.New("unclosed filter expression")
 		}
 		f, err := parseFilter(strings.TrimSpace(inner[2 : len(inner)-1]))
 		if err != nil {
@@ -262,7 +263,7 @@ func parseBracket(inner string) (step, bool, error) {
 	case len(inner) >= 2 && (inner[0] == '\'' || inner[0] == '"'):
 		q := inner[0]
 		if inner[len(inner)-1] != q {
-			return step{}, false, fmt.Errorf("unterminated quoted key")
+			return step{}, false, errors.New("unterminated quoted key")
 		}
 		return step{kind: stepChild, name: inner[1 : len(inner)-1]}, false, nil
 

@@ -23,6 +23,7 @@
 package match
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 )
@@ -57,7 +58,7 @@ func TestJSONPathBodyAllocBudget(t *testing.T) {
 
 	result := testing.Benchmark(func(b *testing.B) {
 		snap := mixedSnapshot(b, 1000)
-		req := httptest.NewRequest("POST", jsonPath(509), nil)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", jsonPath(509), nil)
 		body := []byte(benchJSONBody)
 
 		b.ReportAllocs()

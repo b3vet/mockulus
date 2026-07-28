@@ -287,11 +287,11 @@ func NewEntry(cfg Config, r *http.Request, body []byte, matched *stub.CompiledSt
 }
 
 // capBody truncates a recorded body to the configured cap.
-func capBody(body []byte, max int) ([]byte, bool) {
-	if max <= 0 || len(body) <= max {
+func capBody(body []byte, limit int) ([]byte, bool) {
+	if limit <= 0 || len(body) <= limit {
 		return body, false
 	}
-	return body[:max], true
+	return body[:limit], true
 }
 
 func absoluteURL(r *http.Request) string {

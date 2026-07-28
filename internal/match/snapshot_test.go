@@ -3,6 +3,7 @@
 package match
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -39,7 +40,7 @@ func mustCompile(t *testing.T, seq uint64, id, doc string) *stub.CompiledStub {
 // or "" when nothing matched.
 func match(t *testing.T, snap *Snapshot, method, target string, body string, headers map[string]string) string {
 	t.Helper()
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
 	for k, v := range headers {
 		req.Header.Add(k, v)
 	}
@@ -383,7 +384,7 @@ func TestBasicAuthAcceptsAnyOfSeveralAuthorizationHeaders(t *testing.T) {
 
 	matchValues := func(values ...string) string {
 		t.Helper()
-		req := httptest.NewRequest("GET", "/secure", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "/secure", nil)
 		for _, v := range values {
 			req.Header.Add("Authorization", v)
 		}
@@ -529,7 +530,7 @@ func TestScenarioGateSkipsAndContinues(t *testing.T) {
 		mustCompile(t, 1, "plain", `{"request":{"urlPath":"/g"},"response":{}}`),
 	}, 1)
 
-	req := httptest.NewRequest("GET", "/g", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/g", nil)
 	pr := AcquireRequest(req, nil)
 	defer ReleaseRequest(pr)
 
@@ -591,7 +592,7 @@ func TestCandidateCountReflectsWork(t *testing.T) {
 		mustCompile(t, 3, "c", `{"priority":3,"request":{"urlPath":"/c"},"response":{}}`),
 	}, 1)
 
-	req := httptest.NewRequest("GET", "/c", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/c", nil)
 	pr := AcquireRequest(req, nil)
 	defer ReleaseRequest(pr)
 
@@ -619,7 +620,7 @@ func BenchmarkMatchExactURL(b *testing.B) {
 	}
 	snap := BuildSnapshot(stubs, 1)
 
-	req := httptest.NewRequest("GET", "/api/resource/500", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/resource/500", nil)
 
 	b.ReportAllocs()
 	b.ResetTimer()

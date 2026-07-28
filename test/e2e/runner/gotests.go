@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,7 +81,7 @@ func LoadGoTests(dir string) ([]*GoTest, error) {
 	}
 
 	var m GoTestManifest
-	if err := yaml.Unmarshal(data, &m); err != nil {
+	if err = yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifestPath, err)
 	}
 
@@ -161,9 +162,14 @@ const goTestTimeout = 5 * time.Minute
 //
 // The package is compiled and run once rather than per test: these tests start
 // real processes, and paying the build cost per entry would dominate.
-func RunGoTests(dir, binary string, tests []*GoTest) ([]*Result, error) {
+//
+// A suite that fails to build, or to run at all, comes back through the results
+// rather than as an error: every entry is then a failure carrying the reason,
+// which is what the coverage gates and the artifact matrix have to see. An
+// unproven behavior is a failed case, not a silent one.
+func RunGoTests(dir, binary string, tests []*GoTest) []*Result {
 	if len(tests) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	names := make([]string, 0, len(tests))
@@ -171,7 +177,10 @@ func RunGoTests(dir, binary string, tests []*GoTest) ([]*Result, error) {
 		names = append(names, regexp.QuoteMeta(t.Entry.Name))
 	}
 
-	cmd := exec.Command("go", "test", "-json",
+	// The suite bounds itself with -timeout, which is what turns a hung test
+	// into a failed one carrying its stack: killing the process from out here
+	// instead would leave the gate with no reason to report.
+	cmd := exec.CommandContext(context.Background(), "go", "test", "-json",
 		"-timeout", goTestTimeout.String(),
 		"-run", "^("+strings.Join(names, "|")+")$",
 		"./"+filepath.ToSlash(dir))
@@ -208,7 +217,7 @@ func RunGoTests(dir, binary string, tests []*GoTest) ([]*Result, error) {
 		}
 		results = append(results, res)
 	}
-	return results, nil
+	return results
 }
 
 func goTestStderr(err error) string {

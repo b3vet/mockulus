@@ -3,6 +3,7 @@
 package gotests
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -146,7 +147,7 @@ func TestTLSMockPortServesTLSAndAdminStaysCleartext(t *testing.T) {
 	  "response": {"status": 200, "body": "world"}
 	}`)
 
-	resp, err := fixture.client(t).Get("https://" + m.mockAddr + "/e2e/gotests-tls/hello")
+	resp, err := httpGet(t.Context(), fixture.client(t), "https://"+m.mockAddr+"/e2e/gotests-tls/hello")
 	if err != nil {
 		t.Fatalf("https request to the mock port: %v\n%s", err, strings.Join(m.logs(), "\n"))
 	}
@@ -173,14 +174,14 @@ func TestTLSMockPortServesTLSAndAdminStaysCleartext(t *testing.T) {
 
 	// The admin listener stays cleartext (SPEC §12.1): only the mock port is
 	// TLS-wrapped.
-	status, _, err := plainGet(m.adminURL("/readyz"))
+	status, _, err := plainGet(t.Context(), m.adminURL("/readyz"))
 	if err != nil {
 		t.Fatalf("cleartext request to the admin port: %v", err)
 	}
 	if status != http.StatusOK {
 		t.Errorf("admin /readyz over cleartext: status %d, want 200", status)
 	}
-	if status, _, err := plainGet(m.adminURL("/__admin/mappings")); err != nil || status != http.StatusOK {
+	if status, _, err := plainGet(t.Context(), m.adminURL("/__admin/mappings")); err != nil || status != http.StatusOK {
 		t.Errorf("admin API over cleartext: status %d, err %v; want 200", status, err)
 	}
 }
@@ -200,7 +201,7 @@ func TestTLSMockPortRefusesCleartext(t *testing.T) {
 	// dropping it, because it can read the verb out of the failed handshake.
 	// Either shape is fail-closed; what must never happen is the stub being
 	// served, which would mean the listener was not wrapped at all.
-	status, body, err := plainGet("http://" + m.mockAddr + "/e2e/gotests-tls-cleartext/hello")
+	status, body, err := plainGet(t.Context(), "http://"+m.mockAddr+"/e2e/gotests-tls-cleartext/hello")
 	switch {
 	case err != nil:
 		// The handshake failed outright and nothing was served.
@@ -293,8 +294,8 @@ func TestTLSMisconfigurationRefusesToStart(t *testing.T) {
 
 // plainGet issues a request with no TLS configuration of any kind, which is how
 // the cleartext assertions stay honest.
-func plainGet(url string) (int, string, error) {
-	resp, err := harnessClient.Get(url)
+func plainGet(ctx context.Context, url string) (int, string, error) {
+	resp, err := httpGet(ctx, harnessClient, url)
 	if err != nil {
 		return 0, "", err
 	}

@@ -87,19 +87,7 @@ func run() error {
 	}
 
 	if opt.generate != "" {
-		skeletons, err := catalog.Generate(spec)
-		if err != nil {
-			return err
-		}
-		if len(skeletons) == 0 {
-			fmt.Println("catalog is complete: every spec row has an entry")
-			return nil
-		}
-		if err := WriteGenerated(opt.generate, skeletons); err != nil {
-			return err
-		}
-		fmt.Printf("wrote %d skeleton entries to %s\n", len(skeletons), opt.generate)
-		return nil
+		return generateSkeletons(catalog, spec, opt.generate)
 	}
 
 	var failures []string
@@ -145,11 +133,7 @@ func run() error {
 		// The Go-native results join the corpus results before any gate runs, so
 		// coverage, failure reporting and the artifact matrix see one suite.
 		if opt.filter == "" {
-			goResults, err := RunGoTests(opt.gotests, binary, gotests)
-			if err != nil {
-				return err
-			}
-			results = append(results, goResults...)
+			results = append(results, RunGoTests(opt.gotests, binary, gotests)...)
 		}
 		if problems := coverageGates(catalog, results); len(problems) > 0 {
 			failures = append(failures, section("behavior coverage gates failed", problems))
@@ -172,6 +156,27 @@ func run() error {
 
 func report(failures []string) error {
 	return fmt.Errorf("gate failed\n\n%s", strings.Join(failures, "\n"))
+}
+
+// generateSkeletons writes a catalog entry for every spec row that has none.
+//
+// It is the whole of the --generate mode: the run stops here rather than going
+// on to execute, because the entries it just wrote are unfilled and a gate run
+// against them would report coverage nobody has written yet.
+func generateSkeletons(catalog *Catalog, spec *specDoc, path string) error {
+	skeletons, err := catalog.Generate(spec)
+	if err != nil {
+		return err
+	}
+	if len(skeletons) == 0 {
+		fmt.Println("catalog is complete: every spec row has an entry")
+		return nil
+	}
+	if err := WriteGenerated(path, skeletons); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %d skeleton entries to %s\n", len(skeletons), path)
+	return nil
 }
 
 func section(title string, problems []string) string {
@@ -349,7 +354,7 @@ func resolveBinary(path string) (string, error) {
 	}
 
 	out := filepath.Join(os.TempDir(), fmt.Sprintf("mockulus-e2e-%d", os.Getpid()))
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/mockulus")
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-o", out, "./cmd/mockulus")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("build mockulus for the gate: %w", err)

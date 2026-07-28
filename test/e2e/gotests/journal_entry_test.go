@@ -139,7 +139,7 @@ func (m *mockulus) statusOf(t *testing.T, method, path string, want int) {
 func (m *mockulus) admin(t *testing.T, method, path string, want int, into any) {
 	t.Helper()
 
-	req, err := http.NewRequest(method, m.adminURL(path), nil)
+	req, err := http.NewRequestWithContext(t.Context(), method, m.adminURL(path), nil)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}

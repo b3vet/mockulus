@@ -59,7 +59,7 @@ var scanBodies = []string{
 	// Strings and keys the decoder rewrites rather than copies.
 	`{"v":"a\"b"}`, `{"v":"A"}`, `{"v":"😀"}`, `{"v":"\ud800"}`,
 	`{"v":"\\"}`, `{"v":"a\/b"}`, `{"v":"line\nbreak"}`,
-	`{"v":"ünïcøde"}`, "{\"v\":\"\"}",
+	`{"v":"ünïcøde"}`, "{\"v\":\"\x7f\"}",
 	`{"ab":1}`, `{"ünï":1}`, `{"":1}`, `{"v":1,"":2}`,
 
 	// Whitespace in every position the grammar allows it.

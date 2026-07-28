@@ -73,7 +73,7 @@ func TestTemplateRenderErrorsCountFailuresOnly(t *testing.T) {
 func (m *mockulus) get(t *testing.T, path string, want int) string {
 	t.Helper()
 
-	resp, err := harnessClient.Get(m.mockURL(path))
+	resp, err := httpGet(t.Context(), harnessClient, m.mockURL(path))
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
@@ -91,7 +91,7 @@ func (m *mockulus) get(t *testing.T, path string, want int) string {
 func (m *mockulus) renderErrors(t *testing.T) float64 {
 	t.Helper()
 
-	resp, err := harnessClient.Get(m.adminURL("/metrics"))
+	resp, err := httpGet(t.Context(), harnessClient, m.adminURL("/metrics"))
 	if err != nil {
 		t.Fatalf("scrape /metrics: %v", err)
 	}

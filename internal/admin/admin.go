@@ -221,7 +221,7 @@ func endpointGroup(path string) string {
 
 func isWord(s string) bool {
 	for _, r := range s {
-		if !(r >= 'a' && r <= 'z') && r != '-' {
+		if (r < 'a' || r > 'z') && r != '-' {
 			return false
 		}
 	}

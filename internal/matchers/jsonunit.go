@@ -78,8 +78,6 @@ func (p *jsonPlaceholder) matches(actual any) bool {
 	}
 }
 
-func (p *jsonPlaceholder) describe() string { return p.source }
-
 // optional reports whether the placeholder also stands in for a member that is
 // not there at all.
 func (p *jsonPlaceholder) optional() bool { return p.kind == phAnyOrAbsent }

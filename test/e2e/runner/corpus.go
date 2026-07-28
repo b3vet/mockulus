@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -245,7 +246,7 @@ func LoadCorpus(dir string) ([]*Case, error) {
 
 func (c *Case) validate() error {
 	if c.ID == "" {
-		return fmt.Errorf("case has no id")
+		return errors.New("case has no id")
 	}
 	if len(c.Behaviors) == 0 {
 		return fmt.Errorf("case %s references no catalog behavior (completeness gate b)", c.ID)
@@ -328,7 +329,7 @@ func (s Step) validate() error {
 		}
 	}
 	if s.Expect != nil && s.ExpectEventually != nil {
-		return fmt.Errorf("a step may carry expect or expect_eventually, not both")
+		return errors.New("a step may carry expect or expect_eventually, not both")
 	}
 	if s.Pause != "" {
 		if _, err := time.ParseDuration(s.Pause); err != nil {

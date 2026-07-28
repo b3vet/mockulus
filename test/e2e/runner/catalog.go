@@ -110,9 +110,9 @@ func LoadCatalog(dir string) (*Catalog, error) {
 		proseByID: map[string]int{},
 	}
 
-	entries, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
-	if err != nil {
-		return nil, err
+	entries, globErr := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if globErr != nil {
+		return nil, globErr
 	}
 	sort.Strings(entries)
 
@@ -309,7 +309,7 @@ func (d *specDoc) SectionHash(section string) string {
 			}
 		}
 		if t := normalizeCell(line); t != "" {
-			fmt.Fprintln(h, t)
+			_, _ = fmt.Fprintln(h, t)
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]

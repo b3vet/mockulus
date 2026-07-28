@@ -69,7 +69,7 @@ func (s *Scorer) Exact() {
 // binary case: a method or a header that is simply not what was asked for.
 func (s *Scorer) Missed(kind, name, expected, actual string) {
 	s.count++
-	s.total += 1
+	s.total++
 	s.differences = append(s.differences, Difference{
 		Kind: kind, Name: name, Expected: expected, Actual: actual,
 	})
@@ -234,12 +234,12 @@ func RenderNearMisses(misses []NearMiss) string {
 }
 
 func truncateForDiagnostic(s string) string {
-	const max = 120
+	const maxDiagnosticValue = 120
 	if s == "" {
 		return "<absent>"
 	}
-	if len(s) > max {
-		return s[:max] + "…"
+	if len(s) > maxDiagnosticValue {
+		return s[:maxDiagnosticValue] + "…"
 	}
 	return s
 }

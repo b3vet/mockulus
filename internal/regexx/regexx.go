@@ -98,7 +98,8 @@ func Compile(source string, opts Options) (*Pattern, error) {
 		expr = `(?s)\A(?:` + pattern + `)\z`
 	}
 
-	if re, err := regexp.Compile(expr); err == nil {
+	re, err := regexp.Compile(expr)
+	if err == nil {
 		p.Engine = EngineRE2
 		p.re2 = re
 		p.literalPrefix, p.prefixIsWhole = re.LiteralPrefix()
