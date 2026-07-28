@@ -230,6 +230,27 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		return nil, []Problem{{Pointer: at, Detail: detail}}
 	}
 
+	// A JSON null is not an operand, and it is refused here rather than in each
+	// key's decode below because that decode cannot see it: json.Unmarshal reads
+	// null into a Go string as "" and reports no error, so {"contains": null}
+	// would compile into a criterion that holds for every body and the stub
+	// would then answer the requests its author wrote a criterion to exclude.
+	// Silently meaning something nobody wrote is the accept-and-behave-
+	// differently failure P3 exists to forbid, and WireMock refuses all six of
+	// the string-operand matchers 422 ("contains operand must be a non-null
+	// string"), so accepting one is also a stub that cannot move between the two
+	// servers.
+	//
+	// One guard over every key, rather than a check per key, because the shape
+	// that has to hold is "no matcher takes null" — six per-key checks would
+	// leave the seventh matcher someone adds later carrying the same hole.
+	// Nothing above it loses meaning: the modifier keys and the deferred
+	// matchers are answered in Compile before this runs, so {"caseInsensitive":
+	// null} still reads as the absent modifier it does on WireMock.
+	if string(value) == "null" {
+		return fail(key + " operand must not be null")
+	}
+
 	switch key {
 	case "equalTo":
 		var s string
@@ -243,7 +264,7 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		if err := json.Unmarshal(value, &s); err != nil {
 			return fail("binaryEqualTo takes a base64 string")
 		}
-		decoded, err := base64.StdEncoding.DecodeString(s)
+		decoded, err := DecodeBase64(s)
 		if err != nil {
 			return fail("binaryEqualTo operand is not valid base64: " + err.Error())
 		}
@@ -403,6 +424,44 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 			Detail:  "unknown matcher " + key,
 		}}
 	}
+}
+
+// DecodeBase64 reads an operand the way Java's Base64.getDecoder() does, which
+// is not what any single encoding/base64 encoding offers.
+//
+// Padding is optional there and mandatory in StdEncoding, so `aGVsbG8` — the
+// spelling anything calling Java's own encodeToString on a raw encoder produces,
+// and the one that turns up in hand-written mappings — is five bytes on WireMock
+// and a 422 here. Trying RawStdEncoding when the padded reading fails buys
+// exactly that spelling and nothing more: RawStdEncoding reads the same 64
+// characters, so the url-safe alphabet's '-' and '_' stay refused, a space or a
+// tab inside the operand stays refused, and a trailing unit too short to hold a
+// byte stays refused — all three of which WireMock refuses too, so the two
+// acceptance sets line up rather than merely overlapping.
+//
+// One character class is outside what either encoding can express: encoding/base64
+// skips '\r' and '\n' wherever they appear, so an operand carrying them is read
+// here and refused there. That is the decoder's rule rather than this function's,
+// it is the same under StdEncoding alone, and narrowing it would be a separate
+// decision about a separate spelling.
+//
+// The padded decoder's error is the one reported, because an operand that is not
+// base64 at all fails both readings and the first one names the character that
+// is wrong, which is what the author needs to see.
+//
+// It lives here, next to the matcher that decodes an operand, and is exported so
+// the response body's base64 reads through the same function: two spellings of
+// "what counts as base64" would drift, and the pair would then disagree about
+// which stubs register while looking identical in review.
+func DecodeBase64(s string) ([]byte, error) {
+	decoded, err := base64.StdEncoding.DecodeString(s)
+	if err == nil {
+		return decoded, nil
+	}
+	if unpadded, rawErr := base64.RawStdEncoding.DecodeString(s); rawErr == nil {
+		return unpadded, nil
+	}
+	return nil, err
 }
 
 // decodeExpectedJSON accepts the expected document either as an escaped JSON

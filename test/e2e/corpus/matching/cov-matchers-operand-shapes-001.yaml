@@ -77,6 +77,118 @@ steps:
             source: {pointer: "/request/headers/X-Cov-Tier/matches"}
             detail: "matches takes a regular expression string"
 
+  # A JSON null is the operand shape that hides, and it is written out one key
+  # at a time because the thing being claimed is that no matcher takes it. Null
+  # decodes into a Go string as "" without an error, so each of these used to
+  # register and then mean something nobody wrote — {"contains": null} read as
+  # "contains the empty string", which is true of every body that exists. A stub
+  # that widens itself silently is worse than one that is refused, and WireMock
+  # refuses all six ("contains operand must be a non-null string"), so a document
+  # accepted here could not have moved there either.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"equalTo": null}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/equalTo"}
+            detail: "equalTo operand must not be null"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"contains": null}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/contains"}
+            detail: "contains operand must not be null"
+
+  # The negative forms are asked separately from their positive twins because a
+  # null operand coerced to "" does not fail them, it inverts them:
+  # doesNotContain "" is false for every body and true for none, so the stub
+  # would narrow to nothing rather than widen to everything. Both directions of
+  # the same defect, and neither is a rule anyone wrote.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"doesNotContain": null}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/doesNotContain"}
+            detail: "doesNotContain operand must not be null"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"matches": null}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/matches"}
+            detail: "matches operand must not be null"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"doesNotMatch": null}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/doesNotMatch"}
+            detail: "doesNotMatch operand must not be null"
+
+  # binaryEqualTo is the sixth, and the one whose coercion is invisible in a
+  # transcript: a null operand becomes zero bytes, which compares equal to
+  # nothing at all and leaves a stub that never answers.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"binaryEqualTo": null}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/binaryEqualTo"}
+            detail: "binaryEqualTo operand must not be null"
+
   # binaryEqualTo takes a base64 string, and the two ways of getting that wrong
   # are different mistakes: the wrong JSON type, and text that is not base64.
   # They are separated because a decoder that treated a decode failure as an
@@ -306,8 +418,8 @@ steps:
             source: {pointer: "/request/headers/X-Cov-Tier/not/equalTo"}
             detail: "equalTo takes a string"
 
-  # The control over every refusal above. Fifteen documents named this path and
-  # none of them may have left anything behind: a compiler that reported the
+  # The control over every refusal above. Twenty-one documents named this path
+  # and none of them may have left anything behind: a compiler that reported the
   # problem and stored the mapping anyway would answer here.
   - request: {port: mock, method: GET, path: /e2e/cov-matchers-operand-shapes-001/refused}
     expect: {status: 404}
@@ -351,4 +463,70 @@ steps:
       path: /e2e/cov-matchers-operand-shapes-001/accepted
       headers: {X-Cov-Tier: silver}
       body: "gold"
+    expect: {status: 404}
+
+  # The last operand shape is a base64 string written without its padding.
+  # `Z29sZA` is the same three bytes as `Z29sZA==` — Java's decoder treats the
+  # '=' as optional and every toolchain that reaches for a raw encoder omits it —
+  # so a mappings file spelling it this way is one WireMock has always accepted.
+  # It is here rather than in a case of its own because the question it asks is
+  # the one this file asks throughout: which operands does a matcher take.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000009",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/unpadded",
+                     "bodyPatterns": [{"binaryEqualTo": "Z29sZA"}]},
+         "response": {"status": 200, "body": "unpadded"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-operand-shapes-001/unpadded
+      body: "gold"
+    expect: {status: 200, body: "unpadded"}
+
+  # The control over the fallback, and the reason it is a fallback rather than a
+  # looser decoder: dropping the padding must not shorten the operand or turn
+  # the comparison into a prefix test. Three bytes still mean those three bytes.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-operand-shapes-001/unpadded
+      body: "gol"
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-operand-shapes-001/unpadded
+      body: "golden"
+    expect: {status: 404}
+
+  # And the other alphabet, which is what the padded reading was protecting.
+  # base64url spells the last two characters '-' and '_', and `-_8` is a valid
+  # encoding there of three bytes nobody wrote here. The unpadded reading uses
+  # the standard alphabet too, so this stays a 422 on both servers — otherwise
+  # the fix would have traded a refusal WireMock does not make for bytes
+  # WireMock does not serve.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"binaryEqualTo": "-_8"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'binaryEqualTo operand is not valid base64'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/binaryEqualTo"}
+
+  - request: {port: mock, method: POST, path: /e2e/cov-matchers-operand-shapes-001/refused}
     expect: {status: 404}

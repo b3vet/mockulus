@@ -4,7 +4,6 @@ package stub
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b3vet/mockulus/internal/matchers"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
@@ -151,6 +151,20 @@ func parseResponseHeaders(errs *wmcompat.ErrorList, doc map[string]json.RawMessa
 		// A header may carry several values, which WireMock states as an array.
 		var multi []string
 		if err := json.Unmarshal(value, &multi); err == nil {
+			if len(multi) == 0 {
+				// An empty array names a header and then gives it nothing to
+				// say. Read literally the loop below runs zero times, which
+				// registers the stub and serves no such header — the stub the
+				// author wrote and the stub the server holds differ, and they
+				// only find out from the client that was waiting for the header.
+				// This is the one place in the response surface where mockulus
+				// itself was accept-and-ignore, which P3 forbids. WireMock
+				// refuses it too ("No value for X-A"), so no mappings file that
+				// registers there stops registering here.
+				errs.Addf(wmcompat.CodeMalformed, "/response/headers/"+name,
+					"a response header value array must not be empty")
+				continue
+			}
 			for _, v := range multi {
 				resp.Headers = append(resp.Headers, Header{Name: name, Value: v})
 			}
@@ -212,7 +226,11 @@ func parseBody(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, resp *C
 			errs.Addf(wmcompat.CodeMalformed, "/response/base64Body", "base64Body must be a string")
 			return
 		}
-		decoded, err := base64.StdEncoding.DecodeString(s)
+		// Decoded through the matcher package's reader rather than a second
+		// call to encoding/base64: a response body and a binaryEqualTo operand
+		// are the same question about the same alphabet, and two decoders here
+		// would eventually disagree about which of them a mappings file can use.
+		decoded, err := matchers.DecodeBase64(s)
 		if err != nil {
 			errs.Addf(wmcompat.CodeMalformed, "/response/base64Body",
 				"base64Body is not valid base64: "+err.Error())

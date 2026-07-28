@@ -176,6 +176,151 @@ func TestBinaryEqualTo(t *testing.T) {
 	}
 }
 
+// Padding is optional in Java's decoder and mandatory in StdEncoding, so an
+// operand written without it is bytes on WireMock and used to be a 422 here —
+// a stub that registers on one server and cannot move to the other.
+func TestBinaryEqualToAcceptsUnpaddedOperands(t *testing.T) {
+	// The same five bytes, written both ways.
+	for _, operand := range []string{`aGVsbG8=`, `aGVsbG8`} {
+		m := compileBody(t, `{"binaryEqualTo":"`+operand+`"}`)
+		if !m.Match(NewBody([]byte("hello"))) {
+			t.Errorf("%s should decode to the same five bytes", operand)
+		}
+		// The control over the fallback: dropping the padding must not turn the
+		// operand into a prefix comparison or into a shorter operand.
+		if m.Match(NewBody([]byte("hell"))) {
+			t.Errorf("%s must not match a shorter body", operand)
+		}
+		if m.Match(NewBody([]byte("hello!"))) {
+			t.Errorf("%s must not match a longer body", operand)
+		}
+	}
+
+	// And the half of the change that has to stay refused. The fallback reads
+	// the standard alphabet, so what it buys is the missing '=' and nothing
+	// else: WireMock refuses each of these too, so accepting any of them would
+	// replace one divergence with another.
+	bodyOpts := testOpts()
+	bodyOpts.AllowContentPatterns = true
+	for _, operand := range []string{
+		`-_8=`,      // base64url, padded
+		`-_8`,       // base64url, unpadded
+		`aGVs bG8=`, // embedded whitespace
+		`aGVsbG8xx`, // a final unit too short to hold a byte
+	} {
+		if _, probs := Compile(json.RawMessage(`{"binaryEqualTo":"`+operand+`"}`), "", bodyOpts); len(probs) == 0 {
+			t.Errorf("%s is not base64 either server reads, so it must stay refused", operand)
+		}
+	}
+}
+
+// DecodeBase64 is the one reader behind binaryEqualTo and base64Body, and what
+// it has to reproduce is Java's Base64.getDecoder(): the acceptance sets below
+// were each confirmed against the pinned WireMock 3.13.2.
+func TestDecodeBase64ReadsWhatJavaReads(t *testing.T) {
+	accepted := map[string]string{
+		"":                     "",      // the empty operand is an empty body, not an error
+		"aGVsbG8=":             "hello", // padded
+		"aGVsbG8":              "hello", // unpadded, the spelling that used to be refused
+		"QUJD":                 "ABC",   // no padding needed
+		"QUJ":                  "AB",    // one byte short of a group
+		"QQ":                   "A",     // two bytes short of a group
+		"SGVsbG8=":             "Hello",
+		"cGx1cyBhbmQgc2xhc2g=": "plus and slash",
+	}
+	for operand, want := range accepted {
+		got, err := DecodeBase64(operand)
+		if err != nil {
+			t.Errorf("DecodeBase64(%q) = %v, WireMock accepts it", operand, err)
+			continue
+		}
+		if string(got) != want {
+			t.Errorf("DecodeBase64(%q) = %q, want %q", operand, got, want)
+		}
+	}
+
+	// '\r' and '\n' are deliberately absent from this list: encoding/base64
+	// skips them under every encoding, so an operand carrying one is read here
+	// and refused there, and asserting either answer would be asserting
+	// something this function does not decide.
+	for _, operand := range []string{
+		"-_8=", "-_8", // base64url is a different alphabet, not a spelling
+		"SGVs bG8=", "SGVs\tbG8=", // a space or a tab is a character, not a separator
+		"!!!not base64!!!",
+		"a",         // a single character cannot encode anything
+		"SGVsbG8xx", // nine characters: the last unit has no whole byte in it
+	} {
+		if _, err := DecodeBase64(operand); err == nil {
+			t.Errorf("DecodeBase64(%q) succeeded, WireMock refuses it", operand)
+		}
+	}
+}
+
+// A JSON null unmarshals into a Go string as "" without an error, so every
+// matcher that takes a string used to accept null and mean something its author
+// never wrote — {"contains":null} matched every request carrying a body.
+func TestNullOperandIsRefused(t *testing.T) {
+	bodyOpts := testOpts()
+	bodyOpts.AllowContentPatterns = true
+
+	// The six string-operand matchers, each of which WireMock answers 422.
+	for _, key := range []string{
+		"equalTo", "binaryEqualTo", "contains", "doesNotContain", "matches", "doesNotMatch",
+	} {
+		doc := `{"` + key + `":null}`
+		_, probs := Compile(json.RawMessage(doc), "/request/bodyPatterns/0", bodyOpts)
+		if len(probs) == 0 {
+			t.Errorf("%s should be refused: null is not an operand", doc)
+			continue
+		}
+		// The pointer names the key rather than the criterion, which is where
+		// every other operand problem in this package points.
+		if probs[0].Pointer != "/request/bodyPatterns/0/"+key {
+			t.Errorf("%s: pointer = %q", doc, probs[0].Pointer)
+		}
+		if probs[0].Kind != ProblemMalformed {
+			t.Errorf("%s: kind = %v, a null operand is a malformed document", doc, probs[0].Kind)
+		}
+	}
+
+	// The guard sits above the whole switch, so a matcher added later inherits
+	// it — including the combinators, whose operands are documents rather than
+	// strings.
+	for _, doc := range []string{`{"and":null}`, `{"or":null}`, `{"not":null}`,
+		`{"and":[{"equalTo":null},{"contains":"a"}]}`} {
+		if _, probs := Compile(json.RawMessage(doc), "", bodyOpts); len(probs) == 0 {
+			t.Errorf("%s should be refused", doc)
+		}
+	}
+}
+
+// The control over the guard: an operand that is empty, false or zero is a
+// value, and only the literal null is not. A guard that refused any of these
+// would refuse stubs WireMock registers, which is the failure direction that
+// cannot be worked around from a mappings file.
+func TestFalsyOperandsAreStillOperands(t *testing.T) {
+	for _, doc := range []string{
+		`{"equalTo":""}`,
+		`{"contains":""}`,
+		`{"matches":""}`,
+		`{"binaryEqualTo":""}`,
+		`{"absent":true}`,
+		`{"equalToJson":"{}"}`,
+		// A modifier is answered before the operand guard runs, so a null there
+		// still reads as the modifier being absent, which is what WireMock does
+		// with it.
+		`{"equalTo":"x","caseInsensitive":null}`,
+	} {
+		if _, probs := Compile(json.RawMessage(doc), "", func() Options {
+			o := testOpts()
+			o.AllowContentPatterns = true
+			return o
+		}()); len(probs) > 0 {
+			t.Errorf("%s should compile, got %v", doc, probs)
+		}
+	}
+}
+
 // binaryEqualTo is a content matcher over byte[], which WireMock accepts only
 // in bodyPatterns. A stub that registers here but is a 422 there is a hole a
 // team only finds on the way back, so the key-criterion positions refuse it —

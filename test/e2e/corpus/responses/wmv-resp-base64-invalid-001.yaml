@@ -6,7 +6,7 @@ behaviors:
 # Verified against pinned WireMock 3.13.2: it answers 422 to both documents
 # below, with the same envelope and the same code 10.
 wm: verified
-# Two ignores, for two different reasons.
+# Three ignores, for three different reasons.
 #
 # $unmatched-body covers the steps that check nothing was persisted, where the
 # 404 body is deviation #2/#18.
@@ -19,7 +19,15 @@ wm: verified
 # entry and points at /response/base64Body. The pointer granularity and the
 # wording are ours by design (§14, Appendix B), so requiring them to match would
 # assert that our error catalogue is Jackson's.
-wm_ignore: ["$unmatched-body", "$.errors"]
+#
+# $.response gives up the echoed response definition, which the unpadded step
+# below makes incomparable: WireMock decodes an operand and re-encodes it when
+# it renders the mapping, so `SGVsbG8` comes back as `SGVsbG8=`, while mockulus
+# echoes the document it was sent because that is what a client diffing against
+# its own mappings file needs (wmv-resp-definition-roundtrip-001). The bytes the
+# two servers serve for that stub are identical and are still compared below,
+# which is where this case's claim actually lives.
+wm_ignore: ["$unmatched-body", "$.errors", "$.response"]
 steps:
   # An operand that is not base64 at all cannot be turned into bytes, and a
   # response whose body cannot be built is not a response. Refusing at
@@ -85,3 +93,28 @@ steps:
     expect:
       status: 200
       body: "plus and slash"
+
+  # The near miss on the other side, and the one this case was missing: the same
+  # standard alphabet with the trailing '=' left off. Java's decoder treats
+  # padding as optional, so this is five bytes on WireMock, and a stub refused
+  # here for a spelling the server being mocked accepts is a mappings file that
+  # cannot move in the direction that matters. Only the padding is forgiven —
+  # the two steps above still refuse a wrong alphabet and rubbish — so what the
+  # two servers accept lines up rather than merely overlapping.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000007-0014-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-resp-base64-invalid-001/unpadded"},
+         "response": {"status": 200, "base64Body": "SGVsbG8"}}
+    expect: {status: 201}
+
+  # And the bytes, which is the whole point of accepting it: the padded and
+  # unpadded spellings of one operand have to serve the same five bytes, on both
+  # servers. A decoder that dropped the last group to make the input fit would
+  # answer "Hel" here and be caught by this line.
+  - request: {port: mock, method: GET, path: /e2e/wmv-resp-base64-invalid-001/unpadded}
+    expect:
+      status: 200
+      body: "Hello"

@@ -362,6 +362,65 @@ func TestBodyForms(t *testing.T) {
 	}
 }
 
+// base64Body reads through the same decoder as a binaryEqualTo operand, so the
+// two agree about what base64 is — including the padding Java treats as
+// optional, which used to make an unpadded operand a stub that serves bytes on
+// WireMock and refuses to register here.
+func TestBase64BodyAcceptsUnpaddedOperands(t *testing.T) {
+	for _, operand := range []string{"aGVsbG8=", "aGVsbG8"} {
+		got := string(compileOK(t, `{"response":{"base64Body":"`+operand+`"}}`).Response.Body)
+		if got != "hello" {
+			t.Errorf("base64Body %q served %q, want the same five bytes either way", operand, got)
+		}
+	}
+
+	// The control: the padding is the only thing the fallback forgives. Each of
+	// these is refused by WireMock too, so accepting one would serve bytes the
+	// author did not write and different bytes from the server being mocked.
+	for _, operand := range []string{
+		"-_8=",      // base64url, padded
+		"-_8",       // base64url, unpadded
+		"SGVs bG8=", // a space inside the operand
+		"SGVsbG8xx", // a final unit too short to hold a byte
+	} {
+		doc := `{"response":{"base64Body":"` + operand + `"}}`
+		if problems := compileErrs(t, doc); !hasProblem(problems, wmcompat.CodeMalformed, "/response/base64Body") {
+			t.Errorf("%s should be refused at /response/base64Body, got %v", doc, problems)
+		}
+	}
+}
+
+// An empty array names a response header and then gives it no value. Read
+// literally it registers a stub that serves no such header, which is the
+// accept-and-ignore failure P3 rules out and which WireMock answers 422.
+func TestEmptyResponseHeaderValueArrayIsRefused(t *testing.T) {
+	problems := compileErrs(t, `{"response":{"headers":{"X-A":[]}}}`)
+	if !hasProblem(problems, wmcompat.CodeMalformed, "/response/headers/X-A") {
+		t.Errorf("an empty header value array should be refused at the header, got %v", problems)
+	}
+
+	// The whole mapping goes, rather than the one header: a stub that half
+	// registers is the failure this refusal exists to prevent.
+	problems = compileErrs(t, `{"response":{"headers":{"X-Good":"g","X-A":[]}}}`)
+	if !hasProblem(problems, wmcompat.CodeMalformed, "/response/headers/X-A") {
+		t.Errorf("the empty array should be named even beside a good header, got %v", problems)
+	}
+
+	// The controls, and the reason this is narrower than "arrays are suspect":
+	// an array with values in it — including a value that is itself empty — is a
+	// header the author wrote, and all three of these register on WireMock.
+	for _, doc := range []string{
+		`{"response":{"headers":{"X-A":["solo"]}}}`,
+		`{"response":{"headers":{"X-A":["a","b"]}}}`,
+		`{"response":{"headers":{"X-A":[""]}}}`,
+	} {
+		cs := compileOK(t, doc)
+		if len(cs.Response.Headers) == 0 {
+			t.Errorf("%s should keep its header value", doc)
+		}
+	}
+}
+
 func TestStatusValidation(t *testing.T) {
 	for _, doc := range []string{
 		`{"response":{"status":99}}`,
