@@ -1,0 +1,272 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-json-precision-001
+behaviors: [B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS]
+wm: verified
+# The 404 steps compare only by status: the unmatched body is deviation #2/#18.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A JSON number is a decimal and a double is not, so an implementation that
+  # compares through one answers for numbers it was never given. The stub below
+  # is keyed on the first integer binary64 cannot hold; its neighbour is a
+  # different number and a different request.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000001",
+         "name": "equalToJson on a number wider than a double",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/wide",
+                     "bodyPatterns": [{"equalToJson": "{\"id\":9007199254740993}"}]},
+         "response": {"status": 200, "body": "wide",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "9007e253-0001-4000-8000-000000000001"
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/wide
+      body: '{"id":9007199254740992}'
+    expect: {status: 404}
+
+  # The control that makes the refusal above mean something: the number the
+  # stub actually declared still matches.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/wide
+      body: '{"id":9007199254740993}'
+    expect: {status: 200, body: "wide"}
+
+  # And it matches however it is spelled, because the extra precision is a
+  # property of the value rather than of the notation. Both of these are the
+  # same number written with a scale a double would have flattened.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/wide
+      body: '{"id":9.007199254740993e15}'
+    expect: {status: 200, body: "wide"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/wide
+      body: '{"id":9007199254740993.00}'
+    expect: {status: 200, body: "wide"}
+
+  # The other direction, which a comparison fixed only on the stub's side would
+  # still get wrong: here the request is the document carrying the digit the
+  # double has nowhere to put.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/narrow",
+                     "bodyPatterns": [{"equalToJson": "{\"id\":9007199254740992}"}]},
+         "response": {"status": 200, "body": "narrow",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/narrow
+      body: '{"id":9007199254740993}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/narrow
+      body: '{"id":9007199254740992}'
+    expect: {status: 200, body: "narrow"}
+
+  # None of this is about 2^53. Any two decimals that round together collide,
+  # so the stub at risk is an entirely ordinary one keyed on 1.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/plain",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}"}]},
+         "response": {"status": 200, "body": "plain",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/plain
+      body: '{"a":1.0000000000000000000000001}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/plain
+      body: '{"a":0.9999999999999999999999999}'
+    expect: {status: 404}
+
+  # The controls that keep the refusals above from being a comparison of text:
+  # scale is still not part of a number's value, so 1, 1.0 and a 1 written to
+  # sixteen decimal places are one number and all three match.
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/plain
+      body: '{"a":1.0}'
+    expect: {status: 200, body: "plain"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/plain
+      body: '{"a":1.000000000000000}'
+    expect: {status: 200, body: "plain"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/plain
+      body: '{"a":1e0}'
+    expect: {status: 200, body: "plain"}
+
+  # The pair a binary fraction cannot separate: the long literal is the exact
+  # decimal value of the double nearest 0.1, so the two are one double and two
+  # different numbers.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/binary",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":0.1}"}]},
+         "response": {"status": 200, "body": "binary",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/binary
+      body: '{"a":0.1000000000000000055511151231257827}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/binary
+      body: '{"a":0.1}'
+    expect: {status: 200, body: "binary"}
+
+  # The same collision at the bottom of the range rather than the top: a value
+  # too small for a double lands on zero, and a stub keyed on zero must not
+  # answer for it. The negative zero step is the control that this is still the
+  # value comparison of wmv-json-number-scale-001 and not a stricter one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000005",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/zero",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":0}"}]},
+         "response": {"status": 200, "body": "zero",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/zero
+      body: '{"a":1e-400}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/zero
+      body: '{"a":1e-320}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/zero
+      body: '{"a":-0.0}'
+    expect: {status: 200, body: "zero"}
+
+  # Precision has to survive the relaxations, since those are where a second
+  # comparison is easiest to get wrong. Under ignoreArrayOrder the elements are
+  # paired by value, so a respelled wide number finds its partner and its
+  # neighbour finds none.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000006",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/xs",
+                     "bodyPatterns": [{"equalToJson": "{\"xs\":[9007199254740993,2.5]}",
+                                       "ignoreArrayOrder": true}]},
+         "response": {"status": 200, "body": "xs",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/xs
+      body: '{"xs":[2.50,9007199254740993.0]}'
+    expect: {status: 200, body: "xs"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/xs
+      body: '{"xs":[2.5,9007199254740992]}'
+    expect: {status: 404}
+
+  # A wide literal the stub never looks at changes nothing: ignoreExtraElements
+  # still ignores the member it sits in.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000007",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/extra",
+                     "bodyPatterns": [{"equalToJson": "{\"b\":1}",
+                                       "ignoreExtraElements": true}]},
+         "response": {"status": 200, "body": "extra",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/extra
+      body: '{"b":1,"z":9007199254740993}'
+    expect: {status: 200, body: "extra"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/extra
+      body: '{"b":1,"z":[{"n":1.0000000000000000000000001}]}'
+    expect: {status: 200, body: "extra"}
+
+  # And a placeholder standing beside a wide literal still stands for a class of
+  # value rather than for a number: any-number accepts the number and refuses
+  # the string spelling of it, exactly as it does without one in the document.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "9007e253-0001-4000-8000-000000000008",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-json-precision-001/placeholder",
+                     "bodyPatterns": [{"equalToJson":
+                       "{\"a\":\"${json-unit.any-number}\",\"b\":9007199254740993}"}]},
+         "response": {"status": 200, "body": "placeholder",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/placeholder
+      body: '{"a":9007199254740993,"b":9007199254740993}'
+    expect: {status: 200, body: "placeholder"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/placeholder
+      body: '{"a":"7","b":9007199254740993}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-json-precision-001/placeholder
+      body: '{"a":7,"b":9007199254740992}'
+    expect: {status: 404}
