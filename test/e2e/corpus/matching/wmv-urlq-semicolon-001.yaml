@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-urlq-semicolon-001
+behaviors: [B-REQ-QUERYPARAMETERS, B-REQ-FORMPARAMETERS, B-MATCH-ABSENT]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and every matching body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A semicolon was withdrawn as a parameter separator years ago, so in a query
+# string it is an ordinary character — and an ordinary character is exactly what
+# a client puts one in a value for: a range, a compound filter, a list of ids.
+# Splitting on it, or refusing the element that carries it, does not merely fail
+# the criterion that names the parameter. It makes the parameter stop existing:
+# the criterion sees nothing, an `absent` criterion sees nothing and succeeds,
+# and the request the server describes afterwards is not the request that
+# arrived. That second half is what the `absent` steps below are here for.
+#
+# A urlencoded form body is the same syntax in a different place, and a form is
+# where a client is most likely to send one, so the same rule is asserted there.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000032-0001-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-urlq-semicolon-001/q",
+                     "queryParameters": {"a": {"equalTo": "1;b=2"}}},
+         "response": {"status": 200, "body": "semi", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            a: {equalTo: "1;b=2"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000032-0001-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-urlq-semicolon-001/r",
+                     "queryParameters": {"a": {"absent": true}}},
+         "response": {"status": 200, "body": "absent", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control stub: it names the parameter a splitter would have invented out
+  # of the text after the semicolon.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000032-0001-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-urlq-semicolon-001/s",
+                     "queryParameters": {"b": {"equalTo": "2"}}},
+         "response": {"status": 200, "body": "split", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000032-0001-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-urlq-semicolon-001/f",
+                     "formParameters": {"a": {"equalTo": "1;b=2"}}},
+         "response": {"status": 200, "body": "form", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The semicolon travels inside the value, so the operand written the way a
+  # person would say it out loud meets the parameter as sent.
+  - request: {method: GET, path: "/e2e/wmv-urlq-semicolon-001/q?a=1;b=2"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "semi"
+
+  # The escaped spelling is the same value and always agreed, so it is the
+  # control that says the step above is about the split rather than the compare.
+  - request: {method: GET, path: "/e2e/wmv-urlq-semicolon-001/q?a=1%3Bb%3D2"}
+    expect: {status: 200, body: "semi"}
+
+  # And equalTo is no looser for having been lenient about the character: a
+  # request carrying only what precedes the semicolon is still refused.
+  - request: {method: GET, path: "/e2e/wmv-urlq-semicolon-001/q?a=1"}
+    expect: {status: 404}
+
+  # The parameter really did stay whole: nothing behind the semicolon became a
+  # parameter of its own, so the stub that asks for `b` does not match...
+  - request: {method: GET, path: "/e2e/wmv-urlq-semicolon-001/s?a=1;b=2"}
+    expect: {status: 404}
+  # ...and it does match the request that genuinely sends `b`, which is what
+  # keeps the step above from passing because the stub was broken.
+  - request: {method: GET, path: "/e2e/wmv-urlq-semicolon-001/s?b=2"}
+    expect: {status: 200, body: "split"}
+
+  # The other direction of the same loss, and the one that answers a request
+  # with the wrong stub rather than with a 404: `a` was sent, so `absent` fails.
+  - request: {method: GET, path: "/e2e/wmv-urlq-semicolon-001/r?a=1;b=2"}
+    expect: {status: 404}
+  # The control: a request that really does omit `a` still matches, so the step
+  # above is not passing because `absent` stopped working.
+  - request: {method: GET, path: "/e2e/wmv-urlq-semicolon-001/r?other=1"}
+    expect: {status: 200, body: "absent"}
+
+  # The same character in the same syntax, carried in a urlencoded body.
+  - request:
+      method: POST
+      path: /e2e/wmv-urlq-semicolon-001/f
+      headers: {Content-Type: "application/x-www-form-urlencoded"}
+      body: "a=1;b=2"
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "form"
+  - request:
+      method: POST
+      path: /e2e/wmv-urlq-semicolon-001/f
+      headers: {Content-Type: "application/x-www-form-urlencoded"}
+      body: "a=1%3Bb%3D2"
+    expect: {status: 200, body: "form"}
+  - request:
+      method: POST
+      path: /e2e/wmv-urlq-semicolon-001/f
+      headers: {Content-Type: "application/x-www-form-urlencoded"}
+      body: "a=1"
+    expect: {status: 404}

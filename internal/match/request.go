@@ -27,8 +27,9 @@ type ParsedRequest struct {
 	Method string
 	// Path is the request path with no query string.
 	Path string
-	// FullURL is path and query exactly as received, which is what a byte-exact
-	// `url` criterion compares against.
+	// FullURL is path and query as received, which is what a byte-exact `url`
+	// criterion compares against. A query marker introducing no query is not
+	// part of it; bind says why.
 	FullURL string
 
 	header http.Header
@@ -107,19 +108,43 @@ func ReleaseRequest(pr *ParsedRequest) {
 
 func (r *ParsedRequest) bind(req *http.Request, body []byte) {
 	r.Method = req.Method
-	r.FullURL = requestTarget(req)
-	r.Path = r.FullURL
-	if i := strings.IndexByte(r.FullURL, '?'); i >= 0 {
-		r.Path = r.FullURL[:i]
+	target := requestTarget(req)
+	r.Path = target
+	if i := strings.IndexByte(target, '?'); i >= 0 {
+		r.Path = target[:i]
+		// A `?` with nothing behind it separates the path from a query that is
+		// not there, so `GET /orders?` and `GET /orders` are the same request.
+		// WireMock appends the query to the URL a criterion sees only when there
+		// is one, and keeping the marker here disagrees with that in both
+		// directions at once: a stub written `/orders` refuses the marked
+		// target, and a stub written `/orders?` answers the marked target here
+		// while answering nothing at all there. Only the bare marker goes —
+		// anything behind it, `?&` included, is a query and is kept whole.
+		//
+		// It is dropped from the target rather than inside the URL matcher
+		// because every URL-shaped answer this request gives is derived from
+		// this one string: the exact-URL index, `url`, `urlPattern` and the
+		// near-miss diagnostics all read it, and a marker stripped in one of
+		// them would be a marker left in the other three.
+		if i == len(target)-1 {
+			target = r.Path
+		}
 	}
+	r.FullURL = target
 	r.header = req.Header
 	r.body = body
-	r.bodySubject.Set(body)
+	// A body is read as text through the charset its own Content-Type declares,
+	// and the subject cannot see the headers to find it. The lookup is charged
+	// only where there is a body whose reading it could change (P2).
+	contentType := ""
+	if len(body) > 0 {
+		contentType = req.Header.Get("Content-Type")
+	}
+	r.bodySubject.SetWithContentType(body, contentType)
 }
 
 // requestTarget returns the request line's target: path and query exactly as
-// the client wrote them, which is what a byte-exact `url` criterion compares
-// against.
+// the client wrote them, which is what bind derives the match subject from.
 //
 // net/http keeps that string verbatim in RequestURI, and re-deriving it from
 // the parsed URL instead is not free — URL.RequestURI re-escapes the path,
@@ -232,7 +257,10 @@ func (r *ParsedRequest) CookieSubject(name string) matchers.Subject {
 
 // FormSubject returns the subject for a form field, parsing the body as
 // urlencoded form data on first use. A request that is not form-encoded has no
-// form fields rather than an error: the criterion simply does not match.
+// form fields rather than an error: the criterion simply does not match. One
+// that is form-encoded yields every field it carries, including the fields
+// either side of one that is written oddly — a body is split by the same
+// function a query string is, and for the same reasons.
 //
 // The media type is read here rather than in bind, because this is the only
 // thing that wants it: deriving it up front would charge every request for a
@@ -242,9 +270,7 @@ func (r *ParsedRequest) FormSubject(name string) matchers.Subject {
 	if !r.formParsed {
 		r.formParsed = true
 		if mediaType(r.header.Get("Content-Type")) == "application/x-www-form-urlencoded" {
-			if parsed, err := url.ParseQuery(string(r.body)); err == nil {
-				r.form = parsed
-			}
+			r.form = matchers.SplitQuery(string(r.body))
 		}
 	}
 	values, present := r.form[name]
@@ -300,19 +326,17 @@ func (r *ParsedRequest) FailScenarioRead(err error) {
 // ScenarioError returns the state read that failed, or nil.
 func (r *ParsedRequest) ScenarioError() error { return r.scenarioErr }
 
-// parseQuery extracts the query string from a request URI and parses it.
-// Values that fail to unescape are kept in raw form rather than dropped: a stub
-// matching on an odd-looking parameter should still see it.
-func parseQuery(requestURI string) url.Values {
-	i := strings.IndexByte(requestURI, '?')
+// parseQuery extracts the query string from a request target and splits it.
+//
+// The split itself is matchers.SplitQuery, which is also what a urlencoded body
+// goes through: a query string and a form body are the same syntax, and two
+// parsers for it would eventually disagree about a request that used both.
+func parseQuery(target string) url.Values {
+	i := strings.IndexByte(target, '?')
 	if i < 0 {
 		return url.Values{}
 	}
-	values, err := url.ParseQuery(requestURI[i+1:])
-	if err != nil && values == nil {
-		return url.Values{}
-	}
-	return values
+	return matchers.SplitQuery(target[i+1:])
 }
 
 // parseCookies splits Cookie header values into name/value pairs. A name may

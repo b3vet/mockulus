@@ -162,6 +162,75 @@ func TestURLPatterns(t *testing.T) {
 	}
 }
 
+// The bare query marker is not a criterion's business — it is gone before any
+// URL criterion sees the subject — but the criteria are where its absence is
+// observable, and both of them have to agree about it. `url` reaches the
+// request through the exact-URL index and `urlPattern` through the pattern
+// list, so a marker stripped for one and not the other would show up here.
+func TestEmptyQueryMarkerIsInvisibleToURLCriteria(t *testing.T) {
+	snap := BuildSnapshot([]*stub.CompiledStub{
+		mustCompile(t, 1, "exact", `{"request":{"url":"/probe/u"},"response":{}}`),
+		mustCompile(t, 2, "pattern", `{"request":{"urlPattern":"/probe/p[0-9]+"},"response":{}}`),
+		// The mirror image: a criterion that writes the marker out. There is no
+		// request that can reach it, because no request keeps one.
+		mustCompile(t, 3, "marked", `{"request":{"url":"/probe/m?"},"response":{}}`),
+		mustCompile(t, 4, "markedpat", `{"request":{"urlPattern":"/probe/w\\?"},"response":{}}`),
+	}, 1)
+
+	if got := match(t, snap, "GET", "/probe/u?", "", nil); got != "exact" {
+		t.Errorf("a marked target selected %q, want exact", got)
+	}
+	if got := match(t, snap, "GET", "/probe/p7?", "", nil); got != "pattern" {
+		t.Errorf("a marked target selected %q, want pattern", got)
+	}
+
+	// A criterion carrying the marker is dead rather than lenient: normalising
+	// the criterion too would make `/probe/m?` and `/probe/m` the same stub,
+	// which is the opposite of what the oracle does with it.
+	for _, target := range []string{"/probe/m", "/probe/m?", "/probe/w", "/probe/w?"} {
+		if got := match(t, snap, "GET", target, "", nil); got != "" {
+			t.Errorf("%s matched a criterion written with a query marker: %q", target, got)
+		}
+	}
+
+	// The control on the trim: a query with content in it still belongs to the
+	// URL, so a byte-exact criterion written without one refuses it.
+	if got := match(t, snap, "GET", "/probe/u?&", "", nil); got != "" {
+		t.Errorf("an empty query element was dropped from the url subject, got %q", got)
+	}
+}
+
+// A semicolon inside a query value must not cost the stub its parameter, and an
+// `absent` criterion must not be satisfied by a parameter the request sent.
+// Both read the same split, so a splitter that dropped the element would answer
+// both of these the wrong way round at once.
+func TestSemicolonInAQueryValueKeepsTheParameter(t *testing.T) {
+	snap := BuildSnapshot([]*stub.CompiledStub{
+		mustCompile(t, 1, "present", `{"request":{"urlPath":"/q",
+			"queryParameters":{"a":{"equalTo":"1;b=2"}}},"response":{}}`),
+		mustCompile(t, 2, "absent", `{"request":{"urlPath":"/r",
+			"queryParameters":{"a":{"absent":true}}},"response":{}}`),
+	}, 1)
+
+	if got := match(t, snap, "GET", "/q?a=1;b=2", "", nil); got != "present" {
+		t.Errorf("selected %q, want present", got)
+	}
+	// The escaped spelling is the same value, and always agreed.
+	if got := match(t, snap, "GET", "/q?a=1%3Bb%3D2", "", nil); got != "present" {
+		t.Errorf("escaped spelling selected %q, want present", got)
+	}
+
+	// The other half of the same loss: `a` was sent, so `absent` must fail.
+	if got := match(t, snap, "GET", "/r?a=1;b=2", "", nil); got != "" {
+		t.Errorf("absent matched a request that carried the parameter: %q", got)
+	}
+	// The control, so the step above is not passing because `absent` broke: a
+	// request that really does omit the parameter still matches.
+	if got := match(t, snap, "GET", "/r?other=1", "", nil); got != "absent" {
+		t.Errorf("selected %q, want absent", got)
+	}
+}
+
 func TestPathTemplateAndPathParameters(t *testing.T) {
 	snap := BuildSnapshot([]*stub.CompiledStub{
 		mustCompile(t, 1, "tpl", `{"request":{"urlPathTemplate":"/orders/{id}/items/{itemId}",
