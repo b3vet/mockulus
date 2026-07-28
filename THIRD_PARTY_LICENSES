@@ -106,6 +106,11 @@ License: Apache-2.0
 Source:  https://github.com/prometheus/common/blob/v0.70.1/LICENSE
 
 --------------------------------------------------------------------------------
+github.com/prometheus/procfs
+License: Apache-2.0
+Source:  https://github.com/prometheus/procfs/blob/v0.21.1/LICENSE
+
+--------------------------------------------------------------------------------
 github.com/segmentio/ksuid
 License: MIT
 Source:  https://github.com/segmentio/ksuid/blob/v1.0.4/LICENSE.md
