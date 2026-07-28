@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# A single Couchbase node for the T4 kind cluster (SPEC §19.4).
+#
+# T4 installs the chart at three replicas, and three replicas without a shared
+# store is the one thing the chart refuses to render: each pod would keep its
+# own stubs, so a stub registered through the Service would be served by one
+# pod and 404 on the other two. The rollout check needs the same thing for a
+# different reason — it registers a stub, replaces every pod underneath the
+# traffic, and requires every response to be a 200, which no per-process store
+# can survive.
+#
+# It is a StatefulSet behind a headless Service rather than a Deployment behind
+# a ClusterIP because of how a Couchbase client finds the cluster: it connects
+# once, and is then told by the cluster where each service lives. The node
+# advertises whatever hostname it was initialised with, and the client dials
+# that. Behind a load-balancing ClusterIP the advertised address is the pod's
+# own name, which does not resolve; a headless Service gives the pod a stable
+# DNS name that does, and `couchbase-cli node-init --node-init-hostname` in
+# kind-couchbase.sh is what makes the node advertise it.
+#
+# Sized for a hosted runner and for one bucket of test stubs, not for anything
+# resembling production. The chart's own Couchbase guidance is in
+# deploy/chart/README.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: couchbase
+  labels:
+    app: couchbase
+spec:
+  clusterIP: None
+  selector:
+    app: couchbase
+  ports:
+    - { name: management, port: 8091 }
+    - { name: views, port: 8092 }
+    - { name: query, port: 8093 }
+    - { name: search, port: 8094 }
+    - { name: data, port: 11210 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: couchbase
+spec:
+  serviceName: couchbase
+  replicas: 1
+  selector:
+    matchLabels:
+      app: couchbase
+  template:
+    metadata:
+      labels:
+        app: couchbase
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: couchbase
+          image: couchbase:community-7.6.2
+          ports:
+            - { name: management, containerPort: 8091 }
+            - { name: views, containerPort: 8092 }
+            - { name: query, containerPort: 8093 }
+            - { name: search, containerPort: 8094 }
+            - { name: data, containerPort: 11210 }
+          # A request but no memory limit, which is what the T2/T3 harness gives
+          # its Couchbase too. The server reserves well beyond its configured
+          # quotas at startup, and a limit tight enough to look reasonable next
+          # to a 256 MiB bucket is one the process exceeds in its first second:
+          # a 2 GiB cap here was OOMKilled before cluster-init could run, which
+          # reads as a crashloop rather than as a cap. The node's own memory is
+          # the real bound, and the request is what keeps the scheduler honest
+          # about it.
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+          # Readiness is only that the management port answers; the cluster is
+          # not initialised, has no bucket and cannot serve a client yet. What
+          # "ready for mockulus" means is asserted by kind-couchbase.sh, which
+          # waits for the bucket to be healthy for KV *and* visible to the
+          # query service — mockulus runs DDL at boot when it manages the
+          # keyspace, so a bucket that is up for one and not the other still
+          # fails the first pod to start.
+          readinessProbe:
+            httpGet:
+              path: /pools
+              port: 8091
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 60
+          # No liveness probe on purpose: rebalance and compaction can stall
+          # the management port for longer than a sensible liveness timeout,
+          # and restarting the only node under load is never the repair.
+          #
+          # Nothing is mounted at /opt/couchbase/var. The obvious thing is an
+          # emptyDir there, and it crashloops: the image ships that path
+          # already populated and owned by the couchbase user, and a volume
+          # mounts over the top of it empty and root-owned, so the server exits
+          # having written its reason into a log directory that no longer
+          # exists. The data does not need to outlive the job, so the
+          # container's own writable layer is the right place for it.
