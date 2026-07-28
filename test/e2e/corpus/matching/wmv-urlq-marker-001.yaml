@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-urlq-marker-001
+behaviors: [B-REQ-URL, B-REQ-URLPATTERN, B-STUB-REQUEST]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and every matching body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A `?` with nothing behind it is a query separator with no query, so
+# `GET /u?` and `GET /u` are the same request and the URL both criteria are
+# compared against is the same string. That matters in two directions at once:
+# a client library that appends the marker whenever its parameter map is empty
+# would otherwise be refused by every stub written the ordinary way, and a stub
+# written with the marker would answer here and nowhere else.
+#
+# `urlPath` and `urlPathPattern` were never affected, because cutting at the
+# first `?` removes the marker along with the query. It is the two criteria that
+# keep the query — the byte-exact one and the regex over the whole target — that
+# see it, and they are what this case exercises.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000031-0001-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/e2e/wmv-urlq-marker-001/u"},
+         "response": {"status": 200, "body": "exact", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {url: "/e2e/wmv-urlq-marker-001/u"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000031-0001-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPattern": "/e2e/wmv-urlq-marker-001/p[0-9]+"},
+         "response": {"status": 200, "body": "pattern", "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request: {urlPattern: "/e2e/wmv-urlq-marker-001/p[0-9]+"}
+
+  # The mirror image of each: a criterion that writes the marker out itself.
+  # Nothing can reach these, because no request keeps one — which is the half of
+  # the rule that a server normalising the criterion as well would get wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000031-0001-4000-8000-000000000003",
+         "request": {"method": "GET", "url": "/e2e/wmv-urlq-marker-001/m?"},
+         "response": {"status": 200, "body": "marked", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000031-0001-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPattern": "/e2e/wmv-urlq-marker-001/w\\?"},
+         "response": {"status": 200, "body": "marked-pattern", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The controls first, so the marker steps are read against the answer the same
+  # stubs give without one.
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/u"}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "exact"
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/p7"}
+    expect: {status: 200, body: "pattern"}
+
+  # The marker itself, against each criterion that keeps the query.
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/u?"}
+    expect: {status: 200, body: "exact"}
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/p7?"}
+    expect: {status: 200, body: "pattern"}
+
+  # And the criteria that carry the marker are dead rather than lenient, for the
+  # marked target as much as the plain one. A server that stripped the marker
+  # from the criterion too would answer these 200 and would have turned one
+  # unreachable stub into a second stub competing for a live path.
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/m"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/m?"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/w"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/w?"}
+    expect: {status: 404}
+
+  # The control on the trim: only the bare marker is not a query. An empty
+  # element and a second `?` are both query content, they stay in the URL the
+  # criteria compare against, and the stubs written without them refuse the
+  # request. Trimming any trailing `?` instead of only an empty query would turn
+  # these three into 200s.
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/u?&"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/u??"}
+    expect: {status: 404}
+  - request: {method: GET, path: "/e2e/wmv-urlq-marker-001/p7?&"}
+    expect: {status: 404}

@@ -97,6 +97,60 @@ func TestQueryParameters(t *testing.T) {
 	}
 }
 
+// A semicolon has not been a query separator for years, and WireMock never
+// treated it as one, so it is an ordinary character inside a value — which is
+// how a client spells a range or a compound filter. net/url.ParseQuery calls it
+// a syntax error and discards the element, which does not merely fail the
+// criterion: the parameter the request carried stops existing.
+func TestSemicolonIsAnOrdinaryCharacterInAQueryValue(t *testing.T) {
+	r := newRequest(t, "GET", "/x?range=1;5&page=2", "", nil)
+	defer ReleaseRequest(r)
+
+	if got := r.QuerySubject("range").Values(); len(got) != 1 || got[0] != "1;5" {
+		t.Errorf("range = %v, want [1;5]", got)
+	}
+	// The control on the split: the semicolon carried no structure, so what
+	// follows it is part of the value and not a parameter of its own.
+	if r.QuerySubject("5").Present() {
+		t.Error("a semicolon must not separate two parameters")
+	}
+	// And the element beside it is untouched, which is what the drop used to
+	// cost when a request mixed the two.
+	if got := r.QuerySubject("page").Values(); len(got) != 1 || got[0] != "2" {
+		t.Errorf("page = %v, want [2]", got)
+	}
+
+	// A semicolon in the name is the same character in the same position and
+	// gets the same treatment.
+	named := newRequest(t, "GET", "/x?a;b=1", "", nil)
+	defer ReleaseRequest(named)
+	if got := named.QuerySubject("a;b").Values(); len(got) != 1 || got[0] != "1" {
+		t.Errorf("a;b = %v, want [1]", got)
+	}
+}
+
+// An escape that will not decode describes a value the request really sent, so
+// the parameter is kept as the text it arrived as. Dropping it would put a
+// request that carried the parameter and one that never mentioned it into the
+// same state, and `{"absent": true}` would then match a request that plainly
+// sent it.
+func TestQueryParameterWithAnUndecodableEscapeSurvives(t *testing.T) {
+	r := newRequest(t, "GET", "/x?discount=100%&code=ok%20fine", "", nil)
+	defer ReleaseRequest(r)
+
+	if !r.QuerySubject("discount").Present() {
+		t.Fatal("a parameter with a bad escape is still a parameter the request sent")
+	}
+	if got := r.QuerySubject("discount").Values(); len(got) != 1 || got[0] != "100%" {
+		t.Errorf("discount = %v, want [100%%]", got)
+	}
+	// The control: keeping the undecodable one raw must not stop the decodable
+	// one being decoded, in the same query.
+	if got := r.QuerySubject("code").Values(); len(got) != 1 || got[0] != "ok fine" {
+		t.Errorf("code = %v, want [ok fine]", got)
+	}
+}
+
 // Query parameter names are case-sensitive, unlike header names.
 func TestQueryNamesAreCaseSensitive(t *testing.T) {
 	r := newRequest(t, "GET", "/x?Name=1", "", nil)
@@ -194,6 +248,31 @@ func TestFormParametersOnlyForFormEncodedBodies(t *testing.T) {
 	defer ReleaseRequest(json)
 	if json.FormSubject("a").Present() {
 		t.Error("form parsing must not apply to a non-form body")
+	}
+}
+
+// A form body is a query string in the body, so it is split by the same rules:
+// the semicolon that used to discard a query parameter discarded a form field
+// too, and a form is where a client is most likely to send one.
+func TestFormFieldsAreSplitLikeAQueryString(t *testing.T) {
+	r := newRequest(t, "POST", "/x", "filter=a;b&note=a+b&raw=50%",
+		map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	defer ReleaseRequest(r)
+
+	if got := r.FormSubject("filter").Values(); len(got) != 1 || got[0] != "a;b" {
+		t.Errorf("filter = %v, want [a;b]", got)
+	}
+	if got := r.FormSubject("raw").Values(); len(got) != 1 || got[0] != "50%" {
+		t.Errorf("raw = %v, want [50%%]", got)
+	}
+	// The controls: `&` still separates the fields and `+` still decodes, so
+	// the leniency above did not turn the body into one opaque string, and a
+	// field beside the odd ones is read exactly as before.
+	if got := r.FormSubject("note").Values(); len(got) != 1 || got[0] != "a b" {
+		t.Errorf("note = %v, want [a b]", got)
+	}
+	if r.FormSubject("filter=a;b&note").Present() {
+		t.Error("the body must still be split on &")
 	}
 }
 
@@ -308,7 +387,6 @@ func TestRequestTargetIsTheTargetAsReceived(t *testing.T) {
 	targets := []string{
 		"/api/orders",
 		"/api/orders?a=1&b=2",
-		"/api/orders?",
 		"/api/orders?a=%20b&c=d%2Fe",
 		// Percent-encoding the parsed URL would decode and re-encode: a space
 		// as %20, a slash as %2F, and a plus that must survive unchanged.
@@ -319,6 +397,11 @@ func TestRequestTargetIsTheTargetAsReceived(t *testing.T) {
 		"/api/orders/%FF%FE",
 		"/api/orders//double//slashes",
 		"/api/orders/.%2E/parent",
+		// A query marker with something behind it is a query, however little
+		// sense the something makes, so these are carried through untouched.
+		"/api/orders?&",
+		"/api/orders??",
+		"/api/orders?=",
 	}
 
 	for _, target := range targets {
@@ -329,9 +412,57 @@ func TestRequestTargetIsTheTargetAsReceived(t *testing.T) {
 		}
 		// The parsed URL is the other route to the same string, and the two
 		// agreeing is what makes the cheap one safe to prefer.
-		if got := req.URL.RequestURI(); got != pr.FullURL {
+		if got := req.URL.RequestURI(); got != target {
 			t.Errorf("target %q: RequestURI gives %q but the parsed URL gives %q",
-				target, pr.FullURL, got)
+				target, target, got)
+		}
+		ReleaseRequest(pr)
+	}
+}
+
+// The one target shape that is not carried through verbatim. A `?` with nothing
+// behind it is a query separator with no query, and WireMock builds the URL a
+// criterion sees by appending the query only when there is one — so a marker
+// kept here would refuse `{"url": "/api/orders"}` for a request WireMock
+// matches, and honour `{"url": "/api/orders?"}` for a request WireMock refuses.
+//
+// The list ends with the shapes that keep the trim from becoming "strip a
+// trailing question mark": in each of them the marker is followed by a query,
+// and the byte-exact criterion has to still see it.
+func TestEmptyQueryMarkerIsNotPartOfTheURL(t *testing.T) {
+	cases := []struct {
+		target      string
+		wantFullURL string
+		wantPath    string
+	}{
+		{target: "/api/orders?", wantFullURL: "/api/orders", wantPath: "/api/orders"},
+		{target: "/api/orders/?", wantFullURL: "/api/orders/", wantPath: "/api/orders/"},
+		{target: "/?", wantFullURL: "/", wantPath: "/"},
+
+		{target: "/api/orders", wantFullURL: "/api/orders", wantPath: "/api/orders"},
+		{target: "/api/orders?a=1", wantFullURL: "/api/orders?a=1", wantPath: "/api/orders"},
+		// An empty element is a query the client wrote; only the absence of one
+		// is a marker.
+		{target: "/api/orders?&", wantFullURL: "/api/orders?&", wantPath: "/api/orders"},
+		// The second `?` is an ordinary character in the query, so the target
+		// does end in a marker-looking byte that has to survive.
+		{target: "/api/orders??", wantFullURL: "/api/orders??", wantPath: "/api/orders"},
+		// A parameter with an empty name and an empty value is still a
+		// parameter.
+		{target: "/api/orders?=", wantFullURL: "/api/orders?=", wantPath: "/api/orders"},
+		// A trailing `?` inside the path is part of the path, escaped, and the
+		// query marker is elsewhere.
+		{target: "/api/orders%3F?a=1", wantFullURL: "/api/orders%3F?a=1", wantPath: "/api/orders%3F"},
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequestWithContext(context.Background(), "GET", tc.target, nil)
+		pr := AcquireRequest(req, nil)
+		if pr.FullURL != tc.wantFullURL {
+			t.Errorf("FullURL for %q = %q, want %q", tc.target, pr.FullURL, tc.wantFullURL)
+		}
+		if pr.Path != tc.wantPath {
+			t.Errorf("Path for %q = %q, want %q", tc.target, pr.Path, tc.wantPath)
 		}
 		ReleaseRequest(pr)
 	}
