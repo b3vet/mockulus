@@ -32,6 +32,14 @@ run: ## Run mockulus locally with text logs
 test: ## Run unit tests with the race detector
 	$(GO) test -race -count=1 ./...
 
+# The allocation ceilings of SPEC §16.3 rule 1 and D-OPEN-14. They are built out
+# of the race suite above, because the race detector allocates on its own
+# account and not the same number of times twice, so this is the run that
+# actually asserts them.
+.PHONY: test-alloc
+test-alloc: ## Assert the hot-path allocation budgets (no race detector)
+	$(GO) test -count=1 -run 'AllocBudget' ./internal/match
+
 .PHONY: test-cover
 test-cover: ## Run unit tests and report coverage of the correctness core
 	$(GO) test -race -count=1 -coverprofile=coverage.txt -covermode=atomic ./...
