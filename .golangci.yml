@@ -64,6 +64,19 @@ linters:
   exclusions:
     generated: lax
     rules:
+      # x/net/http2/h2c is deprecated and its named replacement does not
+      # replace it: net/http's Protocols/SetUnencryptedHTTP2 speaks cleartext
+      # HTTP/2 by prior knowledge only, and has no equivalent of the HTTP/1.1
+      # `Upgrade: h2c` handshake. The migration was tried and
+      # TestH2CEnabledGatesCleartextHTTP2 rejected it — the upgrade case
+      # answered 200 where it must answer 101. Scoped to the one file that
+      # imports it, so the deprecation stays visible everywhere else and this
+      # goes away the day net/http grows the handshake. See the comment on
+      # Server.mockHandler.
+      - path: internal/server/server\.go$
+        linters:
+          - staticcheck
+        text: 'SA1019.*h2c'
       # The vendored Handlebars fork keeps upstream style; we only prune it.
       - path: internal/handlebars/
         linters:
