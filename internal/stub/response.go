@@ -45,6 +45,7 @@ func parseResponse(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledSt
 	}
 
 	parseStatus(errs, doc, resp)
+	_, resp.HasStatusMessage = doc["statusMessage"]
 	decodeString(errs, doc, "statusMessage", "/response/statusMessage", &resp.StatusMessage)
 	resp.StatusMessage = reasonPhrase(resp.StatusMessage)
 	parseResponseHeaders(errs, doc, resp)
@@ -457,11 +458,20 @@ func compileTemplates(errs *wmcompat.ErrorList, cs *CompiledStub, opts Options) 
 	// The opt-out covers the body only; headers stay templated, which is what
 	// the field name says and what makes it useful for a stub whose body is
 	// binary or already carries braces.
+	// A value that is not a boolean is refused rather than ignored. Reading
+	// `{"disableBodyTemplating": "true"}` as absent and templating the body is
+	// accept-and-behave-differently, which is what P3 exists to prevent and the
+	// same shape deviation #23 already rejects for `{"absent": false}`. The
+	// author of that stub asked for the opposite of what they would have got.
 	bodyDisabled := false
 	if raw, ok := resp.TransformerParameters[disableBodyTemplating]; ok {
-		if b, isBool := raw.(bool); isBool {
-			bodyDisabled = b
+		b, isBool := raw.(bool)
+		if !isBool {
+			errs.Addf(wmcompat.CodeMalformed,
+				"/response/transformerParameters/"+disableBodyTemplating,
+				disableBodyTemplating+" takes a boolean")
 		}
+		bodyDisabled = b
 	}
 
 	// A value with no braces never reaches the engine, which is what keeps

@@ -104,9 +104,13 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 		header["Content-Type"] = nil
 	}
 
-	if resp.StatusMessage != "" {
+	if resp.HasStatusMessage {
 		// Only a stub that asked for a reason phrase leaves the ordinary path,
-		// and it rejoins it if the connection cannot be taken (HTTP/2).
+		// and it rejoins it if the connection cannot be taken (HTTP/2). The
+		// test is whether the key was there rather than whether it was
+		// non-empty: `"statusMessage": ""` asks for a blank phrase, which
+		// HTTP/1.1 permits and WireMock sends, and reading empty as unset
+		// answered it with the canonical phrase instead.
 		if status, served := writeWithReason(w, r, resp, body, opts.WriteSlack); served {
 			return status
 		}
