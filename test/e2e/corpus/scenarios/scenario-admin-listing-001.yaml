@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: scenario-admin-listing-001
-behaviors: [B-ADMIN-SCENARIOS-GET]
+behaviors: [B-ADMIN-SCENARIOS-GET, B-DEV-DEVIATION-32]
 # n/a: WireMock's listing carries a fourth field — the member stubs, under
 # `mappings` — that SPEC §5.1 does not name, so the two documents differ by more
 # than identity and a differential diff would report it every run. The divergence

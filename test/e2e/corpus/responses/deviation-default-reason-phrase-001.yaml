@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-default-reason-phrase-001
+behaviors: [B-DEV-DEVIATION-30, B-RESP-STATUS]
+# The phrase a response carries when the stub asked for none is Go's, and
+# WireMock sends Jetty's — `500` is "Internal Server Error" here and "Server
+# Error" there, and a code with no IANA name gets "status code 222" here
+# against a bare "222" there. So this cannot be `wm: verified`: the two servers
+# disagree by design, which is deviation #30.
+#
+# Choosing the phrase at all means writing the status line by hand over a
+# hijacked connection, which is what closes the connection in deviation #7. A
+# stub that asks for a phrase pays that; one that says nothing should not, and
+# that is the whole reason the default is Go's table rather than Jetty's.
+wm: n/a
+steps:
+  # A status Go has a canonical phrase for.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de300001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-default-reason-phrase-001/known"},
+         "response": {"status": 500, "body": "known"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-default-reason-phrase-001/known}
+    expect:
+      status: 500
+      status_message: "Internal Server Error"
+      body: "known"
+
+  # A status with no name in Go's table, where the phrase is synthesised. This
+  # is the half that differs most visibly — WireMock repeats the code as the
+  # phrase and Go spells out what it is doing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de300001-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-default-reason-phrase-001/unnamed"},
+         "response": {"status": 222, "body": "unnamed"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-default-reason-phrase-001/unnamed}
+    expect:
+      status: 222
+      status_message: "status code 222"
+      body: "unnamed"
+
+  # The control, and the line between this deviation and the supported feature
+  # next to it: a stub that *does* set a phrase gets exactly what it asked for,
+  # so the deviation is confined to the default rather than to the field.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de300001-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-default-reason-phrase-001/asked"},
+         "response": {"status": 500, "statusMessage": "Server Error", "body": "asked"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-default-reason-phrase-001/asked}
+    expect:
+      status: 500
+      status_message: "Server Error"
+      body: "asked"
