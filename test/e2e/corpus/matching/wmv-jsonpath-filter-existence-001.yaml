@@ -9,8 +9,9 @@ steps:
   # A filter term with no operator is an existence test over the element, which
   # is how a stub says "the elements that carry this field". It is worth its own
   # case because it is the one filter term whose right-hand side is implicit,
-  # and because the obvious mistake — reading the field's value as a boolean —
-  # is invisible until an element carries a false.
+  # and because the obvious mistake — reading the field's value instead of
+  # asking whether it is there — is invisible until an element carries a value
+  # the reader calls false or empty.
   - admin:
       method: POST
       path: /__admin/mappings
@@ -45,8 +46,32 @@ steps:
       body: '{"items":[{"flag":""}]}'
     expect: {status: 200, body: "carries"}
 
-  # An element without the field is the control, and it is what makes the three
-  # steps above assertions rather than coincidences.
+  # A null field. This is the step that separates presence from truthiness: the
+  # field resolved, so the element is selected, even though the same null under
+  # a definite path at the top level would be a non-match. Reading the filter
+  # term through the top-level emptiness rule answers 404 here.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"flag":null}]}'
+    expect: {status: 200, body: "carries"}
+
+  # The same argument for the two empty collections, which are the other values
+  # the top-level rule rejects. A filter term never asks what the field holds.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"flag":{}}]}'
+    expect: {status: 200, body: "carries"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-filter-existence-001/carries
+      body: '{"items":[{"flag":[]}]}'
+    expect: {status: 200, body: "carries"}
+
+  # An element without the field is the control, and it is what makes the steps
+  # above assertions rather than coincidences.
   - request:
       method: POST
       path: /e2e/wmv-jsonpath-filter-existence-001/carries

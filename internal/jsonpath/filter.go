@@ -24,7 +24,7 @@ type filter struct {
 	or [][]term
 }
 
-// term is one comparison, or a bare existence test.
+// term is one comparison, or an existence test on the operand alone.
 type term struct {
 	path *Path
 	// op is empty for an existence test.
@@ -138,8 +138,14 @@ func (t term) eval(item any) bool {
 	result := t.path.Eval(item)
 
 	if t.op == "" {
-		// Existence: the key is there and is not null.
-		return result.Matches()
+		// An operator-less term asks whether the operand resolved, and nothing
+		// else. The emptiness-and-null rule Result.Matches applies belongs to
+		// the top level, where the test is on what the evaluator returned for
+		// the whole expression; reapplying it here would quietly turn
+		// `?(@.flag)` into "carries a flag that is neither null nor an empty
+		// collection", so an element holding `"flag": null`, `{}` or `[]` would
+		// be dropped from the selection even though the field is plainly there.
+		return result.Found
 	}
 	if !result.Found {
 		return false
