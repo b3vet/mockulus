@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-escaping-headers-001
+behaviors: [B-RESP-HEADERS, B-RESP-TRANSFORMERS]
+wm: verified
+steps:
+  # Header values are rendered by the same engine the body is, so whatever the
+  # interpolation forms do to a body they do to a `Location` as well. Nothing
+  # covered that, and headers are where the consequence is sharpest: a body a
+  # human reads can be corrupted and still be read, while a redirect target
+  # carrying `&amp;` between its parameters is a URL a client follows to the
+  # wrong resource — or to a query parameter literally named `amp;page`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0041-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-escaping-headers-001/tagged"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Tag": "{{request.query.v}}",
+                                  "X-Tag-Raw": "{{{request.query.v}}}",
+                                  "Location": "https://example.test/find?tag={{request.query.v}}&page=2"},
+                      "body": "tagged",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The query value carries the five characters an escaper touches, and the two
+  # tag headers read it through the two mustache forms — so the pair is the same
+  # claim the body case makes, made on the header path.
+  #
+  # `Location` is the realistic one. Its `&page=2` is literal template text and
+  # was never a candidate for escaping; the value interpolated in front of it
+  # is. A build that escaped would produce a header where one ampersand is an
+  # ampersand and the other is an entity, which is how this reaches a user: as a
+  # link that half works.
+  #
+  # The body is a constant, so a header quietly filled from the rendered body
+  # cannot look right by accident.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-escaping-headers-001/tagged?v=%3Ca%26b%3E%22q%22%27p%27
+    expect:
+      status: 200
+      headers:
+        X-Tag: "<a&b>\"q\"'p'"
+        X-Tag-Raw: "<a&b>\"q\"'p'"
+        Location: "https://example.test/find?tag=<a&b>\"q\"'p'&page=2"
+      body: "tagged"
+
+  # The control on the same stub: a value with nothing to escape renders
+  # identically through both forms and leaves `Location` a URL anyone can
+  # follow. It is what separates "the renderer does not escape" from "the
+  # renderer mangles values", since both would satisfy the step above only if
+  # the mangling happened to be the identity on that one input.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-escaping-headers-001/tagged?v=plain
+    expect:
+      status: 200
+      headers:
+        X-Tag: "plain"
+        X-Tag-Raw: "plain"
+        Location: "https://example.test/find?tag=plain&page=2"
+      body: "tagged"
+
+  # `{{request.url}}` is the accessor that carries an ampersand without anyone
+  # putting one in a value: every request with two query parameters has one
+  # between them. It gets its own stub so the assertion is about the request
+  # model rather than about a value someone chose, and its request keeps the
+  # query in plain characters for the same reason.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0041-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-escaping-headers-001/url"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Url": "{{request.url}}"},
+                      "body": "urled",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/wmv-tmpl-escaping-headers-001/url?a=1&b=2
+    expect:
+      status: 200
+      headers:
+        X-Url: "/e2e/wmv-tmpl-escaping-headers-001/url?a=1&b=2"
+      body: "urled"
