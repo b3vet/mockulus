@@ -47,7 +47,9 @@ jobs:
             echo "These files are not gofmt-clean:"; echo "$unformatted"; exit 1
           fi
 
-      - uses: golangci/golangci-lint-action@v6
+      # v8 is the first release line that installs golangci-lint v2, which is
+      # what .golangci.yml is written for and what can target Go 1.25.
+      - uses: golangci/golangci-lint-action@v8
         with:
           version: latest
 
