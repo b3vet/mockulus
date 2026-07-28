@@ -1,0 +1,205 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-len-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `length()` is a call rather than a member, and the difference is the whole
+  # case: read as a member the expression asks for a key spelled "length()",
+  # which no document carries, so the stub registers and then never matches
+  # whatever is sent. The bare form below is the shortest statement of the rule
+  # — the expression selects a count, and a count is a value.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001d-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-len-001/counted",
+                     "bodyPatterns": [{"matchesJsonPath": "$.xs.length()"}]},
+         "response": {"status": 200, "body": "counted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/counted
+      body: '{"xs":[1,2]}'
+    expect: {status: 200, body: "counted"}
+
+  # An empty array counts zero, and zero is a value — so this matches where the
+  # array itself would not. It is the same rule that puts `{"v":0}` on the
+  # matching side of `$.v`, and an emptiness test applied to the count rather
+  # than to the node would refuse it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/counted
+      body: '{"xs":[]}'
+    expect: {status: 200, body: "counted"}
+
+  # An object is counted by its members.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/counted
+      body: '{"xs":{"a":1,"b":2}}'
+    expect: {status: 200, body: "counted"}
+
+  # What is not a collection has no length here. A string is the one to name:
+  # counting its characters is what most languages would do and what this
+  # dialect does not, so a stub that leans on it would be reading a rule this
+  # server does not have.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/counted
+      body: '{"xs":"abcd"}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/counted
+      body: '{"xs":5}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/counted
+      body: '{"xs":null}'
+    expect: {status: 404}
+
+  # A member that is not there counts nothing at all, which is a non-match and
+  # not a zero.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/counted
+      body: '{"other":[1,2]}'
+    expect: {status: 404}
+
+  # The nested form is where the count has to be a number a matcher can read.
+  # Two elements reach an inner matcher as "2": no decimal point, no quotes.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001d-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-len-001/pair",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.xs.length()",
+                                                           "equalTo": "2"}}]},
+         "response": {"status": 200, "body": "pair",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/pair
+      body: '{"xs":[1,2]}'
+    expect: {status: 200, body: "pair"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/pair
+      body: '{"xs":[1,2,3]}'
+    expect: {status: 404}
+
+  # The same stub counts an object's members, so the criterion is about the
+  # count and not about the kind of collection that produced it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/pair
+      body: '{"xs":{"a":1,"b":2}}'
+    expect: {status: 200, body: "pair"}
+
+  # The outer array is what is counted, not what its elements hold: a single
+  # element that is itself a pair counts one.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/pair
+      body: '{"xs":[[1,2]]}'
+    expect: {status: 404}
+
+  # An indefinite path in front of the call counts each hit rather than the
+  # hits, and the nested form is any-of over those counts, so a document with a
+  # two-element member anywhere in the list satisfies this stub.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001d-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-len-001/anypair",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.xs[*].length()",
+                                                           "equalTo": "2"}}]},
+         "response": {"status": 200, "body": "anypair",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/anypair
+      body: '{"xs":[[1],[2,3]]}'
+    expect: {status: 200, body: "anypair"}
+
+  # Two hits of one and three: neither is two, and the number of hits is not
+  # what is being compared either.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/anypair
+      body: '{"xs":[[1],[2,3,4]]}'
+    expect: {status: 404}
+
+  # The controls that keep the call from swallowing everything shaped like it.
+  # Without the brackets, `length` is an ordinary member name and stays one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001d-4000-8000-000000000004",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-len-001/member",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.xs.length",
+                                                           "equalTo": "seven"}}]},
+         "response": {"status": 200, "body": "member",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/member
+      body: '{"xs":{"length":"seven"}}'
+    expect: {status: 200, body: "member"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/member
+      body: '{"xs":[1,2]}'
+    expect: {status: 404}
+
+  # And a document really carrying a member spelled like a call is still
+  # reachable, through the bracket form — which is read as a literal key on
+  # both servers and is the escape hatch that makes refusing the dot form safe.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001d-4000-8000-000000000005",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-len-001/quoted",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.xs['length()']",
+                                                           "equalTo": "literal"}}]},
+         "response": {"status": 200, "body": "quoted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/quoted
+      body: '{"xs":{"length()":"literal"}}'
+    expect: {status: 200, body: "quoted"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-len-001/quoted
+      body: '{"xs":[1,2]}'
+    expect: {status: 404}

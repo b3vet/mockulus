@@ -53,11 +53,15 @@ type scanner struct {
 
 // Scannable reports whether MatchBytes and EvalBytes can answer for this path.
 //
-// It is narrower than Definite by exactly one case. A negative index needs the
-// array's length, which a single forward pass does not have; getting it means
-// scanning the array to count and then scanning it again, and a path carrying
-// several of them would multiply what a body costs by two per index. Those keep
-// the tree evaluation, where they were already correct.
+// It is narrower than Definite, and every step it declines it declines for the
+// same reason: this file answers with a byte range of the document, so a step
+// that needs something the document does not contain has nowhere to point. A
+// negative index needs the array's length, which a single forward pass does not
+// have; getting it means scanning the array to count and then scanning it
+// again, and a path carrying several of them would multiply what a body costs by
+// two per index. A merged union and a length() need a node that was never in the
+// body at all — an object assembled from members that are not adjacent, and a
+// count. All of them keep the tree evaluation, where they were already correct.
 func (p *Path) Scannable() bool { return p.scannable }
 
 // MatchBytes answers the bare form over the undecoded document. ok is false for
