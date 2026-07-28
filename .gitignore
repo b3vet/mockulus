@@ -1,7 +1,6 @@
 # Build output
 /bin/
 /dist/
-mockulus
 *.exe
 
 # Test & coverage artifacts
