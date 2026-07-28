@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-escaping-jsonbody-001
+behaviors: [B-RESP-TRANSFORMERS, B-TPL-JSONPATH]
+wm: verified
+steps:
+  # The templated JSON body is the shape most stubs that use the transformer at
+  # all are written in: a document with the request's own values interpolated
+  # into it. It is also where escaping does the most damage, because a JSON
+  # string has no notion of an HTML entity — a name that arrived as
+  # `Ben & Jerry` and came back as `Ben &amp; Jerry` is not a formatting
+  # difference, it is a different name, and every client that parses the
+  # response gets the wrong one.
+  #
+  # The document renders the same value through both mustache forms, side by
+  # side, so the two fields are a claim about the forms rather than about the
+  # value: whatever `name` is, `raw` has to equal it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000009-0040-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-escaping-jsonbody-001/echo"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "application/json"},
+                      "body": "{\"name\":\"{{jsonPath request.body '$.n'}}\",\"raw\":\"{{{jsonPath request.body '$.n'}}}\"}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Asserted twice on purpose. The byte assertion is what pins the rendering,
+  # since an entity and the character it stands for are different bytes; the
+  # document assertion is what says the response is still JSON carrying the
+  # value that was sent, which is what a caller of this stub actually depends
+  # on.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-escaping-jsonbody-001/echo
+      headers: {Content-Type: application/json}
+      body: '{"n": "Ben & Jerry <fine>"}'
+    expect:
+      status: 200
+      headers: {Content-Type: application/json}
+      body: '{"name":"Ben & Jerry <fine>","raw":"Ben & Jerry <fine>"}'
+      body_json:
+        name: "Ben & Jerry <fine>"
+        raw: "Ben & Jerry <fine>"
+
+  # A second request moves the value, so neither field can be explained by a
+  # response computed when the stub was registered. The apostrophe is here
+  # rather than above because it is the character a template author is least
+  # likely to think of as markup, and the one whose entity spelling differs
+  # between the two runtimes.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-escaping-jsonbody-001/echo
+      headers: {Content-Type: application/json}
+      body: '{"n": "5 > 4 && it''s fine"}'
+    expect:
+      status: 200
+      body: '{"name":"5 > 4 && it''s fine","raw":"5 > 4 && it''s fine"}'
+      body_json:
+        name: "5 > 4 && it's fine"
+        raw: "5 > 4 && it's fine"
+
+  # The control, and the one an over-eager fix fails: a value that arrives as
+  # entity text is entity text on the way out. Rendering raw means the renderer
+  # does not read the value, so it neither escapes it nor decodes it — a stub
+  # echoing a payload from a system that speaks in entities has to hand back
+  # what it was given.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-escaping-jsonbody-001/echo
+      headers: {Content-Type: application/json}
+      body: '{"n": "&amp;lt;"}'
+    expect:
+      status: 200
+      body: '{"name":"&amp;lt;","raw":"&amp;lt;"}'
+      body_json:
+        name: "&amp;lt;"
+        raw: "&amp;lt;"

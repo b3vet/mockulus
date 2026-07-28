@@ -5,7 +5,6 @@ package handlebars
 import (
 	"errors"
 	"fmt"
-	"html"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,11 +118,27 @@ func (r *renderer) node(n *Node) error {
 		if err != nil {
 			return err
 		}
-		s := Stringify(value)
-		if n.Escaped {
-			s = html.EscapeString(s)
-		}
-		return r.write(s)
+		// Both mustache forms write the value as it stringifies, so {{x}} and
+		// {{{x}}} differ only in how many braces were typed. Stock Handlebars
+		// escapes the double form for HTML; a mock server renders bodies that
+		// are far more often JSON or XML than markup, and there escaping is
+		// plain corruption — a name that arrived as `Ben & Jerry <fine>` would
+		// be served as `Ben &amp; Jerry &lt;fine&gt;`, which no client parsing
+		// the response can turn back into what was sent. The request model is
+		// not spared either: `{{request.url}}` on any query with two parameters
+		// would hand back a URL nothing can follow, for an ampersand nobody
+		// typed.
+		//
+		// Escaping is also not something this engine could get right by
+		// switching it on. WireMock runs its response transformer with escaping
+		// off, and the escaper Go ships spells a quote `&#34;` and an apostrophe
+		// `&#39;` where Java's writes `&quot;` and `&#x27;` — so the choice is
+		// between rendering raw, as the server being matched does, and inventing
+		// a third spelling that agrees with neither.
+		//
+		// Node.Escaped stays on the node: which form was written is still a fact
+		// about the template, and the parser is the place that knows it.
+		return r.write(Stringify(value))
 
 	case NodeBlock:
 		return r.block(n)
