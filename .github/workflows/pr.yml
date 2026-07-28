@@ -67,6 +67,12 @@ jobs:
           cache: true
       - run: go test -race -count=1 ./...
 
+      # The allocation ceilings are built out of the race suite above, since the
+      # detector's own allocations are neither ours nor repeatable. This is the
+      # run that asserts them.
+      - name: hot-path allocation budgets
+        run: make test-alloc
+
   dco:
     name: DCO sign-off
     runs-on: ubuntu-latest
