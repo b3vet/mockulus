@@ -34,8 +34,11 @@ Every entry below carries a **Triage** line: the verdict, whether it blocks v1,
 and what the recommended option costs. S is under a day, M a few days, L a week
 or more.
 
-**32 fix · 21 accept · 1 unverifiable**, of which **23 fixes block v1** —
-14 of them under a day, 5 a few days, 3 a week or more.
+**32 fix · 21 accept · 1 unverifiable**, of which **24 block v1**.
+**Ten are resolved** — T1, T8, J8, M1, M6, R8, R9 and R14 fixed; Q1 and R15
+numbered as deviations #29 and #30. Seven of the ten were in the blocking set,
+which leaves **17 blocking items**: 8 under a day, 5 a few days, 3 a week or
+more.
 
 The test that decided most of these is not "does WireMock differ" — it is
 whether **this spec already commits to an answer**. A dialect gap where §6.7
@@ -150,6 +153,8 @@ row D-OPEN-1 believed it already had.
 
 **Triage: FIX** · **v1-blocking** · cost S — WireMock has exactly one escaping mode (NOOP), so a knob adds a second behaviour with no oracle and no user.
 
+**Resolved 2026-07-29.** Fixed — templated output is no longer escaped.
+
 The widest-blast-radius finding here. Any templated body carrying `&`, `<`,
 `>`, `"` or `'` is corrupted, which includes most templated JSON.
 
@@ -249,6 +254,8 @@ On 2026-07-28, `offset='1 months'` gives WireMock `2026-08-28` and mockulus
 ### T8 [S2] — `now format='XXX'` at a zero offset
 
 **Triage: FIX** · **v1-blocking** · cost S — the stated blocker does not exist and the fix is two lines.
+
+**Resolved 2026-07-29.** Fixed — `XXX` maps to Go's `Z07:00`, and the default format with it.
 
 `XXX` renders `Z` on WireMock and `+00:00` on mockulus, because Java's pattern
 special-cases UTC and the Go layout `-07:00` cannot. Non-zero offsets agree.
@@ -365,12 +372,16 @@ undocumented.
 
 **Triage: FIX** · cost S — the acceptance sets line up exactly after the fallback (unpadded in, wrong-alphabet out), it is a two-line shared helper, and it retires an entry in another section….
 
+**Resolved 2026-07-29.** Fixed — same shared decoder as M6.
+
 `SGVsbG8` (no padding) decodes to `Hello` there and is refused here 422, because
 `base64.StdEncoding` requires padding. The padded and url-safe forms agree.
 
 ### R9 [S2] — an empty header value array, in the opposite direction
 
 **Triage: FIX** · **v1-blocking** · cost S — it is the one item in this section where mockulus violates P3 in our own tree, WireMock already agrees with the strict answer, and the fix is a single branch that….
+
+**Resolved 2026-07-29.** Fixed — an empty header value array is refused 422.
 
 `"headers":{"X-A":[]}` is refused by WireMock 422 (`No value for X-A`) and
 accepted here 201, serving no such header.
@@ -410,6 +421,8 @@ escapes instead, and spells a control character `\u001f` where WireMock spells i
 
 **Triage: FIX** · **v1-blocking** · cost S — D-OPEN-9's own settle condition was "probe pinned WireMock with `statusMessage: ""` and match it", the probe is done and WM honours it, the change is one field, and….
 
+**Resolved 2026-07-29.** Fixed — an empty `statusMessage` now reaches the wire (closes D-OPEN-9).
+
 WireMock sends an empty reason phrase as asked (`HTTP/1.1 200 `); mockulus
 treats empty as unset and sends `OK`. This is D-OPEN-9 in `DECISIONS.md`, now
 measured: **the probe that entry asked for has been done, and WireMock honours
@@ -418,6 +431,8 @@ the empty string.**
 ### R15 [S2] — the reason phrase for a status with no IANA name
 
 **Triage: ACCEPT** · **v1-blocking** · cost S — D-OPEN-5 pre-committed to it ("If none does, this becomes a numbered deviation and stops being a question"), no phrase-reading client has been produced in the time….
+
+**Resolved 2026-07-29.** Accepted — deviation #30, pinned by `deviation-default-reason-phrase-001` (closes D-OPEN-5).
 
 `599` gives `HTTP/1.1 599 599` there and `HTTP/1.1 599 status code 599` here;
 `451` gives `Unavailable for Legal Reason` against `Unavailable For Legal
@@ -431,6 +446,8 @@ the differential replay, which compares status code, headers and body.
 ### M1 [S2] — a null matcher operand is accepted and silently coerced to `""`
 
 **Triage: FIX** · **v1-blocking** · cost S — the defect is one shared decode step, and a single guard is the only shape that cannot be half-applied to a seventh matcher later.
+
+**Resolved 2026-07-29.** Fixed — a null operand is refused 422 for every matcher key.
 
 WireMock refuses every one of these 422 with a pointed message; mockulus
 registers them 201 and the stub then matches by a rule nobody wrote.
@@ -504,6 +521,8 @@ matches an empty body" rule that `matchers-core-empty-body-001` pins.
 ### M6 [S2] — unpadded base64 in `binaryEqualTo`
 
 **Triage: FIX** · **v1-blocking** · cost S — A, landed as one helper shared with R8 so the two spellings cannot drift apart later.
+
+**Resolved 2026-07-29.** Fixed — unpadded base64 decodes, via the helper shared with R8.
 
 `aGVsbG8` is accepted there and refused here 422, same cause as R8. Base64 with
 embedded whitespace is refused by both.
@@ -590,6 +609,8 @@ the conflation only shows in the nested form.
 
 **Triage: FIX** · cost S — one line makes the implementation match the rule the corpus already states and the oracle already answers.
 
+**Resolved 2026-07-29.** Fixed — an operator-less filter term asks whether the path resolved.
+
 `$.items[?(@.flag)]` matches `{"flag":null}` and `{"flag":{}}` on WireMock and
 neither here, because mockulus routes the operator-less term through the same
 emptiness rule the bare form uses.
@@ -647,6 +668,8 @@ mockulus refuses 422 ("only one URL criterion may be given"); WireMock's
 ### Q1 [S2] — an empty `equalTo` operand loses to a non-empty sibling value
 
 **Triage: ACCEPT** · cost S — the rule mockulus follows is the one this spec states twice, and the oracle's answer here is a NaN-ordering accident rather than a semantic choice.
+
+**Resolved 2026-07-29.** Accepted — deviation #29, pinned by `deviation-multivalue-anyof-001` (closes D-OPEN-1).
 
 `{"x":{"equalTo":""}}` against `?x=&x=v` is 404 on WireMock and 200 here. Also
 diverges for `?x=v&x=`, `?x&x=v`, `?x=&x=a`, `?x=a&x=`, `?x=&x=&x=v`; agrees for

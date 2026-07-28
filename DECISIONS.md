@@ -21,8 +21,15 @@ the minimum-distance value instead.
 Closing it this way rather than chasing parity: the divergent corner needs all
 three of a multi-valued key, `caseInsensitive`, and a near-miss sibling at
 non-zero distance, and reproducing it would put a distance computation on the
-matching hot path against SPEC §16.3 rule 1. Recorded in the §5.5 deviation
-list; no code change.
+matching hot path against SPEC §16.3 rule 1. No code change.
+
+**Correction, 2026-07-29.** This entry said the deviation was recorded in §5.5
+and it was not — the list went from 28 rows to 34 without ever carrying this
+one, and `deviations.yaml` matched it exactly, so nothing caught the gap. It is
+now deviation #29, pinned by `deviation-multivalue-anyof-001`. The differential
+corpus found the same behaviour from the other side while this was open, which
+is what surfaced the omission: an entry that claims its own follow-up is done is
+worth exactly as much as the artifact it names.
 
 ---
 
@@ -61,9 +68,7 @@ those, no case asserts them, and no client has been shown to care.
 
 ---
 
-## D-OPEN-5 — Reason phrase when `statusMessage` is absent
-
-**Status:** Go's phrase table · **Owner:** M6 · **Reversible:** at a cost
+## D-OPEN-5 — Reason phrase when `statusMessage` is absent — CLOSED
 
 The larger question this entry used to carry — whether `statusMessage` reaches
 the wire at all — is closed. It does. A stub that sets it is served over a
@@ -88,10 +93,19 @@ have to take the hijacked path to control its phrase, which is exactly the
 per-stub opt-in that keeps the current implementation within P2, and it would
 put deviation #7's connection-close on all traffic.
 
-**To settle:** find a client that reads the reason phrase and acts on it. Nobody
-has produced one; HTTP/2 has no phrase at all, which is the strongest evidence
-that none exists. If none does, this becomes a numbered deviation and stops
-being a question.
+**Resolved 2026-07-29 on the terms this entry set for itself.** The settle
+condition was to find a client that reads the reason phrase and acts on it. None
+has been produced in the time the entry has been open, and HTTP/2 does not carry
+the field at all, which is the strongest evidence available that none exists —
+so by its own words this "becomes a numbered deviation and stops being a
+question". It is deviation #30, pinned by `deviation-default-reason-phrase-001`.
+
+The differential corpus measured the difference precisely while this was open:
+`500` is "Internal Server Error" here against Jetty's "Server Error", `222` is
+"status code 222" against a bare "222", and `451` differs even in its casing.
+None of it is visible to a client that does not read the phrase, and the
+alternative — writing every status line by hand — puts deviation #7's
+connection-close on all traffic to fix something nobody has shown reads it.
 
 ---
 
@@ -124,34 +138,28 @@ part of the accepted surface, not that the two differ); pinned by
 
 ---
 
-## D-OPEN-8 — `\s` and `\S` on U+000B
+## D-OPEN-8 — `\s` and `\S` on U+000B — CLOSED
 
-**Status:** translated to Java's definition · **Owner:** M6 · **Reversible:** yes
+**Resolved 2026-07-29: translation is the policy, and §6.6 now says so.** The
+question was never whether lowering `\s` to Java's `[ \t\n\x0B\f\r]` was right —
+it is exact, costs nothing at match time, and removes a wrong answer rather than
+a missing feature. The question was that it contradicted §6.6 item 4, which
+accepted RE2-vs-Java divergence as a blanket carve-out, and a deliberate
+decision should not be overridden by a table entry nobody re-read.
 
-Java's `\s` is `[ \t\n\x0B\f\r]`; RE2's omits the vertical tab, U+000B. The Java
-syntax translation added in M1 lowers `\s` and `\S` to Java's definition, so a
-pattern containing the most common escape in the language now means the same
-thing on both servers.
+Item 4 is rewritten. Where an exact translation exists it is preferred, and the
+carve-out is narrowed to the residue where none does — `\d` and `\w` under
+Unicode, where Java's definition depends on flags RE2 has no equivalent for. The
+translation table in `internal/regexx/javasyntax.go` is named there as where the
+policy is implemented, so the next person to add a class knows the rule rather
+than inferring it from what happens to be in the table.
 
-This contradicts SPEC §6.6 item 4, which says RE2-vs-Java divergences are
-**accepted** for patterns that compile on both engines. The translation was
-included anyway because the fix is exact, costs nothing at match time, and
-removes a wrong answer rather than a missing feature — but the carve-out it
-overrides was a deliberate decision, so overriding it should be a deliberate one
-too.
-
-**To change:** delete the `s` row from `javaLetterClasses` in
-`internal/regexx/javasyntax.go`. One table entry.
-
-**To settle:** decide whether §6.6 item 4 still describes the intended policy now
-that a translation step exists. If translation is the policy, item 4 should say
-so and name what is still accepted as divergent.
+No code change: the behaviour was already the intended one, and what was open
+was whether the spec agreed with it.
 
 ---
 
-## D-OPEN-9 — `statusMessage: ""`
-
-**Status:** sends the canonical phrase · **Owner:** M6 · **Reversible:** yes
+## D-OPEN-9 — `statusMessage: ""` — CLOSED
 
 A stub setting `"statusMessage": ""` explicitly asks for an empty reason phrase.
 Mockulus currently treats empty as absent and sends the canonical phrase for the
@@ -163,11 +171,19 @@ test written to assert a blank reason phrase would get one it did not ask for.
 Against that: HTTP/1.1 permits an empty reason phrase but little tooling expects
 it, and entering the hijack path for it costs a connection close.
 
-**To change:** distinguish "absent" from "present and empty" when decoding
-`statusMessage` in `internal/stub/response.go`, and let the empty case take the
-hijack path.
+**Resolved 2026-07-29: probed, and matched.** The settle condition was to ask
+the oracle and follow it. WireMock 3.13.2 honours the empty string and sends
+`HTTP/1.1 200 ` with a blank phrase, so mockulus now does too.
 
-**To settle:** probe pinned WireMock with `"statusMessage": ""` and match it.
+`CompiledResponse` carries `HasStatusMessage` alongside the phrase, because the
+question "did the stub ask for a phrase" is not the question "is the phrase
+empty", and reading the second as the first is what answered a stub asking for a
+blank phrase with the canonical one. An omitted key still takes the ordinary
+path and still gets Go's table, which is deviation #30 and a separate question.
+
+The cost is the one the entry named: a stub spelling out an empty phrase now
+takes the hijack path and closes the connection, per deviation #7. That follows
+from choosing a phrase at all, and it is confined to stubs that asked.
 
 ---
 
@@ -376,10 +392,7 @@ the watermarked bulk read and removes by key, like mappings and scenarios.
 
 ---
 
-## D-OPEN-12 — `disableBodyTemplating` is ours, not WireMock's
-
-**Status:** implemented as SPEC §10.1 describes · **Owner:** M6 ·
-**Reversible:** yes
+## D-OPEN-12 — `disableBodyTemplating` is ours, not WireMock's — CLOSED
 
 SPEC §10.1 carries `transformerParameters: {"disableBodyTemplating": true}` as a
 per-stub opt-out "honored **[DH]**". Probed against pinned 3.13.2, the answer to
@@ -407,18 +420,26 @@ Two questions, and they are separable:
   exists to prevent, and the same shape deviation #23 rejects for
   `{"absent": false}`. A 422 naming the parameter would be consistent with it.
 
-**To change:** `compileTemplates` in `internal/stub/response.go` for both halves.
+**Resolved 2026-07-29: the extension stands, and the silent half is fixed.**
 
-**To settle:** the first is a product call, not a probe. If the extension stands
-it wants a number in §5.5, since a WireMock user's stub silently changes meaning
-when it moves here.
+The parameter keeps its name and its scope. It earns its place — a payload that
+is itself a Handlebars template, or a fixture full of braces, is exactly the body
+a stub wants to exempt — and renaming it to WireMock's `disableBodyFileTemplating`
+would borrow a name for a different job, since that one guards `bodyFileName`
+and this one guards the inline body. What the entry was right about is that an
+extension wearing a name that reads like parity has to be written down: it is
+deviation #31, pinned by `templating-disable-body-001`.
+
+The second half was not a product call at all. A value that is not a boolean was
+ignored in silence, so `{"disableBodyTemplating": "true"}` templated the body —
+the author asked for the opposite of what they got, which is the
+accept-and-behave-differently P3 exists to forbid and the same shape deviation
+#23 already rejects for `{"absent": false}`. It is now 422 naming the parameter,
+in `compileTemplates`.
 
 ---
 
-## D-OPEN-13 — The scenarios admin surface diverges three ways
-
-**Status:** implemented as SPEC §5.1 describes · **Owner:** M6 ·
-**Reversible:** yes
+## D-OPEN-13 — The scenarios admin surface diverges three ways — CLOSED
 
 §5.1 marks both scenario admin rows **[DH]** — the listing's shape and the
 PUT-state validation. Probed against pinned 3.13.2, all three answers differ
@@ -451,12 +472,27 @@ from ours, and each one is a separate call:
 `setScenarioState` in `internal/admin/scenarios.go` for the second, and
 `scenarioView` for the first.
 
-**To settle:** the first two are product calls rather than probes — the
-measurements are in, and what is open is whether parity is worth the cost. The
-third is the one that should not change: a scenario that cannot be put into the
-state its own reset produces is a WireMock bug wearing a validation message. If
-any of them stands it wants a number in §5.5, since a suite written against
-WireMock can tell the difference.
+**Resolved 2026-07-29: all three stand, and all three are now numbered.**
+
+The listing stays lean — deviation #32. A scenario holding a hundred stubs would
+repeat all hundred inside a response whose caller wants a state name, and those
+documents are one `GET /__admin/mappings` away. The field is also what makes the
+scenario cases `wm: n/a`, so omitting it is what lets the rest of the surface be
+diffed.
+
+The refusal stays 400 with code 1031 — deviation #33. Both servers refuse the
+write and both name the scenario and the state, so the failure is loud either
+way; only the status class differs, and 400 is what §5.1 and Appendix B commit
+to for a path parameter naming a state that does not exist.
+
+`Started` stays settable on every scenario — deviation #34, and the one the
+entry already argued should not change. A scenario that cannot be put into the
+state its own reset produces is a WireMock bug wearing a validation message, and
+matching it would put the listing, the request path and `POST
+/__admin/scenarios/reset` into disagreement with each other.
+
+#32 is pinned by `scenario-admin-listing-001`; #33 and #34 by
+`scenario-admin-set-state-001`.
 
 ---
 
