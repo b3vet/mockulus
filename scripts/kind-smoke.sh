@@ -75,15 +75,38 @@ kubectl run "kind-smoke-$RANDOM" \
       >/dev/null
 
     echo "== every request through the Service is served"
+    # Propagation across pods is bounded, not instant (SPEC §8). The pod that
+    # took the write splices it into its own snapshot and serves it straight
+    # away; its peers see it when their epoch poller next notices, which is
+    # sync_interval plus a reload. Firing the assertion immediately therefore
+    # measures how far the deployment happened to have got — with three pods it
+    # lands somewhere around a third of the requests, and the number moves run
+    # to run.
+    #
+    # So the sweep is retried until it comes back clean, under a deadline. What
+    # is being asserted is unchanged and is still the strong claim: every
+    # request through the Service is served by whichever pod answers it. The
+    # deadline is what stops "eventually" from meaning "never" — it is far
+    # wider than the ~1.5 s §16.1 S9 budgets for propagation, because this is a
+    # correctness check and the timing belongs to the perf suite.
+    deadline=$(( $(date +%s) + 60 ))
     ok=0
-    i=0
-    while [ "$i" -lt "$REQUESTS" ]; do
-      code=$(curl -s -o /dev/null -w "%{http_code}" "http://$SVC:8080/kind/smoke")
-      [ "$code" = "200" ] && ok=$((ok+1))
-      i=$((i+1))
+    while :; do
+      ok=0
+      i=0
+      while [ "$i" -lt "$REQUESTS" ]; do
+        code=$(curl -s -o /dev/null -w "%{http_code}" "http://$SVC:8080/kind/smoke")
+        [ "$code" = "200" ] && ok=$((ok+1))
+        i=$((i+1))
+      done
+      [ "$ok" -eq "$REQUESTS" ] && break
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        echo "200s: $ok/$REQUESTS after 60s — the deployment never converged"
+        exit 1
+      fi
+      sleep 1
     done
     echo "200s: $ok/$REQUESTS"
-    [ "$ok" -eq "$REQUESTS" ] || exit 1
 
     echo "kind smoke passed"
   '
