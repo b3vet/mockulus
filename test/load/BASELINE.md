@@ -47,10 +47,41 @@ Not yet recorded. The reference rig of SPEC §16.1 is 1 pod with
 separate machine. The nightly perf job records it, and the release gate reads
 from it.
 
+The separate machine is the part that is easy to skip and not optional. Run on
+one host, k6 and mockulus compete for the same cores, and the contention lands
+on the number the SLO is stated in: the same build measured on this laptop
+reported p99 1.07 ms at 20k in the row above and 5.03 ms on a later day, with
+nothing between the two but what else the machine was doing. A run that shares a
+host says whether the server still works, never whether it still meets §16.1.
+
+### Do not record a Docker Desktop number on macOS
+
+A rig built from `compose.yaml` on a Mac tops out around 19.6k RPS whatever the
+server does, because published-port traffic crosses the VM boundary through a
+userspace proxy. Measured 2026-07-28 on the M4 host above: the container run
+plateaued at 19,613 RPS while the same build, same load script and same 2-core
+budget reached the full 50k ramp natively minutes apart, and both runs sat at an
+identical 7.0 MB/s — a throughput ceiling that does not move with the workload is
+the network path, not the application.
+
+The compose rig is still the right local rig: it is what holds mockulus to the
+2 vCPU / 512Mi budget, and it is faithful on Linux. On macOS read it for
+correctness under load and for relative comparisons within itself, and never
+copy a number out of it into this file.
+
 ## S2–S10
 
-Not yet recorded — they need the stub sets, templating, scenarios and journal of
-M1 through M5. Each lands with its milestone.
+Scripts exist for all of them (`test/load/s2.js` … `s10.js`, with
+`s6-driver.sh` and `s8-driver.sh` owning the process lifecycle their scenarios
+need). Each encodes its SPEC §16.1 target as a k6 threshold, so a run that
+misses the SLO fails rather than reporting a number someone has to judge.
+
+No numbers recorded yet: S2, S3, S4, S5, S7 and S8 have been exercised against a
+single memory-store instance to prove they drive what they claim to drive, but
+S4's latency is Couchbase-bound by definition, S6 and S9 need the store to be
+shared before they measure anything, and every one of them needs the reference
+rig above before its number means what the SLO says. S6, S9 and S10 refuse to
+run rather than pass vacuously when the topology they need is absent.
 
 ## Microbenchmarks
 
