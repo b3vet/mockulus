@@ -1,0 +1,147 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminq-criteria-fields-001
+behaviors:
+  - B-ADMIN-REQUESTS-COUNT-POST
+  - B-REQ-HEADERS
+  - B-REQ-COOKIES
+  - B-REQ-QUERYPARAMETERS
+  - B-MATCH-ABSENT
+config: journal
+# n/a: the first verification polls, because our journal is eventually
+# consistent where WireMock's is immediate (deviation #10), and a polled step is
+# not replayed against the oracle.
+wm: n/a
+steps:
+  # One call carrying a header, a cookie and a query parameter, so each family
+  # of criteria has a real recorded value to be read back out of the journal.
+  # Nothing serves it; the journal records unmatched calls too (§11.1).
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-adminq-criteria-fields-001/session?channel=web
+      headers:
+        X-Tenant: acme
+        Cookie: "session=abc"
+    expect: {status: 404}
+
+  # Cookie criteria gate a verification exactly as they gate a stub. This is
+  # also the step that waits for the entry to land, so every count below is
+  # exact.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "cookies":{"session":{"equalTo":"abc"}}}
+    expect_eventually:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # The same criterion with a different value counts nothing, so the cookie is
+  # being compared rather than merely looked for.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "cookies":{"session":{"equalTo":"zzz"}}}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # And `absent` on the same name counts nothing either, which is the proof the
+  # cookie was found in the recorded entry at all: a lookup that missed would
+  # report the key as absent and answer 1 here while still answering 1 above.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "cookies":{"session":{"absent":true}}}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # Header names are case-insensitive on the wire, and a recorded entry carries
+  # whichever spelling arrived. A verification written in lower case has to find
+  # the header the server canonicalised to `X-Tenant`, or a `verify()` copied
+  # out of a curl command would report that a call nobody made was never made.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "headers":{"x-tenant":{"equalTo":"acme"}}}
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "headers":{"X-TENANT":{"equalTo":"acme"}}}
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # The controls that keep the two above from being satisfied by a fuzzy match:
+  # only the case of the letters may differ, not the letters. One name is the
+  # same length as `X-Tenant` and differs in a single letter, the other is a
+  # different length — so neither a per-byte comparison that had stopped folding
+  # case nor a length check standing in for one can explain both answers.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "headers":{"y-tenant":{"equalTo":"acme"}}}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "headers":{"xtenant":{"equalTo":"acme"}}}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # `absent` on a header the call did carry counts nothing, and on one it did
+  # not carry counts the call. The pair is what makes either half meaningful:
+  # an implementation that always reported absent would pass the second and fail
+  # the first, and one that never did the reverse.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "headers":{"X-Tenant":{"absent":true}}}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "headers":{"X-Cov-Adminq-Never-Sent":{"absent":true}}}
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # The same pair for query parameters, which are recorded in their own shape —
+  # an object carrying `key` and every `values` entry (§11.2) — and so are read
+  # on their own terms rather than as a bare value.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "queryParameters":{"channel":{"absent":true}}}
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"urlPath":"/e2e/cov-adminq-criteria-fields-001/session",
+         "queryParameters":{"trace":{"absent":true}}}
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # Removing this case's own entry keeps the shared journal from growing for the
+  # cases that come after it.
+  - admin:
+      method: POST
+      path: /__admin/requests/remove
+      body: '{"urlPath":"/e2e/cov-adminq-criteria-fields-001/session"}'
+    expect: {status: 200}

@@ -1,0 +1,151 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-matchers-verify-absent-key-001
+behaviors:
+  - B-ADMIN-REQUESTS-COUNT-POST
+  - B-MATCH-ABSENT
+  - B-REQ-HEADERS
+  - B-REQ-QUERYPARAMETERS
+# The journal is off by default (deviation #1), so a case that verifies runs on
+# the variant that turns it on.
+config: journal
+# n/a: the counting steps poll, because our journal is eventually consistent
+# where WireMock's is immediate (deviation #10), and a polled step is not
+# replayed against the oracle — `verified` would claim a comparison that never
+# ran.
+wm: n/a
+#
+# A verification criterion is a stub's `request` block with no response attached,
+# and the two have to mean the same thing: if they did not, a suite could verify
+# a call against a stub that would never have served it. That equivalence is
+# carried by the matchers, but a matcher is only half of it — the other half is
+# the subject the criterion is handed, and a recorded request has to produce the
+# same "this key is not here" a live request does.
+#
+# `absent` is the criterion that can only be answered by the subject, since
+# every other matcher is a question about a value. It is therefore the one that
+# fails silently if a missing key is handed over as an empty value instead: the
+# count comes back plausible and wrong, and the suite reads it as a fact.
+steps:
+  # Two calls to one path, differing only in what they carry. Neither matches a
+  # stub, which is beside the point: the journal records matched and unmatched
+  # alike (§11.1), and it is the pair that makes the counts below falsifiable —
+  # a criterion that ignored the key entirely would answer 2 to all of them.
+  - request:
+      port: mock
+      method: GET
+      path: "/e2e/cov-matchers-verify-absent-key-001/orders?tier=gold"
+      headers: {X-Cov-Trace: t-1}
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-matchers-verify-absent-key-001/orders
+    expect: {status: 404}
+
+  # Both calls, so the denominator of everything below is known and the later
+  # counts are a selection rather than whatever the journal happened to hold.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"method":"GET","urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders"}'
+    expect_eventually:
+      status: 200
+      body_json: {count: 2, requestJournalDisabled: false}
+
+  # The header criterion selects the call that carries it…
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders",
+         "headers":{"X-Cov-Trace":{"equalTo":"t-1"}}}
+    expect:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # …and `absent` selects the other one. The two counts summing to the two calls
+  # is the claim: a recorded request with no such header has to be absent rather
+  # than empty, or this would answer 0, and a missing key handed over as an
+  # empty value would let both criteria be satisfied by the same entry.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders",
+         "headers":{"X-Cov-Trace":{"absent":true}}}
+    expect:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # And it is the call it should be. A count alone cannot tell "the right one"
+  # from "one of them", so the entry is named — by its full URL, which is the
+  # one field the two calls do not share.
+  - admin:
+      method: POST
+      path: /__admin/requests/find
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders",
+         "headers":{"X-Cov-Trace":{"absent":true}}}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match:
+            url: /e2e/cov-matchers-verify-absent-key-001/orders
+            method: GET
+
+  # A recorded entry carries whatever spelling of a header name arrived on the
+  # wire, and a criterion may name it in any other. Both forms of the criterion
+  # are asked in that spelling, because a lookup that fell back to a
+  # case-insensitive scan only when it had a value to compare would answer this
+  # pair one right and one wrong.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders",
+         "headers":{"x-cov-trace":{"equalTo":"t-1"}}}
+    expect:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders",
+         "headers":{"x-cov-trace":{"absent":true}}}
+    expect:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  # A query parameter is recorded in a different shape from a header — an object
+  # carrying the key and its values (§11.2) — so it reaches the subject down its
+  # own path and is asked separately rather than assumed to follow.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders",
+         "queryParameters":{"tier":{"equalTo":"gold"}}}
+    expect:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}
+
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-matchers-verify-absent-key-001/orders",
+         "queryParameters":{"tier":{"absent":true}}}
+    expect:
+      status: 200
+      body_json: {count: 1, requestJournalDisabled: false}

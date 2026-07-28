@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-strings-arity-001
+behaviors:
+  - B-TPL-TRIM-LOWER-LOWERCASE-UPPER-UPPERCASE-SPLIT-JOIN-CONCAT-SUBST
+  - B-TPL-IF-UNLESS-EACH-WITH-LOOKUP
+  - B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL
+# A helper called with the wrong number of arguments is a serve-time failure
+# per SPEC §10.4, and the text it puts in the body is mockulus's own — pinned
+# WireMock's helpers have their own signatures and their own diagnostics — so
+# there is nothing here to diff.
+wm: n/a
+steps:
+  # An under-supplied helper has two plausible implementations and only one
+  # safe one. Returning the empty string is the other, and it is worse than a
+  # 500: a `{{split}}` that quietly yields nothing renders an empty collection,
+  # the {{#each}} over it emits no rows, and the response is a well-formed
+  # document that says the customer has no orders.
+  #
+  # Each refusal below names the signature rather than saying "wrong
+  # arguments", because the author reading it is choosing between adding an
+  # argument and reordering the ones they have.
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000041",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-strings-arity-001/split"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{split request.query.s}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-arity-001/split?s=a,b
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'split takes a string and a separator'
+
+  # `join` without a separator is the same mistake from the other direction —
+  # the list is there, the separator is missing — and joining on nothing is a
+  # tempting default that produces "abc" from three fields and loses the
+  # boundaries for good.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000042",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-strings-arity-001/join"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{join request.pathSegments}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/cov-tmpl-strings-arity-001/join}
+    expect:
+      status: 500
+      body_regex: 'join takes a list and a separator'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000044",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-strings-arity-001/substring-arity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{substring request.query.s}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The message says the end is optional, which is the fact the author needs:
+  # without it they cannot tell whether they are one argument short or two.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-arity-001/substring-arity?s=abc
+    expect:
+      status: 500
+      body_regex: 'substring takes a string, a start and an optional end'
+
+  # Both indices come off the query here, which is how a stub slices a value
+  # the caller names. The control first.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000043",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-strings-arity-001/substring"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{substring request.query.s request.query.from request.query.to}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-arity-001/substring?s=abcdef&from=1&to=4
+    expect: {status: 200, body: "x=[bcd]"}
+
+  # An index that is not a number, first in the start position and then in the
+  # end. They are read by separate calls, so a conversion checked in one place
+  # and not the other passes one of these two steps and fails the other.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-arity-001/substring?s=abcdef&from=x&to=4
+    expect: {status: 500, body_regex: '"x" is not a number'}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-arity-001/substring?s=abcdef&from=1&to=y
+    expect: {status: 500, body_regex: '"y" is not a number'}
+
+  # `replace` with no replacement. Deleting the target is the plausible
+  # default, and it is a data-loss default: the stub renders a body that is
+  # shorter than the one it was asked for and nothing says so.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000045",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-strings-arity-001/replace"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{replace request.query.s '-'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-arity-001/replace?s=a-b
+    expect:
+      status: 500
+      body_regex: 'replace takes a string, a target and a replacement'
+
+  # `lookup` with a collection and no key. Returning the collection itself
+  # would render a Go value into somebody's response body, which is the one
+  # outcome a mock server must never produce.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000046",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-strings-arity-001/lookup"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{lookup request.query}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-arity-001/lookup?k=a
+    expect:
+      status: 500
+      body_regex: 'lookup takes a collection and a key'
+
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}

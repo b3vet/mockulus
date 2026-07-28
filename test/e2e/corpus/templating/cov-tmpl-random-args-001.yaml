@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-random-args-001
+behaviors: [B-TPL-RANDOMVALUE, B-TPL-RANDOMINT-RANDOMDECIMAL, B-TPL-PICKRANDOM]
+# A generator has no differential oracle — two servers cannot draw the same
+# value — and the refusals below are mockulus's own wording. What is pinned is
+# the alphabet each option selects and the bounds each refusal enforces, per
+# SPEC §10.3.
+wm: n/a
+steps:
+  # The three existing generator cases pass every option a value that works.
+  # This one drives the options from the query string, which is how they are
+  # actually used: a stub that generates an account number of a length the
+  # caller asks for is one document serving a dozen fixtures, and every
+  # argument it takes is therefore attacker-shaped input.
+
+  # The type is left out entirely, so this is the default. It is the one draw
+  # nothing else in the corpus makes, and getting it wrong is invisible: a
+  # default that had slipped to ALPHABETIC still renders something that looks
+  # like an id.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000030",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-random-args-001/default"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "alnum={{randomValue length=128}} mix={{randomValue length=128}} ci={{randomValue type='alphanumeric' length=5}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `alnum` pins the length and the alphabet. `mix` is the same draw asserted
+  # for what makes the default *alphanumeric* rather than one of the narrower
+  # types: the regex requires a digit and a letter somewhere in the run, which
+  # an ALPHABETIC or NUMERIC generator can never produce and a correct one
+  # misses with probability around 2e-10 at this length.
+  #
+  # `ci` spells the type in lower case. WireMock templates are copied between
+  # projects with the casing whoever wrote them used, so the name has to be
+  # matched case-insensitively — a comparison against the upper-case constant
+  # alone turns this into an "unknown randomValue type" 500 on a template that
+  # works everywhere else.
+  - request: {method: GET, path: /e2e/cov-tmpl-random-args-001/default}
+    expect:
+      status: 200
+      body_regex: '^alnum=[A-Za-z0-9]{128} mix=[A-Za-z0-9]*([0-9][A-Za-z0-9]*[A-Za-z]|[A-Za-z][A-Za-z0-9]*[0-9])[A-Za-z0-9]* ci=[A-Za-z0-9]{5}$'
+
+  # Type and length from the request, so both can be spoiled by a caller.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000031",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-random-args-001/typed"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x=[{{randomValue type=request.query.t length=request.query.n}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The control: six digits, and nothing else.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/typed?t=NUMERIC&n=6
+    expect:
+      status: 200
+      body_regex: '^x=\[[0-9]{6}\]$'
+
+  # Zero length is a legitimate request with an empty answer, not an error and
+  # not a default length. A generator that treated 0 as "unset" would render
+  # thirty-six characters here, which is the difference between an empty
+  # optional field and a corrupt one.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/typed?t=NUMERIC&n=0
+    expect:
+      status: 200
+      body: "x=[]"
+
+  # A type outside the allowlist. Falling back to alphanumeric would be the
+  # friendly-looking choice and the wrong one: the caller asked for a shape,
+  # got a different shape, and the assertion downstream fails somewhere else.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/typed?t=ROMAN&n=4
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'unknown randomValue type "ROMAN"'
+
+  # A length that is not a number. The message names the option, because a
+  # template can carry several and "not a number" alone does not say which.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/typed?t=NUMERIC&n=big
+    expect:
+      status: 500
+      body_regex: 'randomValue length: "big" is not a number'
+
+  # A negative length. This is the one that has to be refused rather than
+  # clamped, because the clamped answer — an empty string — is indistinguishable
+  # from the legitimate zero-length draw above, and the caller who sent -1 meant
+  # something else entirely.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/typed?t=NUMERIC&n=-1
+    expect:
+      status: 500
+      body_regex: 'randomValue length must not be negative'
+
+  # randomInt takes its bounds the same way.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000032",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-random-args-001/int"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{randomInt lower=request.query.lo upper=request.query.hi}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Every value either reading of the upper bound can produce is three digits
+  # beginning "10", so the control asserts the bounds without asserting whether
+  # the top is inclusive.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/int?lo=100&hi=109
+    expect:
+      status: 200
+      body_regex: '^x=10[0-9]$'
+
+  # Each bound spoiled in turn, so a helper that validated one and not the
+  # other cannot pass both steps.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/int?lo=low&hi=9
+    expect: {status: 500, body_regex: '"low" is not a number'}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/int?lo=1&hi=high
+    expect: {status: 500, body_regex: '"high" is not a number'}
+
+  # Bounds the wrong way round. An implementation that subtracts to size the
+  # interval computes a negative width here; refusing is what stops that from
+  # becoming a panic or a number outside both bounds.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/int?lo=9&hi=2
+    expect:
+      status: 500
+      body_regex: 'randomInt upper must not be below lower'
+
+  # randomDecimal is a separate implementation of the same contract, and the
+  # separate implementation is why it gets its own steps rather than a comment
+  # saying it is like randomInt.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000033",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-random-args-001/decimal"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "x={{randomDecimal lower=request.query.lo upper=request.query.hi}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/decimal?lo=2&hi=3
+    expect:
+      status: 200
+      body_regex: '^x=2\.[0-9]+$'
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/decimal?lo=low&hi=9
+    expect: {status: 500, body_regex: '"low" is not a number'}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/decimal?lo=1&hi=high
+    expect: {status: 500, body_regex: '"high" is not a number'}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-random-args-001/decimal?lo=9&hi=2
+    expect:
+      status: 500
+      body_regex: 'randomDecimal upper must not be below lower'
+
+  # pickRandom given something other than a list of literal arguments.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000034",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-random-args-001/pick"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "seg=[{{pickRandom request.pathSegments}}] one=[{{pickRandom 'only'}}] none=[{{pickRandom (range 2 1)}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `seg` passes the path segments, which are a list of strings rather than the
+  # list of mixed values a subexpression produces — a helper that only unpacked
+  # the latter would treat the whole list as one option and render all three
+  # segments joined. `one` is the degenerate case a stub reaches by templating
+  # its options from a request that turned out to have one: a single
+  # non-list argument is itself the choice, not a container to look inside.
+  # `none` is an empty list, which has to render as nothing rather than fail
+  # the response — the caller asked for a choice among none, and there is a
+  # correct answer to that.
+  - request: {method: GET, path: /e2e/cov-tmpl-random-args-001/pick}
+    expect:
+      status: 200
+      body_regex: '^seg=\[(e2e|cov-tmpl-random-args-001|pick)\] one=\[only\] none=\[\]$'

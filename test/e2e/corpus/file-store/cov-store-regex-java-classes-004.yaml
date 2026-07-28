@@ -1,0 +1,169 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-store-regex-java-classes-004
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2): WireMock renders a
+# near-miss table and mockulus does not. Status is still diffed, and every
+# matching step's body is still compared in full — which is where the claim of
+# this case lives.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Stub patterns are written for java.util.regex, and the class escapes are
+  # where the two engines underneath quietly disagree with it (SPEC §6.6). Each
+  # pair below picks the one subject the disagreement turns on, so a build that
+  # handed the pattern straight to RE2 or to the fallback engine fails here
+  # rather than passing on the cases where all three agree.
+
+  # `\p{Digit}` is US-ASCII [0-9] in Java whatever alphabet the subject is in.
+  # RE2 accepts the same spelling and reads it as Unicode Nd.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000101",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-java-classes-004/digits",
+                     "bodyPatterns": [{"matches": "\\p{Digit}+"}]},
+         "response": {"status": 200, "body": "ascii digits"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/digits
+      body: "1234"
+    expect: {status: 200, body: "ascii digits"}
+
+  # ARABIC-INDIC DIGIT THREE (U+0663) is in Nd and is not in [0-9]. This is the
+  # whole assertion: an untranslated `\p{Digit}` matches it.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/digits
+      headers: {Content-Type: "text/plain; charset=utf-8"}
+      body: "٣"
+    expect: {status: 404}
+
+  # The negated spelling has to be the complement of the same ASCII set rather
+  # than of RE2's Unicode one, so the same subject flips both verdicts.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000102",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-java-classes-004/not-digits",
+                     "bodyPatterns": [{"matches": "\\P{Digit}+"}]},
+         "response": {"status": 200, "body": "not ascii digits"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/not-digits
+      headers: {Content-Type: "text/plain; charset=utf-8"}
+      body: "٣"
+    expect: {status: 200, body: "not ascii digits"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/not-digits
+      body: "1234"
+    expect: {status: 404}
+
+  # `\h` is horizontal whitespace in Java. The fallback engine reads it as a
+  # literal 'h', which is the dangerous kind of disagreement: the stub still
+  # registers, still matches something, and matches the wrong thing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000103",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-java-classes-004/horizontal",
+                     "bodyPatterns": [{"matches": "a\\hb"}]},
+         "response": {"status": 200, "body": "horizontal whitespace"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/horizontal
+      body: "a b"
+    expect: {status: 200, body: "horizontal whitespace"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/horizontal
+      body: "a\tb"
+    expect: {status: 200, body: "horizontal whitespace"}
+
+  # NO-BREAK SPACE (U+00A0) is horizontal whitespace to Java and to nothing
+  # else here, so it separates a real translation from a hand-written [ \t].
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/horizontal
+      headers: {Content-Type: "text/plain; charset=utf-8"}
+      body: "a\xA0b"
+    expect: {status: 200, body: "horizontal whitespace"}
+
+  # The literal 'h' a mistranslation would have matched.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/horizontal
+      body: "ahb"
+    expect: {status: 404}
+
+  # `\s` differs from RE2's by exactly one code point: Java counts VERTICAL TAB
+  # (U+000B) as whitespace and RE2 does not. One byte decides it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000104",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-java-classes-004/space",
+                     "bodyPatterns": [{"matches": "\\s+"}]},
+         "response": {"status": 200, "body": "java whitespace"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/space
+      body: "\x0B"
+    expect: {status: 200, body: "java whitespace"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/space
+      body: "a"
+    expect: {status: 404}
+
+  # And its complement, on the same code point, in the other direction: the
+  # negated class is derived from the Java set rather than from the engine's,
+  # so a subject holding a vertical tab is not "non-whitespace".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000105",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-java-classes-004/non-space",
+                     "bodyPatterns": [{"matches": "\\S+"}]},
+         "response": {"status": 200, "body": "java non-whitespace"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/non-space
+      body: "ab"
+    expect: {status: 200, body: "java non-whitespace"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-java-classes-004/non-space
+      body: "a\x0Bb"
+    expect: {status: 404}

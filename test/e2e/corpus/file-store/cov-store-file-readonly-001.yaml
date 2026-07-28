@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-store-file-readonly-001
+behaviors: [B-CFG-STORE, B-CFG-FILE-ROOT, B-ERR-1020]
+config: file-store
+# n/a: WireMock has no read-only project mode to diff against — it loads the
+# same directory and then accepts admin writes into memory. The refusal below
+# is mockulus choosing the loud failure of SPEC §4.6 over a deployment that
+# disagrees with the files an operator is editing, so there is no oracle for it.
+wm: n/a
+steps:
+  # The claim of this case is that the whole admin write surface answers the
+  # same way, not that one endpoint does. A driver that refused the obvious
+  # entry point and quietly accepted the rest would leave a client having to
+  # know which half of the API it was in, and would only be found out at the
+  # next restart, when the writes it took evaporated.
+
+  # A stub the project declares is addressable, which is the read half working.
+  - admin: {method: GET, path: /__admin/mappings/c0000008-0000-4000-8000-000000000003}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "c0000008-0000-4000-8000-000000000003"
+        response: {body: "served from mappings/cov-store-readonly.json"}
+
+  # Deleting one is refused with the store-unavailable answer of §4.6: the
+  # directory is the operator's, and the process has no business editing it.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000008-0000-4000-8000-000000000003}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  # An id nothing declares is a 404 rather than the same 503, which is the
+  # distinction worth pinning: the driver answers the lookup honestly and only
+  # refuses the write. A driver that refused the read too would report every
+  # unknown id as an outage, and a client would never learn it had a typo.
+  - admin: {method: DELETE, path: /__admin/mappings/c0000008-0000-4000-8000-0000000000ff}
+    expect: {status: 404}
+
+  # Replacing one is the same refusal, and reaches it after the existing
+  # document has been found — so this is the write being refused, not the
+  # lookup failing.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/c0000008-0000-4000-8000-000000000003
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/cov-store-file-readonly-001/rewritten"},
+         "response": {"status": 200, "body": "never stored"}}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  # The deployment-wide sweeps are refused too. These are the dangerous ones:
+  # if any of them succeeded, a suite pressing reset between runs would silently
+  # empty a project nobody asked it to touch.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  - admin: {method: POST, path: /__admin/mappings/reset}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  - admin: {method: POST, path: /__admin/reset}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  # Marking everything persistent is refused rather than answered 200 on the
+  # grounds that a project directory is already durable. Answering it would be
+  # true and would still be the wrong shape: one rule for the driver is the
+  # contract a client can hold.
+  - admin: {method: POST, path: /__admin/mappings/save}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  # `__files/` is project content on the same terms as `mappings/`.
+  - admin:
+      method: PUT
+      path: /__admin/files/cov-store-file-readonly-001.txt
+      body: "never stored"
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  - admin: {method: DELETE, path: /__admin/files/greeting.json}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  # Settings are an ordinary admin write, so they are refused. Taking them into
+  # process memory would have this endpoint report a change that a restart
+  # throws away, which is exactly the invisible disagreement the driver refuses
+  # writes to avoid.
+  - admin: {method: POST, path: /__admin/settings, body: '{"fixedDelay": 5}'}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+
+  # Reading them still answers, with the empty object that means "nothing was
+  # ever written" — the same thing an untouched deployment on any other driver
+  # reports. The refusal is scoped to writes; a store that answered 503 here
+  # would make a zero-config deployment look broken.
+  - admin: {method: GET, path: /__admin/settings}
+    expect:
+      status: 200
+      body_json: {settings: {}}
+
+  # Nothing above changed anything. Both halves of the project are still there,
+  # which is what makes the refusals a refusal rather than a partial write that
+  # reported failure after the fact.
+  - request: {port: mock, method: GET, path: /e2e/cov-store-file-readonly-001/served}
+    expect: {status: 200, body: "served from mappings/cov-store-readonly.json"}
+
+  - admin: {method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_regex: '"greeting\.json"'

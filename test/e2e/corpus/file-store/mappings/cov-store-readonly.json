@@ -1,0 +1,11 @@
+{
+  "id": "c0000008-0000-4000-8000-000000000003",
+  "request": {
+    "method": "GET",
+    "urlPath": "/e2e/cov-store-file-readonly-001/served"
+  },
+  "response": {
+    "status": 200,
+    "body": "served from mappings/cov-store-readonly.json"
+  }
+}

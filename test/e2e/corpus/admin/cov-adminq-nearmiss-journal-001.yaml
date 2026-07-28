@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminq-nearmiss-journal-001
+behaviors:
+  - B-ADMIN-NEAR-MISSES-REQUEST-PATTERN-POST
+  - B-ADMIN-REQUESTS-UNMATCHED-NEAR-MISSES-GET
+config: journal
+# Both endpoints read the whole journal, and the second one answers in journal
+# order. A neighbouring case's traffic would sit between these two calls and
+# take the position the assertions below are about.
+requires: [exclusive]
+# n/a: near-miss scoring is outside the strict-compat surface by §6.8, and the
+# recorded requests it ranks carry a server-minted id, a client IP and an
+# absolute URL bearing the instance's own port.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000004-0000-4000-8000-000000000006",
+         "request":{"method":"GET","urlPath":"/e2e/cov-adminq-nearmiss-journal-001/matched"},
+         "response":{"status":200,"body":"matched"}}
+    expect: {status: 201}
+
+  # Entries are written off the request path, so a purge removes what has landed
+  # and a call recorded a moment earlier arrives after it. One call of this
+  # case's own, waited for, puts everything the run had queued on the far side
+  # of the delete.
+  - request: {port: mock, method: GET, path: /e2e/cov-adminq-nearmiss-journal-001/settle}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {request: {url: /e2e/cov-adminq-nearmiss-journal-001/settle}}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  # The unmatched call, carrying the cookie the pattern below will disagree with.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-adminq-nearmiss-journal-001/orders
+      headers: {Cookie: "session=stale"}
+    expect: {status: 404}
+
+  # Waiting for it before sending the next one is what orders the two entries in
+  # time. The journal is read newest-first, and the assertion on the unmatched
+  # endpoint below depends on the matched call being the newer of the two.
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_contains:
+        - path: requests
+          match: {request: {url: /e2e/cov-adminq-nearmiss-journal-001/orders}}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminq-nearmiss-journal-001/matched}
+    expect: {status: 200, body: "matched"}
+
+  # Two entries and no more. Asserted as an exact number, which this case has
+  # earned by owning the deployment.
+  - admin: {method: GET, path: /__admin/requests}
+    expect_eventually:
+      status: 200
+      body_json_subset: {meta: {total: 2}}
+
+  # The question a team has after a verification came back empty: something
+  # arrived, how close was it? The pattern asks for a fresh session cookie; the
+  # call to /orders carried a stale one and is one value away, and the call to
+  # /matched is a different path with no cookie at all.
+  #
+  # `actual: stale` is the sharp part. The scorer measures the pattern against a
+  # request rebuilt from the recorded entry, and a rebuild that dropped the
+  # cookies would still report a cookie difference — with an empty `actual`, and
+  # with the two calls ranked as equally far away.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method":"GET",
+         "urlPath":"/e2e/cov-adminq-nearmiss-journal-001/orders",
+         "cookies":{"session":{"equalTo":"fresh"}}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request:
+              url: /e2e/cov-adminq-nearmiss-journal-001/orders
+            matchResult:
+              differences:
+                - kind: cookie
+                  name: session
+                  expected: 'equalTo "fresh"'
+                  actual: stale
+            # The pattern is echoed on every entry, so a diagnostic pasted into
+            # a bug report says what was asked as well as what was found.
+            requestPattern:
+              urlPath: /e2e/cov-adminq-nearmiss-journal-001/orders
+          - request:
+              url: /e2e/cov-adminq-nearmiss-journal-001/matched
+
+  # The other endpoint scores the entries that matched nothing, and the call to
+  # /matched is excluded from it. The exclusion is what this asserts: /matched
+  # is the newer of the two entries and the journal is read newest-first, so an
+  # implementation that scored every entry rather than only the unmatched ones
+  # would put it here in first place.
+  - admin: {method: GET, path: /__admin/requests/unmatched/near-misses}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request:
+              url: /e2e/cov-adminq-nearmiss-journal-001/orders
+      body_json_contains:
+        - path: nearMisses
+          match:
+            request: {url: /e2e/cov-adminq-nearmiss-journal-001/orders}
+            stubMapping: {id: "c0000004-0000-4000-8000-000000000006"}
+
+  - admin: {method: DELETE, path: /__admin/requests}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/c0000004-0000-4000-8000-000000000006}
+    expect: {status: 200}

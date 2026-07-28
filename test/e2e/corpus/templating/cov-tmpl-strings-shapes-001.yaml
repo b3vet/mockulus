@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-strings-shapes-001
+behaviors:
+  - B-TPL-TRIM-LOWER-LOWERCASE-UPPER-UPPERCASE-SPLIT-JOIN-CONCAT-SUBST
+  - B-TPL-IF-UNLESS-EACH-WITH-LOOKUP
+# Several of the values below are model nodes SPEC §10.2 marks [DH] — the
+# `pathSegments` alias set and the cookie map — so what a helper handed one of
+# them should render is not a settled WireMock claim. The expectations are the
+# spec's reading, recorded here rather than diffed.
+wm: n/a
+steps:
+  # templating-strings-001 gives every string helper a string literal. The
+  # helpers are also handed the *model*, and that is a different set of Go
+  # shapes: the path segments are a list of strings, the cookies are a map, the
+  # path is a value that prints as text but indexes as a list. A helper with a
+  # branch per shape has a branch per shape to get wrong, and getting one wrong
+  # is silent — it renders the empty string, which reads as missing data.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000040",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-strings-shapes-001/shapes"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "joinsegs=[{{join request.pathSegments '-'}}] joinloose=[{{join 'a' 'b' 'c' '-'}}] sizes=[{{size request.pathSegments}}/{{size request.cookies}}/{{size 12345}}/{{size request.path}}] clamp=[{{substring 'hello' -3}}/{{substring 'hello' 1 99}}] def=[{{default '' 0}}/{{default request.query.a 'fb'}}/{{default null 'fb'}}] lu=[{{lookup (split 'a,b,c' ',') '1'}}/{{lookup (split 'a,b,c' ',') '9'}}/{{lookup request.pathSegments '2'}}/{{lookup request.pathSegments 'x'}}/{{lookup request.method '0'}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `joinsegs` joins the request's own path segments; `joinloose` joins
+  # arguments that were never a list at all, which is the form a template
+  # reaches when the pieces are separate model nodes. Both put the separator
+  # between elements and not after the last one — the off-by-one that turns a
+  # generated JSON array into a parse error at the client.
+  #
+  # `sizes` is one helper over four shapes: a list, a map, a number and the
+  # dual-natured path. A `size` that only knew about strings renders 0 for the
+  # first two, and 0 is what an empty collection renders too — so the two
+  # cookies and the three segments are counted here precisely because a wrong
+  # answer would look like a legitimate one. The path counts 39 characters
+  # rather than its 3 segments, which pins that `size` measures what
+  # `{{request.path}}` prints.
+  #
+  # `clamp` pins both ends of the substring bounds. A negative start and an end
+  # past the string are what a template computed from a request produces, and
+  # the alternative to clamping is a panic that takes the whole response with
+  # it.
+  #
+  # `def` covers the case that makes `default` worth having: every candidate
+  # falsy. It yields the last one, so a template can end a chain with a literal
+  # zero and get "0" rather than the empty string — the difference between a
+  # rendered JSON number and an invalid document. The middle field proves the
+  # chain still short-circuits on a present value, and the third proves a
+  # `null` literal counts as absent rather than as the string "null".
+  #
+  # `lu` indexes three collections and two misses. The misses render as nothing
+  # rather than failing the response, because a lookup whose key came from the
+  # request is a question that is allowed to have no answer; the hits are what
+  # stop "renders nothing" from being the whole story.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-strings-shapes-001/shapes?a=set
+      headers: {Cookie: "beta=2; alpha=1"}
+    expect:
+      status: 200
+      body: "joinsegs=[e2e-cov-tmpl-strings-shapes-001-shapes] joinloose=[a-b-c] sizes=[3/2/5/39] clamp=[hello/ello] def=[0/set/fb] lu=[b//shapes//]"

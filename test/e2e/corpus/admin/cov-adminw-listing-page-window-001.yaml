@@ -1,0 +1,188 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminw-listing-page-window-001
+behaviors:
+  - B-ADMIN-MAPPINGS-GET
+# A page is a claim about the whole collection — which entries it starts at and
+# how many follow — and the listing is deployment-wide. There is no way to state
+# it against an instance other cases are writing to, so this case owns one, the
+# same bargain admin-mappings-delete-all-001 makes.
+requires: [exclusive]
+# n/a: SPEC §5.1 gives this endpoint `limit`/`offset`, but the reading of a
+# parameter that is not a non-negative integer is mockulus' own and WireMock's
+# per-case oracle holds a different collection anyway, so neither half of this
+# has a single-node oracle to diff against.
+wm: n/a
+steps:
+  # A known-empty starting point, so every count below is a statement about
+  # paging rather than about whatever ran before.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json:
+        mappings: []
+        meta: {total: 0}
+
+  # Three stubs with distinct priorities, so the collection has one unambiguous
+  # order and a window into it can be named exactly.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0004-4000-8000-000000000001",
+         "priority": 1,
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-listing-page-window-001/first"},
+         "response": {"status": 200, "body": "first"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0004-4000-8000-000000000002",
+         "priority": 2,
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-listing-page-window-001/second"},
+         "response": {"status": 200, "body": "second"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000003-0004-4000-8000-000000000003",
+         "priority": 3,
+         "request": {"method": "GET", "urlPath": "/e2e/cov-adminw-listing-page-window-001/third"},
+         "response": {"status": 200, "body": "third"}}
+    expect: {status: 201}
+
+  # The unpaged listing, in full. It is the baseline the windows below are read
+  # against: without it, "offset skipped one" could not be told apart from "the
+  # collection only ever had two".
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json:
+        mappings:
+          - id: "c0000003-0004-4000-8000-000000000001"
+            uuid: "c0000003-0004-4000-8000-000000000001"
+            priority: 1
+            request: {method: GET, urlPath: /e2e/cov-adminw-listing-page-window-001/first}
+            response: {status: 200, body: "first"}
+          - id: "c0000003-0004-4000-8000-000000000002"
+            uuid: "c0000003-0004-4000-8000-000000000002"
+            priority: 2
+            request: {method: GET, urlPath: /e2e/cov-adminw-listing-page-window-001/second}
+            response: {status: 200, body: "second"}
+          - id: "c0000003-0004-4000-8000-000000000003"
+            uuid: "c0000003-0004-4000-8000-000000000003"
+            priority: 3
+            request: {method: GET, urlPath: /e2e/cov-adminw-listing-page-window-001/third}
+            response: {status: 200, body: "third"}
+        meta: {total: 3}
+
+  # An in-range offset drops exactly that many entries off the front and keeps
+  # the rest — the case the existing coverage misses, because a past-the-end
+  # offset is answered by a different branch that empties the page outright. A
+  # client walking a large deployment in pages depends on this one: an offset
+  # that skipped one too many would silently hide a stub from the walk, and one
+  # that skipped none would loop over the same page forever.
+  - admin: {method: GET, path: "/__admin/mappings?offset=1"}
+    expect:
+      status: 200
+      body_json:
+        mappings:
+          - id: "c0000003-0004-4000-8000-000000000002"
+            uuid: "c0000003-0004-4000-8000-000000000002"
+            priority: 2
+            request: {method: GET, urlPath: /e2e/cov-adminw-listing-page-window-001/second}
+            response: {status: 200, body: "second"}
+          - id: "c0000003-0004-4000-8000-000000000003"
+            uuid: "c0000003-0004-4000-8000-000000000003"
+            priority: 3
+            request: {method: GET, urlPath: /e2e/cov-adminw-listing-page-window-001/third}
+            response: {status: 200, body: "third"}
+        meta: {total: 3}
+
+  # offset and limit compose into a single interior window, and `meta.total`
+  # keeps counting the collection rather than the page — which is the only thing
+  # that makes the field usable for deciding whether another page is due.
+  - admin: {method: GET, path: "/__admin/mappings?offset=1&limit=1"}
+    expect:
+      status: 200
+      body_json:
+        mappings:
+          - id: "c0000003-0004-4000-8000-000000000002"
+            uuid: "c0000003-0004-4000-8000-000000000002"
+            priority: 2
+            request: {method: GET, urlPath: /e2e/cov-adminw-listing-page-window-001/second}
+            response: {status: 200, body: "second"}
+        meta: {total: 3}
+
+  # The boundary between the two branches: an offset equal to the size of the
+  # collection is the first one with nothing left to return.
+  - admin: {method: GET, path: "/__admin/mappings?offset=3"}
+    expect:
+      status: 200
+      body_json:
+        mappings: []
+        meta: {total: 3}
+
+  # A limit that is not a number falls back to "no limit" rather than to zero.
+  # The failure this prevents is quiet: a client that sent `limit=${PAGE_SIZE}`
+  # with the variable unset would be told the deployment holds no stubs at all,
+  # and would go on to register a duplicate set of its own.
+  - admin: {method: GET, path: "/__admin/mappings?limit=all"}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "c0000003-0004-4000-8000-000000000001"
+          - id: "c0000003-0004-4000-8000-000000000002"
+          - id: "c0000003-0004-4000-8000-000000000003"
+        meta: {total: 3}
+
+  # A negative limit is refused the same way, and for the same reason: it is not
+  # a page size, so it cannot be honoured as one.
+  - admin: {method: GET, path: "/__admin/mappings?limit=-1"}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "c0000003-0004-4000-8000-000000000001"
+          - id: "c0000003-0004-4000-8000-000000000002"
+          - id: "c0000003-0004-4000-8000-000000000003"
+        meta: {total: 3}
+
+  # And a negative offset falls back to the start of the collection rather than
+  # counting backwards from its end, so no entry is skipped by a parameter the
+  # server could not read.
+  - admin: {method: GET, path: "/__admin/mappings?offset=-2"}
+    expect:
+      status: 200
+      body_json_subset:
+        mappings:
+          - id: "c0000003-0004-4000-8000-000000000001"
+          - id: "c0000003-0004-4000-8000-000000000002"
+          - id: "c0000003-0004-4000-8000-000000000003"
+        meta: {total: 3}
+
+  # Paging is a read: every stub the windows above sliced still serves.
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-listing-page-window-001/first}
+    expect: {status: 200, body: "first"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-adminw-listing-page-window-001/third}
+    expect: {status: 200, body: "third"}
+
+  # Left as it was found, so the next exclusive case does not inherit three
+  # stubs it did not register.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings}
+    expect:
+      status: 200
+      body_json:
+        mappings: []
+        meta: {total: 0}

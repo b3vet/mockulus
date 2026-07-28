@@ -1,0 +1,45 @@
+{
+  "mappings": [
+    {
+      "id": "c0000008-0000-4000-8000-000000000001",
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/cov-store-file-scenarios-002/ticket"
+      },
+      "response": {
+        "status": 200,
+        "body": "issued"
+      },
+      "scenarioName": "cov-store-file-tickets",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "Reissued"
+    },
+    {
+      "id": "c0000008-0000-4000-8000-000000000002",
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/cov-store-file-scenarios-002/ticket"
+      },
+      "response": {
+        "status": 200,
+        "body": "reissued"
+      },
+      "scenarioName": "cov-store-file-tickets",
+      "requiredScenarioState": "Reissued",
+      "newScenarioState": "Refunded"
+    },
+    {
+      "id": "c0000008-0000-4000-8000-000000000007",
+      "request": {
+        "method": "GET",
+        "urlPath": "/e2e/cov-store-file-scenarios-002/ticket"
+      },
+      "response": {
+        "status": 200,
+        "body": "refunded"
+      },
+      "scenarioName": "cov-store-file-tickets",
+      "requiredScenarioState": "Refunded"
+    }
+  ]
+}

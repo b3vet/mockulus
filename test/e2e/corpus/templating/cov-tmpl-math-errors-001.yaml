@@ -1,0 +1,204 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-math-errors-001
+behaviors: [B-TPL-MATH-NUMBER, B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL]
+# The failing renders are diffed against nothing: WireMock's arithmetic helper
+# has its own diagnostics and its own idea of what a missing operand means, so
+# the text asserted below is the mockulus message SPEC §10.4 says lands in the
+# body. templating-math-001 carries the differentially verified half of the
+# same §10.3 row.
+wm: n/a
+steps:
+  # Whether arithmetic *works* is templating-math-001's question. This case
+  # asks what happens when it cannot, because that is the half a caller
+  # controls: the operands of a stub like this one arrive on the query string,
+  # so every failure below is reachable by whoever is driving the mock rather
+  # than by whoever registered it. A helper that answered these with a plausible
+  # number instead of a refusal would put the wrong figure into somebody's
+  # test assertion and it would pass.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000020",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-math-errors-001/calc"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "r={{math request.query.a request.query.op request.query.b}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Two controls before any of the refusals, because a stub that had stopped
+  # rendering at all would satisfy every 500 below. They also pin the operator
+  # as *read from the request*: the same document computes a remainder and a
+  # quotient depending only on what the caller sent.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/calc?a=7&op=%25&b=4
+    expect: {status: 200, body: "r=3"}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/calc?a=7&op=/&b=2
+    expect: {status: 200, body: "r=3.5"}
+
+  # Division by zero. The alternatives a language might pick — positive
+  # infinity, NaN, zero — are all things that would be rendered into the body
+  # and read downstream as a number, so the refusal is the point.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/calc?a=7&op=/&b=0
+    expect:
+      status: 500
+      headers: {Content-Type: "text/plain"}
+      body_regex: 'math: division by zero'
+
+  # Modulo by zero is the same arithmetic hazard by a different route, and it
+  # has its own message: the two operators are separately implemented, so a
+  # guard added to one and forgotten on the other is exactly the shape of the
+  # bug here.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/calc?a=7&op=%25&b=0
+    expect:
+      status: 500
+      body_regex: 'math: modulo by zero'
+
+  # An operator that does not exist. Quoting it back is what turns this from
+  # "something went wrong" into a fixable report — the caller sent it, and it
+  # is very often a character that was mangled in transit rather than one
+  # anybody typed.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/calc?a=7&op=^&b=2
+    expect:
+      status: 500
+      body_regex: 'unknown math operator "\^"'
+
+  # A left operand that is not a number. Silently reading it as zero is the
+  # tempting implementation and the dangerous one: 0 + 2 renders "2" and looks
+  # like an answer.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/calc?a=x&op=%2B&b=2
+    expect:
+      status: 500
+      body_regex: '"x" is not a number'
+
+  # An operand that is not there at all. Absent has to be distinguishable from
+  # unparseable in the message, because they have different fixes: one is a
+  # caller who forgot a parameter, the other a caller who sent junk.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/calc?op=%2B&b=2
+    expect:
+      status: 500
+      body_regex: 'expected a number, got nothing'
+
+  # An operand that is a whole container rather than a value. `request.headers`
+  # is the model node a stub author reaches for when they meant
+  # `request.headers.X-Count`, and the render has to refuse rather than
+  # stringify the map and try to parse that.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000022",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-math-errors-001/container"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "r={{math request.headers '+' 1}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request: {method: GET, path: /e2e/cov-tmpl-math-errors-001/container}
+    expect:
+      status: 500
+      body_regex: 'expected a number, got map'
+
+  # Too few arguments. This one is decided by the template alone, so it could
+  # in principle have been caught at registration — it is not, because the
+  # parser's contract is syntax and a helper's arity is the helper's own. The
+  # message therefore has to spell the whole signature out.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000021",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-math-errors-001/arity"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "r={{math request.query.a '+'}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/arity?a=7
+    expect:
+      status: 500
+      body_regex: 'math takes a left operand, an operator and a right operand'
+
+  # `number` shares the same operand handling and has one argument of its own.
+  # The control renders, then each of the two inputs is spoiled in turn: the
+  # subject, and the `decimals` option. A formatter that ignored an unusable
+  # `decimals` and fell back to its default would produce "3.14159" here,
+  # which is a number, and would go unnoticed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000023",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-math-errors-001/format"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "r={{number request.query.a decimals=request.query.d}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/format?a=3.14159&d=2
+    expect: {status: 200, body: "r=3.14"}
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/format?a=3.14159&d=two
+    expect:
+      status: 500
+      body_regex: '"two" is not a number'
+
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-math-errors-001/format?a=abc&d=2
+    expect:
+      status: 500
+      body_regex: '"abc" is not a number'
+
+  # The other side of operand typing: values that are not strings at all. The
+  # iteration variables are a whole number and a boolean, and both have to be
+  # usable as operands or the one-based row numbering every generated list
+  # needs — `{{math @index '+' 1}}` — becomes a 500 on the first row.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000024",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-math-errors-001/rows"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "rows=[{{#each request.pathSegments}}{{math @index '+' 1}}/{{math @first '+' 0}}:{{this}} {{/each}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The numbering starts at one and the boolean renders as one then zero, so
+  # neither operand could have been dropped or coerced to a constant and still
+  # produce this line.
+  - request: {method: GET, path: /e2e/cov-tmpl-math-errors-001/rows}
+    expect:
+      status: 200
+      body: "rows=[1/1:e2e 2/0:cov-tmpl-math-errors-001 3/0:rows ]"
+
+  # Every refusal above is a counted render failure. Without the counter a
+  # deployment learns about a stub that has been answering 500s all afternoon
+  # from the team that was relying on it.
+  - metricsprobe: {series: 'mockulus_template_render_errors_total', at_least: 1}

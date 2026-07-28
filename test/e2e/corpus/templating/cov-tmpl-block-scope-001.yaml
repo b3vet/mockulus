@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-block-scope-001
+behaviors: [B-TPL-IF-UNLESS-EACH-WITH-LOOKUP, B-RESP-TRANSFORMERPARAMETERS]
+# `request.pathSegments` and the cookie map are [DH] rows of SPEC §10.2 whose
+# WireMock spelling is not settled, and the ordering claim below is a mockulus
+# guarantee rather than a WireMock one. The expectations are the spec's
+# reading; templating-blocks-001 carries the differentially verified half.
+wm: n/a
+steps:
+  # templating-blocks-001 drives the four block helpers over a query map and a
+  # JSON array. The collections a template meets in practice are wider than
+  # that: the path segments are a list of strings, the cookies and the
+  # transformer parameters are maps, and each of those is a separate branch in
+  # the iterator. A branch that fell through renders nothing, and nothing is
+  # what an empty collection renders too — so every collection here is
+  # non-empty and its contents are pinned.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000006-0000-4000-8000-000000000080",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-tmpl-block-scope-001/scopes"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "segs=[{{#each request.pathSegments}}{{@index}}{{#if @first}}^{{/if}}{{#if @last}}!{{/if}}:{{this}};{{/each}}] ck=[{{#each request.cookies}}{{@key}}={{this}};{{else}}no-cookies{{/each}}] params=[{{#each parameters.limits}}{{@key}}={{this}};{{/each}}] tier=[{{parameters.tiers.[1]}}] oob=[{{parameters.tiers.[9]}}] rawlist=[{{parameters.tiers}}] absent=[{{#with request.query.nope}}yes{{else}}no{{/with}}] dot=[{{#with request.path}}{{.}}|{{this}}{{/with}}] scalar=[{{request.method.nope}}]",
+                      "transformers": ["response-template"],
+                      "transformerParameters": {"limits": {"b": 2, "a": 1}, "tiers": ["bronze", "silver"]}}}
+    expect: {status: 201}
+
+  # `segs` iterates the path segments and marks the ends. @first and @last are
+  # asserted on a three-element list, which is the shortest one where "first",
+  # "last" and "neither" are all distinct — on a two-element list an
+  # implementation that returned true for both would still look right.
+  #
+  # `ck` iterates a map and reads its keys. The two cookies are sent in the
+  # order beta, alpha and rendered in the order alpha, beta: a mock whose
+  # rendered output depends on Go's map iteration order is a mock nobody can
+  # write an assertion against, and the reversal here is what proves the
+  # ordering is imposed rather than inherited.
+  #
+  # `params` is the same iteration over a map that came out of the stub
+  # document rather than off the wire, and the JSON declares b before a for the
+  # same reason.
+  #
+  # `tier` indexes a parameter that is a JSON array rather than an object,
+  # which is a third container shape with a third branch behind it, and `oob`
+  # asks it for an element it does not have — nothing, rather than a refusal,
+  # because an index computed from a request is allowed to miss. `rawlist`
+  # interpolates the array whole: the elements have to come out, not a Go type
+  # name or a pointer. The exact spelling is this implementation's and is not
+  # a WireMock claim; what a bug would break here is the leak, not the commas.
+  #
+  # `absent` takes the else branch of a {{#with}} over a value that is not
+  # there. Without an else branch that block would render its body against the
+  # enclosing scope, which is how a template quietly renders the wrong
+  # customer's fields.
+  #
+  # `dot` is the current context, written both ways Handlebars allows. Inside
+  # a {{#with}} over the request path both spellings have to resolve to the
+  # path itself — a renderer that returned the scope wrapper instead would
+  # print a Go map here.
+  #
+  # `scalar` walks a path through a value that has no members. It renders as
+  # nothing rather than failing the response: a stub author's typo should cost
+  # them an empty field, not the whole body.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-block-scope-001/scopes
+      headers: {Cookie: "beta=2; alpha=1"}
+    expect:
+      status: 200
+      body: "segs=[0^:e2e;1:cov-tmpl-block-scope-001;2!:scopes;] ck=[alpha=1;beta=2;] params=[a=1;b=2;] tier=[silver] oob=[] rawlist=[[bronze silver]] absent=[no] dot=[/e2e/cov-tmpl-block-scope-001/scopes|/e2e/cov-tmpl-block-scope-001/scopes] scalar=[]"
+
+  # The same stub with no cookies at all. An empty map takes the else branch
+  # rather than emitting one blank iteration, which is the difference between
+  # a rendered collection that parses and one carrying a stray separator. Every
+  # other field is unchanged, so this request isolates that one branch.
+  - request: {method: GET, path: /e2e/cov-tmpl-block-scope-001/scopes}
+    expect:
+      status: 200
+      body: "segs=[0^:e2e;1:cov-tmpl-block-scope-001;2!:scopes;] ck=[no-cookies] params=[a=1;b=2;] tier=[silver] oob=[] rawlist=[[bronze silver]] absent=[no] dot=[/e2e/cov-tmpl-block-scope-001/scopes|/e2e/cov-tmpl-block-scope-001/scopes] scalar=[]"

@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminq-file-name-refusals-001
+behaviors:
+  - B-ADMIN-GET-PUT-DELETE-FILES-NAME-GET-FILES
+  - B-ERR-10
+# n/a: SPEC §17 is a mockulus rule. WireMock stores whatever name it is handed,
+# so a differential replay would report a deviation on every refusal below
+# instead of comparing behavior. The expectations here are read off §17.
+wm: n/a
+steps:
+  # The control the whole case rests on: a nested name is a legal name. Without
+  # it, every refusal below could be explained by "the API only takes one
+  # segment", and the case would be asserting the router rather than the rule.
+  - admin:
+      method: PUT
+      path: /__admin/files/cov-adminq-file-name-refusals-001/greeting.json
+      body: 'hello from the files store'
+    expect: {status: 201}
+
+  - admin: {method: GET, path: /__admin/files/cov-adminq-file-name-refusals-001/greeting.json}
+    expect:
+      status: 200
+      headers: {Content-Type: application/octet-stream}
+      body: 'hello from the files store'
+
+  # A name that climbs out of the store. The segments are percent-encoded
+  # because an unencoded `..` is cleaned by the router before the handler ever
+  # sees it, and it is the handler's rule that is under test.
+  - admin:
+      method: PUT
+      path: /__admin/files/%2E%2E/cov-adminq-file-name-refusals-001-escape.json
+      body: 'escaped'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+      body_regex: 'a name cannot climb out of the files store'
+
+  # The half of §17 that matters more than the refusal itself: the name was not
+  # repaired. If the handler had trimmed the climb and stored the remainder, the
+  # caller's name and the stored name would disagree forever and the request
+  # that looked like traversal would be the one that succeeded.
+  - admin: {method: GET, path: /__admin/files/cov-adminq-file-name-refusals-001-escape.json}
+    expect:
+      status: 404
+      body_regex: 'no file named cov-adminq-file-name-refusals-001-escape\.json'
+
+  # The same argument for an absolute name, which is the example §17 gives: the
+  # old behavior trimmed the leading slash and answered 201.
+  - admin:
+      method: PUT
+      path: /__admin/files/%2Fetc%2Fpasswd
+      body: 'absolute'
+    expect:
+      status: 422
+      body_regex: 'a name is relative to the files store, so it cannot begin with /'
+
+  - admin: {method: GET, path: /__admin/files/etc/passwd}
+    expect: {status: 404, body_regex: 'no file named etc/passwd'}
+
+  # Past the 240-byte bound. The error quotes the name so an operator can see
+  # what was rejected, and truncates it at 64 characters so the one name that is
+  # certain to be enormous — the one that failed the length rule — does not go
+  # back in full. The regex anchors on the opening quote of the echo, so a
+  # handler that echoed the whole 250 bytes would fail it.
+  - admin:
+      method: PUT
+      path: /__admin/files/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+      body: 'too long'
+    expect:
+      status: 422
+      body_regex: 'file name \\"n{64}…\\" is not allowed: a name is limited to 240 bytes'
+
+  # A control character in the name. It is refused, and — the point of quoting —
+  # the newline is rendered as an escape rather than embedded raw, so the error
+  # stays one line. A name that can carry a newline into the logs is a name that
+  # can forge a log entry the first time anything renders it plainly.
+  - admin:
+      method: PUT
+      path: /__admin/files/cov-adminq-file-name-refusals-001-bad%0Aname.json
+      body: 'newline'
+    expect:
+      status: 422
+      body_regex: 'bad\\\\nname\.json\\" is not allowed: a name cannot contain control characters'
+
+  # The rule is applied on the read paths too, not only on the write. A name
+  # that cannot be stored cannot be fetched or deleted either, and answering
+  # 404 here instead would tell the caller their name was fine and simply
+  # absent.
+  - admin: {method: GET, path: /__admin/files/cov-adminq-file-name-refusals-001-bad%0Aname.json}
+    expect: {status: 422, body_regex: 'a name cannot contain control characters'}
+
+  - admin: {method: DELETE, path: /__admin/files/%2E%2E/cov-adminq-file-name-refusals-001-escape.json}
+    expect: {status: 422, body_regex: 'a name cannot climb out of the files store'}
+
+  # A bare trailing slash names no file. It is a 404 that says so rather than
+  # the index: a client that asked for a file and was handed the listing would
+  # write the whole directory into a response body.
+  - admin: {method: GET, path: /__admin/files/}
+    expect:
+      status: 404
+      body_json_subset:
+        errors: [{code: 10}]
+      body_regex: 'a file name is required'
+
+  # And the index itself still answers, with this case's file in it. Found by
+  # name rather than by position, because the listing is deployment-global.
+  - admin: {method: GET, path: /__admin/files}
+    expect:
+      status: 200
+      body_json_contains:
+        - path: "$"
+          match: "cov-adminq-file-name-refusals-001/greeting.json"
+
+  - admin: {method: DELETE, path: /__admin/files/cov-adminq-file-name-refusals-001/greeting.json}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/files/cov-adminq-file-name-refusals-001/greeting.json}
+    expect: {status: 404}

@@ -1,0 +1,190 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-store-regex-escapes-006
+behaviors: [B-MATCH-MATCHES-DOESNOTMATCH]
+wm: verified
+# Unmatched bodies differ by design (deviation #2): WireMock renders a
+# near-miss table and mockulus does not. Status is still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # The escapes below are the ones that decide which engine a stub ends up on
+  # (SPEC §6.6) and the ones whose Java meaning has to be resolved before
+  # either engine sees them. Each has a negative that a build reading the
+  # escape as its own literal characters would have matched, because that is
+  # the failure mode: the stub registers, and matches the wrong thing.
+
+  # `\uXXXX` is Java's code-point escape. RE2 does not accept it at all, so a
+  # stub using it can only exist on the fallback engine — which makes this the
+  # cheapest available proof that the second engine is reached for something
+  # other than lookaround and backreferences.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000121",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-escapes-006/u-escape",
+                     "bodyPatterns": [{"matches": "\\u0041bc"}]},
+         "response": {"status": 200, "body": "u escape"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/u-escape
+      body: "Abc"
+    expect: {status: 200, body: "u escape"}
+
+  # What a literal reading of the escape would have matched.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/u-escape
+      body: "u0041bc"
+    expect: {status: 404}
+
+  # `\xNN` is the same code point in the spelling RE2 does accept, so this stub
+  # stays on the linear-time engine. Both spellings have to mean 'A' or a
+  # project that mixes them serves two different things.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000122",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-escapes-006/x-escape",
+                     "bodyPatterns": [{"matches": "\\x41bc"}]},
+         "response": {"status": 200, "body": "x escape"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/x-escape
+      body: "Abc"
+    expect: {status: 200, body: "x escape"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/x-escape
+      body: "x41bc"
+    expect: {status: 404}
+
+  # `\Q…\E` quotes everything between it. The contents here are chosen to be a
+  # valid regex meaning something else — `1+1=2` as a pattern matches "11=2" —
+  # so the negative separates quoting from passing the text through.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000123",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-escapes-006/quoted",
+                     "bodyPatterns": [{"matches": "\\Q1+1=2\\E"}]},
+         "response": {"status": 200, "body": "quoted literally"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/quoted
+      body: "1+1=2"
+    expect: {status: 200, body: "quoted literally"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/quoted
+      body: "11=2"
+    expect: {status: 404}
+
+  # A quoted block inside a character class, where the quoting has to survive a
+  # `]`. Left as written, both engines close the class on it and the rest of
+  # the pattern becomes something else entirely; the class here is the three
+  # characters a, . and ], and the subject exercises all three.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000124",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-escapes-006/quoted-class",
+                     "bodyPatterns": [{"matches": "[\\Qa.]\\E]+"}]},
+         "response": {"status": 200, "body": "quoted class"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/quoted-class
+      body: "a.]"
+    expect: {status: 200, body: "quoted class"}
+
+  # A character the class does not hold. A class that had swallowed the rest of
+  # the pattern, or that had been read as "any character", matches this.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/quoted-class
+      body: "b"
+    expect: {status: 404}
+
+  # `\p{IsLatin}` and `\p{IsGreek}` are Java's spelling of a Unicode script.
+  # Neither engine knows the `Is` prefix, so the name has to be rewritten
+  # rather than passed on — a pattern that reached RE2 as written would fail to
+  # compile and the stub would never register at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000125",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-escapes-006/script",
+                     "bodyPatterns": [{"matches": "\\p{IsGreek}+"}]},
+         "response": {"status": 200, "body": "greek script"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/script
+      headers: {Content-Type: "text/plain; charset=utf-8"}
+      body: "αβγ"
+    expect: {status: 200, body: "greek script"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/script
+      headers: {Content-Type: "text/plain; charset=utf-8"}
+      body: "abc"
+    expect: {status: 404}
+
+  # `\R` is Java's any-line-break: a CRLF pair taken as one unit, or any single
+  # terminator. Neither engine has it, and it is the one escape that expands to
+  # something matching two characters, so a literal reading matches "aRb".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000008-0000-4000-8000-000000000126",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-store-regex-escapes-006/line-break",
+                     "bodyPatterns": [{"matches": "a\\Rb"}]},
+         "response": {"status": 200, "body": "line break"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/line-break
+      body: "a\r\nb"
+    expect: {status: 200, body: "line break"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/line-break
+      body: "a\nb"
+    expect: {status: 200, body: "line break"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-store-regex-escapes-006/line-break
+      body: "aRb"
+    expect: {status: 404}

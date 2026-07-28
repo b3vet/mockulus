@@ -1,0 +1,151 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-scan-decodes-node-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+# Reading a definite path off the undecoded body is mockulus's own mechanism
+# (D-OPEN-14); WireMock has one evaluator and no equivalent to diff against.
+# What the steps hold is the rule that mechanism was allowed to land under: the
+# answer has to be the one encoding/json would have given.
+wm: n/a
+steps:
+  # The shortcut reads the body where it lies, so a key and a value only ever
+  # compare as bytes unless something decodes them. The documents below are the
+  # ones where bytes and value differ, and each is paired with a stub written in
+  # the plainest possible way — a stub author writes `$.customer.id` and
+  # `equalTo: AB1`, and has no way to know which spelling the client will send.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000060",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-scan-decodes-node-001/id",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.customer.id",
+                                                           "equalTo": "AB1"}}]},
+         "response": {"status": 200, "body": "id",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id"}
+
+  # A KEY carrying an escape is the same key. `cust\u006fmer` is one legal
+  # spelling of `customer`, and a producer that JSON-escapes on its way out emits
+  # exactly this. Comparing the raw bytes would miss it.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"cust\u006fmer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id"}
+
+  # The hex digits are case-insensitive, which a hand-rolled comparison that
+  # only handled lower case would get wrong.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"cust\u006Fmer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id"}
+
+  # …and it is still a comparison: an escaped key that decodes to a different
+  # name does not match. A decoder that stopped at the escape and treated the
+  # rest as a prefix would match this one too.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"cust\u006fmerX":{"id":"AB1"}}'
+    expect: {status: 404}
+
+  # A VALUE carrying an escape is compared as its decoded text, because the
+  # inner matcher compares text. Handing the raw bytes on would give the matcher
+  # `A\u0042\u0031` to compare against `AB1`.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"customer":{"id":"A\u0042\u0031"}}'
+    expect: {status: 200, body: "id"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"customer":{"id":"A\u0042\u0032"}}'
+    expect: {status: 404}
+
+  # A key that is not ASCII at all sits on the same path through the comparison,
+  # and has to be walked past without matching rather than confusing the scan.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"café":1,"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id"}
+
+  # A repeated member is the case where reading bytes and decoding a document
+  # can disagree about which subtree the path even walks into. encoding/json
+  # assigns duplicate members into one slot in order, so the LAST one is the
+  # document's value for that key, and the scan has to pick the same one.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"customer":{"id":"XX9"},"customer":{"id":"AB1"}}'
+    expect: {status: 200, body: "id"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"customer":{"id":"AB1"},"customer":{"id":"XX9"}}'
+    expect: {status: 404}
+
+  # The sharp half of that rule: the later member replaces what the earlier one
+  # selected even when the later one selects NOTHING. "last member that found
+  # something" is a different rule, and it is the one an implementation lands on
+  # by only overwriting a successful selection.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/id
+      body: '{"customer":{"id":"AB1"},"customer":{"other":1}}'
+    expect: {status: 404}
+
+  # A selected string that is neither plain ASCII nor free of escapes takes the
+  # decoder rather than the fast copy. The accented text is sent twice, once as
+  # its UTF-8 bytes and once as `\u00e9`, and both spellings have to reach the
+  # matcher as the same text.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000061",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-scan-decodes-node-001/note",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.note",
+                                                           "equalTo": "café\ttab"}}]},
+         "response": {"status": 200, "body": "note",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/note
+      body: '{"note":"café\ttab"}'
+    expect: {status: 200, body: "note"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/note
+      body: '{"note":"caf\u00e9\ttab"}'
+    expect: {status: 200, body: "note"}
+  # The accent is load-bearing, so the comparison is over the decoded text and
+  # not over some normalisation of it.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-scan-decodes-node-001/note
+      body: '{"note":"cafe\ttab"}'
+    expect: {status: 404}

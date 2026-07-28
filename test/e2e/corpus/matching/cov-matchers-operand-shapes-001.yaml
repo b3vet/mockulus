@@ -1,0 +1,354 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-matchers-operand-shapes-001
+behaviors:
+  - B-ERR-10
+  - B-REQ-HEADERS
+  - B-REQ-BODYPATTERNS
+  - B-MATCH-BINARYEQUALTO
+wm: verified
+# Body comparison is given up rather than only the unmatched 404, because what
+# this case asserts is a refusal and the two servers word their refusals
+# differently by design: mockulus answers with the Appendix B envelope and
+# WireMock with its own (deviation #14). The status is the claim being diffed —
+# every document below has to be refused by both, or it is a mappings file that
+# registers on one server and cannot move to the other. The mockulus envelope is
+# still asserted in full below, against mockulus.
+wm_ignore: ["$body"]
+#
+# The subject is the operand a matcher key is given, not the key. A matcher
+# whose operand is the wrong JSON type has no reading at all, and the failure it
+# would otherwise become is silent: the compiler that shrugs and stores
+# something produces a stub that never matches, and a team then debugs the
+# request instead of the mapping. So each step here writes one criterion with
+# one wrong operand and requires a 422 whose pointer names the offending key.
+#
+# Every refused document targets the same path, so the single 404 at the end is
+# a control over all of them at once: if any had been half-registered — the
+# matcher dropped and the rest of the criterion kept — that path would answer.
+steps:
+  # equalTo, contains and matches each take a string. A number, an array and a
+  # boolean are the three shapes a hand-written mapping actually arrives with.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"equalTo": 123}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/request/headers/X-Cov-Tier/equalTo"}
+            detail: "equalTo takes a string"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"contains": ["gold"]}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier/contains"}
+            detail: "contains takes a string"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"matches": false}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier/matches"}
+            detail: "matches takes a regular expression string"
+
+  # binaryEqualTo takes a base64 string, and the two ways of getting that wrong
+  # are different mistakes: the wrong JSON type, and text that is not base64.
+  # They are separated because a decoder that treated a decode failure as an
+  # empty operand would compare every body against nothing and match only the
+  # empty ones — a stub that looks registered and answers almost nothing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"binaryEqualTo": 7}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/binaryEqualTo"}
+            detail: "binaryEqualTo takes a base64 string"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"binaryEqualTo": "!!! not base64 !!!"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      # The decoder's own reason is quoted after the colon, so the detail is
+      # asserted by its stable prefix rather than by the decoder's wording.
+      body_regex: 'binaryEqualTo operand is not valid base64'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/binaryEqualTo"}
+
+  # binaryEqualTo compares raw bytes, which only means something where the
+  # subject is a body, so it is refused on a header even though the operand is
+  # a perfectly good base64 string. The pointer names the criterion rather than
+  # the key, because the criterion as written is not a match operation either
+  # server has. Verified: WireMock answers this one at /request/headers/X-Cov-Tier
+  # too.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"binaryEqualTo": "Z29sZA=="}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier"}
+            detail: "binaryEqualTo compares raw bytes, so it is only valid in bodyPatterns"
+
+  # equalToJson's operand may be written inline or as an escaped string, and the
+  # escaped form is the one that can carry text nothing will parse.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "bodyPatterns": [{"equalToJson": "{not json"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'equalToJson operand is not valid JSON'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/equalToJson"}
+
+  # The combinators take an array. A string and an object are both refused, and
+  # separately: `or` sharing `and`'s branch by accident would be invisible here
+  # if only one of them were asked.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"and": "gold"}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier/and"}
+            detail: "and takes an array of matchers"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"or": {"equalTo": "gold"}}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier/or"}
+            detail: "or takes an array of matchers"
+
+  # An operand inside a combinator is compiled like any other, and the pointer
+  # carries the index of the one that was wrong. Naming the combinator alone
+  # would be the least useful place to point in the whole document: the operands
+  # are exactly what the author cannot see at a glance.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"and": [{"equalTo": 4},
+                                                        {"contains": "gold"}]}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier/and/0/equalTo"}
+            detail: "equalTo takes a string"
+
+  # A key nothing defines is named in the refusal, because the mistake it
+  # usually is — a matcher borrowed from another mocking tool, or a typo — is
+  # one the author fixes in seconds once they can see which key was not read.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"startsWith": "go"}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier/startsWith"}
+            detail: "unknown matcher startsWith"
+
+  # A criterion carrying no matcher at all is the most dangerous document in
+  # this file: a compiler that returned "nothing to check" for it would produce
+  # a criterion that is vacuously true, which widens the stub instead of
+  # narrowing it. Both spellings of empty are refused — the empty object, and an
+  # object holding only a modifier that steers a matcher which is not there.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier"}
+            detail: "matcher object is empty"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"caseInsensitive": true}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier"}
+            detail: "no recognised matcher in caseInsensitive"
+
+  # A bare string where a criterion belongs is the shorthand people expect to
+  # work, and it is refused rather than read as equalTo: guessing here would
+  # make one mapping file mean two things depending on which server read it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": "gold"}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'matcher must be a JSON object'
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier"}
+
+  # Inside a combinator the same rules apply and the pointer descends to say
+  # where: a refusal that stopped at the criterion would leave the author of a
+  # deeply nested matcher hunting for which operand was wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/refused",
+                     "headers": {"X-Cov-Tier": {"not": {"equalTo": 4}}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-Cov-Tier/not/equalTo"}
+            detail: "equalTo takes a string"
+
+  # The control over every refusal above. Fifteen documents named this path and
+  # none of them may have left anything behind: a compiler that reported the
+  # problem and stored the mapping anyway would answer here.
+  - request: {port: mock, method: GET, path: /e2e/cov-matchers-operand-shapes-001/refused}
+    expect: {status: 404}
+
+  # And the other half of the claim: the same two matchers, written with the
+  # operands they are defined over, register and select. Without this the case
+  # would be satisfied by a build that refused every criterion ever written.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/cov-matchers-operand-shapes-001/accepted",
+                     "headers": {"X-Cov-Tier": {"equalTo": "gold"}},
+                     "bodyPatterns": [{"binaryEqualTo": "Z29sZA=="}]},
+         "response": {"status": 200, "body": "operands"}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-operand-shapes-001/accepted
+      headers: {X-Cov-Tier: gold}
+      body: "gold"
+    expect: {status: 200, body: "operands"}
+
+  # The bytes binaryEqualTo was given, not a prefix of them: an operand compared
+  # by length alone, or by prefix, would answer this too.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-operand-shapes-001/accepted
+      headers: {X-Cov-Tier: gold}
+      body: "golden"
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-operand-shapes-001/accepted
+      headers: {X-Cov-Tier: silver}
+      body: "gold"
+    expect: {status: 404}

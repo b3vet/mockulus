@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cb-save-outage-001
+behaviors:
+  - B-ADMIN-MAPPINGS-SAVE-POST
+  - B-DEV-DEVIATION-4
+  - B-DEGRADED-CB-DOWN-SNAPSHOT-LOADED
+  - B-ERR-1020
+# couchbase because save is not the flag assignment it looks like on the memory
+# driver. Against a real store it is a bulk read of the mappings collection, a
+# rewrite of every document that is not persistent yet, and — the part that is
+# the actual promise — an expiry cleared document by document, because N1QL can
+# set the field but not the TTL (SPEC §7.4, deviation #4). A case that only ever
+# runs on T1 asserts the field and never the durability.
+#
+# exclusive because save reaches every mapping in the deployment, and because
+# the run has one Couchbase that every store deployment shares: taking it away
+# is a claim on the run rather than on this instance.
+requires: [couchbase, exclusive]
+# n/a: WireMock writes stub files to the node's own disk here, so it has no
+# cluster-shared document to save and no store to lose halfway through. The
+# expectations come from deviation #4 and the §4.6 table.
+wm: n/a
+steps:
+  # A known-empty deployment. Save is deployment-wide, so what it did can only be
+  # read back off the documents this case put there.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  # Registered as explicitly ephemeral, which is the state save exists to change.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000001",
+         "persistent": false,
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-save-outage-001/order"},
+         "response":{"status":200,"body":"ephemeral when registered"}}
+    expect:
+      status: 201
+      body_json_subset: {persistent: false}
+
+  # Already durable, and it has to stay that way. Save walks every document in
+  # the collection and skips the ones that are already persistent; a save that
+  # rewrote them all instead would be re-serialising a document it never needed
+  # to touch, which is how a field nobody asserted goes missing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000002",
+         "persistent": true,
+         "name": "already saved",
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-save-outage-001/invoice"},
+         "response":{"status":200,"body":"persistent when registered"}}
+    expect: {status: 201}
+
+  - admin: {method: POST, path: /__admin/mappings/save}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/c0000002-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset: {persistent: true}
+
+  - admin: {method: GET, path: /__admin/mappings/c0000002-0000-4000-8000-000000000002}
+    expect:
+      status: 200
+      body_json_subset: {persistent: true, name: "already saved"}
+
+  # Registered after the save, so it is the one stub the outage below finds in
+  # the state save is supposed to change.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id":"c0000002-0000-4000-8000-000000000003",
+         "persistent": false,
+         "request":{"method":"GET","urlPath":"/e2e/cov-cb-save-outage-001/shipment"},
+         "response":{"status":200,"body":"registered after the save"}}
+    expect:
+      status: 201
+      body_json_subset: {persistent: false}
+
+  - stop_store: true
+
+  # Save is a write, and a write against a store that cannot be read is refused
+  # rather than attempted: the first thing it does is the bulk read that chooses
+  # the documents, and a save that guessed at that set would clear the TTL on
+  # some stubs and not others with nothing saying which. 503 with code 1020 so a
+  # suite can tell "the store is down, wait" from "your call was wrong"
+  # (Appendix B, SPEC §4.6).
+  - admin: {method: POST, path: /__admin/mappings/save}
+    expect:
+      status: 503
+      body_json_subset:
+        errors:
+          - code: 1020
+            title: "Store unavailable"
+
+  # Nothing the refused save described took effect. This is the assertion that
+  # makes 1020 a rejection rather than a report on a partial write: a stub that
+  # came back persistent here would have had its TTL cleared on the strength of
+  # a call that answered 503.
+  - admin: {method: GET, path: /__admin/mappings/c0000002-0000-4000-8000-000000000003}
+    expect:
+      status: 200
+      body_json_subset: {persistent: false}
+
+  # And the save that did succeed is not undone by the one that failed.
+  - admin: {method: GET, path: /__admin/mappings/c0000002-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset: {persistent: true}
+
+  # Counted under its own operation, which is what tells an operator whether the
+  # store is refusing everything or only the calls that read in bulk.
+  - metricsprobe: {series: 'mockulus_store_errors_total{op="mark_all_persistent"}', at_least: 1}
+
+  - start_store: true
+
+  # Recovery is polled with a read rather than with the save itself, so the poll
+  # cannot be the thing that fixes the state it is measuring. An unknown id is
+  # the cheapest call that has to leave the snapshot: 503 while the store is
+  # away, 404 once it answers again.
+  - admin: {method: GET, path: /__admin/mappings/c0000002-0000-4000-8000-0000000000ff}
+    expect_eventually: {status: 404, within: 60s}
+
+  # The same call as before the outage, now that the store is back — nothing
+  # restarted and nothing was reconciled, because the refusal buffered nothing.
+  - admin: {method: POST, path: /__admin/mappings/save}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/c0000002-0000-4000-8000-000000000003}
+    expect:
+      status: 200
+      body_json_subset: {persistent: true}
+
+  # The durability is real rather than cosmetic, and this is where the cleared
+  # TTL and the flag stop being the same claim: reset sweeps every ephemeral
+  # mapping in the deployment, and all three of these survive it.
+  - admin: {method: POST, path: /__admin/mappings/reset}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-save-outage-001/shipment}
+    expect: {status: 200, body: "registered after the save"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-save-outage-001/order}
+    expect: {status: 200, body: "ephemeral when registered"}
+
+  # Cleanup: a persistent stub is precisely what reset will not take away, so
+  # leaving these behind would hand them to every case that follows.
+  - admin: {method: DELETE, path: /__admin/mappings}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/c0000002-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cb-save-outage-001/shipment}
+    expect: {status: 404}

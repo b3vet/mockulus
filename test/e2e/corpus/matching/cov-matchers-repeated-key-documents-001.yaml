@@ -1,0 +1,158 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-matchers-repeated-key-documents-001
+behaviors:
+  - B-REQ-QUERYPARAMETERS
+  - B-MATCH-MATCHESJSONPATH
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status and the matched bodies are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# SPEC §5.2 states the multi-value rule once — a criterion holds when at least
+# one value of a repeated key satisfies it — and it is easy to implement for the
+# string matchers and lose for the rest. A string matcher walks the values
+# itself; a criterion that reads the key as one document does not, because the
+# document is built from the first value. Without a deliberate split,
+# equalToJson and matchesJsonPath would answer for value one and silently ignore
+# the others, and a stub would then match or not depending on the order a client
+# happened to serialise its query in.
+#
+# The same applies from the other side to `not`, which is a criterion in its own
+# right rather than a negation pushed down onto the values: any-of over the
+# values of a negation is not the negation of any-of over them, and only a
+# repeated key can tell the two readings apart.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000004",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-repeated-key-documents-001/filter",
+                     "queryParameters": {"filter": {"equalToJson": "{\"kind\":\"beta\"}"}}},
+         "response": {"status": 200, "body": "filter",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The document arrives as the first value, which is the case an implementation
+  # with no split still answers correctly.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/filter?filter=%7B%22kind%22%3A%22beta%22%7D&filter=%7B%22kind%22%3A%22gamma%22%7D"
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+      body: "filter"
+
+  # The same two documents the other way round. This is the step the whole case
+  # exists for: a criterion that parsed only the first value answers 404 here
+  # while answering 200 above, which makes a stub's behavior depend on the order
+  # a client serialised its query parameters in.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/filter?filter=%7B%22kind%22%3A%22gamma%22%7D&filter=%7B%22kind%22%3A%22beta%22%7D"
+    expect: {status: 200, body: "filter"}
+
+  # Any-of is not "some value exists": neither document is the expected one, so
+  # the criterion fails. Without this a split that simply stopped checking would
+  # pass the two steps above.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/filter?filter=%7B%22kind%22%3A%22gamma%22%7D&filter=%7B%22kind%22%3A%22delta%22%7D"
+    expect: {status: 404}
+
+  # And the single-valued key still behaves as it did, so the split did not
+  # change the answer for the keys that carry one value.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/filter?filter=%7B%22kind%22%3A%22gamma%22%7D"
+    expect: {status: 404}
+
+  # A value that is not JSON at all is a non-match for that value rather than an
+  # error, and it does not poison the values beside it: the parse is per value,
+  # so the second one is still compared.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/filter?filter=notjson&filter=%7B%22kind%22%3A%22beta%22%7D"
+    expect: {status: 200, body: "filter"}
+
+  # matchesJsonPath reads the key as a document too, so it needs the same split.
+  # It reaches it down its own path — a JSONPath evaluator, not a structural
+  # comparison — which is why it is asked separately rather than assumed.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000005",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-repeated-key-documents-001/select",
+                     "queryParameters": {"doc": {"matchesJsonPath": {"expression": "$.kind",
+                                                                     "equalTo": "beta"}}}},
+         "response": {"status": 200, "body": "select"}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/select?doc=%7B%22kind%22%3A%22beta%22%7D&doc=%7B%22kind%22%3A%22gamma%22%7D"
+    expect: {status: 200, body: "select"}
+
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/select?doc=%7B%22kind%22%3A%22gamma%22%7D&doc=%7B%22kind%22%3A%22beta%22%7D"
+    expect: {status: 200, body: "select"}
+
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/select?doc=%7B%22kind%22%3A%22gamma%22%7D&doc=%7B%22kind%22%3A%22delta%22%7D"
+    expect: {status: 404}
+
+  # `not` over a repeated key. The criterion holds when at least one value fails
+  # the operand, which is any-of applied to the negation rather than the
+  # negation of any-of — the two disagree on exactly the request below. The key
+  # is a query parameter rather than a header because a repeated header cannot
+  # be expressed from a corpus case at all: the harness sets each declared
+  # header once.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000005-0000-4000-8000-000000000006",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/cov-matchers-repeated-key-documents-001/exclude",
+                     "queryParameters": {"tag": {"not": {"contains": "bad"}}}},
+         "response": {"status": 200, "body": "exclude"}}
+    expect: {status: 201}
+
+  # Every value contains the excluded text, so no value fails the operand and
+  # the criterion does not hold. An implementation that negated the any-of
+  # result instead of applying the negation per value answers 200 here.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/exclude?tag=bad-one&tag=bad-two"
+    expect: {status: 404}
+
+  # One value clear of it is enough, which is the other half of the same rule
+  # and the step that separates it from "no value may contain the text".
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/exclude?tag=bad-one&tag=fine"
+    expect: {status: 200, body: "exclude"}
+
+  # The single-valued key is unchanged by the split, in both directions.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/exclude?tag=bad-one"
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/exclude?tag=fine"
+    expect: {status: 200, body: "exclude"}
+
+  # An absent query parameter satisfies a negative criterion — there is no value
+  # there to contain the excluded text — which is the rule for a key that is not
+  # a cookie. Verified directly against the pinned version.
+  - request:
+      method: GET
+      path: "/e2e/cov-matchers-repeated-key-documents-001/exclude?other=1"
+    expect: {status: 200, body: "exclude"}

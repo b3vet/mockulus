@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-deep-scan-wildcard-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `$..*` is the deep scan with no name to look for: every value anywhere in the
+  # document, at any depth, through objects and arrays alike. It is the shape a
+  # stub reaches for when the payload's envelope is not stable — a value that
+  # moves between `{"card":…}` and `{"cards":[…]}` between two versions of a
+  # producer is still found by it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000040",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$..*",
+                                                           "equalTo": "visa"}}]},
+         "response": {"status": 200, "body": "anywhere",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # At the top level, one object down, and — the case a descent written only for
+  # objects would miss — inside an array.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere
+      body: '{"brand":"visa"}'
+    expect: {status: 200, body: "anywhere"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere
+      body: '{"card":{"brand":"visa"}}'
+    expect: {status: 200, body: "anywhere"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere
+      body: '{"cards":[{"brand":"visa"}]}'
+    expect: {status: 200, body: "anywhere"}
+
+  # An array nested inside an array: the descent has to keep going through
+  # elements, not just report them.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere
+      body: '{"cards":[["visa"]]}'
+    expect: {status: 200, body: "anywhere"}
+
+  # A document that is an array at the root, which has no member name to descend
+  # from at all.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere
+      body: '["visa"]'
+    expect: {status: 200, body: "anywhere"}
+
+  # The wildcard collects VALUES, not member names. This document contains the
+  # text "visa" — as a key — and must not match: a descent that emitted keys
+  # alongside values would turn every stub written this way into one that also
+  # fires on the schema of a payload rather than its contents.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere
+      body: '{"visa":1}'
+    expect: {status: 404}
+
+  # And it is still a criterion: a document with the same shape and a different
+  # value does not match.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-deep-scan-wildcard-001/anywhere
+      body: '{"cards":[{"brand":"amex"}]}'
+    expect: {status: 404}

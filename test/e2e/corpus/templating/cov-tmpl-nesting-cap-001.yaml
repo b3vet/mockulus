@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-tmpl-nesting-cap-001
+behaviors: [B-ERR-1002, B-TPL-IF-UNLESS-EACH-WITH-LOOKUP]
+# The bound is a mockulus safeguard with no WireMock counterpart — its parser
+# accepts the deep document and fails elsewhere — so there is no oracle answer
+# to diff. The expectation is SPEC §10.4's: a template the parser will not take
+# is a 422 code 1002 at registration.
+wm: n/a
+steps:
+  # The parser descends once per open block, and a Go stack overflow is fatal
+  # rather than recoverable: nothing catches it, so the process dies and takes
+  # every other team's mocks on the deployment with it. That is the failure
+  # this bound exists to prevent, and it is reachable by anyone who can POST a
+  # mapping — a template of nested {{#if}} that fits inside the admin body cap
+  # is deep enough to do it.
+  #
+  # Both documents are fixtures rather than inline bodies because each is
+  # three kilobytes of one repeated tag; what matters about them is the count,
+  # and a count is easier to trust generated than transcribed.
+
+  # One below the bound, and it has to be accepted. A refusal here would mean
+  # the safeguard had started rejecting templates that were always going to
+  # render — and an off-by-one in a limit nobody can see is the kind of thing
+  # that is discovered by a stub that used to work.
+  - admin: {method: POST, path: /__admin/mappings, body_file: stubs/cov-tmpl-nesting-100.json}
+    expect: {status: 201}
+
+  # It renders, all hundred levels of it. Registering the document proves the
+  # parser survived; serving it proves the tree it built is the one the source
+  # describes, which a parser that silently stopped descending would fail.
+  - request:
+      method: GET
+      path: /e2e/cov-tmpl-nesting-cap-001/nested-100?on=1
+    expect:
+      status: 200
+      body: "depth-100"
+
+  # The same stub with the condition false. Every one of the hundred blocks is
+  # driven by the same query parameter, so this is the control that says the
+  # nesting is real: a parser that had collapsed the levels into one would
+  # still render "depth-100" above, and would still render nothing here — but
+  # a parser that had dropped the *condition* while keeping the body renders
+  # "depth-100" for this request too.
+  - request: {method: GET, path: /e2e/cov-tmpl-nesting-cap-001/nested-100}
+    expect:
+      status: 200
+      body: ""
+
+  # One past the bound, and the refusal names the limit. A hundred is two
+  # orders of magnitude past the deepest template anyone writes and three
+  # below where the stack actually runs out, so this message only ever reaches
+  # someone whose document was never going to render.
+  - admin: {method: POST, path: /__admin/mappings, body_file: stubs/cov-tmpl-nesting-101.json}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1002
+            title: "Template error"
+            source: {pointer: "/response/body"}
+      body_regex: 'blocks may not nest more than 100 deep'
+
+  # And it was not stored on the way to being refused.
+  - admin: {method: GET, path: /__admin/mappings/c0000006-0000-4000-8000-000000000011}
+    expect: {status: 404}

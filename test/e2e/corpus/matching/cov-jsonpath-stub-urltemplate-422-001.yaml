@@ -1,0 +1,172 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-stub-urltemplate-422-001
+behaviors: [B-ERR-10, B-REQ-URLPATHTEMPLATE-PATHPARAMETERS]
+# The refusals and their pointers are mockulus's error catalog (SPEC Appendix
+# B); WireMock accepts several of these templates and turns them into stubs that
+# never match, which is the outcome P3 rules out rather than a shape to diff.
+wm: n/a
+steps:
+  # A template is compiled at registration, so a template that cannot bind what
+  # it looks like it binds is refused there. Each document below is a different
+  # way to write one wrong, and each of them is a plausible typo rather than an
+  # invented input: every one produces a stub that registers cleanly and then
+  # never serves if the compiler shrugs at it.
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000080",
+         "request": {"urlPathTemplate": ""},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/request/urlPathTemplate"}
+            detail: "path template is empty"
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000081",
+         "request": {"urlPathTemplate": "e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{id}"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/urlPathTemplate"}
+            detail: 'path template "e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{id}" must start with /'
+
+  # A variable with no name binds nothing, so a pathParameters criterion could
+  # never address it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000082",
+         "request": {"urlPathTemplate": "/e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{}"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/urlPathTemplate"}
+            detail: 'path template "/e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{}" has an unnamed variable'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000083",
+         "request": {"urlPathTemplate": "/e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{a{b}}"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/urlPathTemplate"}
+            detail: 'path template "/e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{a{b}}" has a malformed variable "{a{b}}"'
+
+  # One name bound twice has two values and one slot for them, so the criteria
+  # written against it would be applied to whichever segment won.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000084",
+         "request": {"urlPathTemplate": "/e2e/cov-jsonpath-stub-urltemplate-422-001/{id}/{id}"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/urlPathTemplate"}
+            detail: 'path template "/e2e/cov-jsonpath-stub-urltemplate-422-001/{id}/{id}" binds "id" more than once'
+
+  # A brace inside a larger segment is a typo, not a template: WireMock 3 binds
+  # whole segments only, so `pre{id}` would have to be matched literally, braces
+  # and all, and its author would never find out.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000085",
+         "request": {"urlPathTemplate": "/e2e/cov-jsonpath-stub-urltemplate-422-001/pre{id}"},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/urlPathTemplate"}
+            detail: 'path template "/e2e/cov-jsonpath-stub-urltemplate-422-001/pre{id}": a variable must be a whole segment, as in /orders/{id}'
+
+  # A criterion naming a variable the template does not bind is a criterion that
+  # can never be satisfied, which makes the whole stub dead. The pointer reaches
+  # the offending parameter by name.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000086",
+         "request": {"urlPathTemplate": "/e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{id}",
+                     "pathParameters": {"orderId": {"equalTo": "7"}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/pathParameters/orderId"}
+            detail: 'the template "/e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{id}" binds no variable named "orderId"'
+
+  - admin: {method: GET, path: /__admin/mappings/c0000007-0000-4000-8000-000000000086}
+    expect: {status: 404}
+
+  # The control: a well-formed template with a criterion over the variable it
+  # does bind. It registers, it binds, and the criterion is applied to what was
+  # bound — which is what makes every refusal above about the template rather
+  # than about templates.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000087",
+         "request": {"method": "GET",
+                     "urlPathTemplate": "/e2e/cov-jsonpath-stub-urltemplate-422-001/orders/{id}/items",
+                     "pathParameters": {"id": {"matches": "[0-9]+"}}},
+         "response": {"status": 200, "body": "items",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-urltemplate-422-001/orders/7/items}
+    expect: {status: 200, body: "items"}
+
+  # The criterion over the bound variable is load-bearing: a template whose
+  # pathParameters were parsed and then dropped would serve this one too.
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-urltemplate-422-001/orders/seven/items}
+    expect: {status: 404}
+
+  # The literal segments are load-bearing on both sides of the variable, so the
+  # template is a shape and not just "three segments with a number in the
+  # middle".
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-urltemplate-422-001/orders/7/parts}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-urltemplate-422-001/order/7/items}
+    expect: {status: 404}
+
+  # A variable binds one non-empty segment: it does not stretch over the rest of
+  # the path, and it does not match nothing at all.
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-urltemplate-422-001/orders/7/items/extra}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/cov-jsonpath-stub-urltemplate-422-001/orders/7}
+    expect: {status: 404}

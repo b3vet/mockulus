@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-adminq-criteria-url-kinds-001
+behaviors:
+  - B-ADMIN-REQUESTS-COUNT-POST
+  - B-REQ-URL
+  - B-REQ-URLPATTERN
+  - B-REQ-URLPATHTEMPLATE-PATHPARAMETERS
+# The journal is off by default (deviation #1), so anything that verifies runs
+# against the variant that turns it on.
+config: journal
+# n/a: the first verification polls, because our journal is eventually
+# consistent where WireMock's is immediate (deviation #10), and a polled step is
+# not replayed against the oracle.
+wm: n/a
+steps:
+  # Two calls that differ in the path's last segment and in the query, so every
+  # URL criterion below has something it must include and something it must
+  # exclude. Neither matches a stub; the journal records unmatched calls too
+  # (§11.1), which is what keeps this case free of stub bookkeeping.
+  #
+  # The header is this case's marker. The criteria that name no URL at all match
+  # every recorded call in the deployment, so the marker is what turns a
+  # deployment-wide question into one about these two calls.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-adminq-criteria-url-kinds-001/orders/42?channel=web
+      headers: {X-Cov-Adminq-Urlkinds: kinds}
+    expect: {status: 404}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/cov-adminq-criteria-url-kinds-001/orders/43?channel=mobile
+      headers: {X-Cov-Adminq-Urlkinds: kinds}
+    expect: {status: 404}
+
+  # `urlPathPattern` is the baseline: a regex over the path only, which both
+  # calls satisfy. It is also the step that waits for both entries to land, so
+  # every count below is exact rather than eventual — and a count that was right
+  # only because nothing had been recorded yet can no longer pass.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPathPattern":"/e2e/cov-adminq-criteria-url-kinds-001/orders/4[0-9]"}'
+    expect_eventually:
+      status: 200
+      body_json: {count: 2, requestJournalDisabled: false}
+
+  # `url` is path *and* query, byte-exactly. Verification has to read it the way
+  # a stub does, or a suite could verify a call against a stub that would never
+  # have served it.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"url":"/e2e/cov-adminq-criteria-url-kinds-001/orders/42?channel=web"}'
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # The same `url` with the query dropped counts nothing. This is the control
+  # that pins the criterion as full-URL rather than path-only: a `url` that had
+  # quietly degraded into `urlPath` would answer 1 here, and every windowed
+  # verification written with a query string would then be satisfied by calls
+  # that carried a different one.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"url":"/e2e/cov-adminq-criteria-url-kinds-001/orders/42"}'
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # `urlPattern` is the regex form of the same thing: the query is part of what
+  # the expression has to cover.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPattern":"/e2e/cov-adminq-criteria-url-kinds-001/orders/4[0-9]\\?channel=web"}'
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # And its control: the same expression without the query clause matches
+  # neither call, because the match is anchored over the whole URL rather than
+  # searched for inside it. An unanchored engine would answer 2.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPattern":"/e2e/cov-adminq-criteria-url-kinds-001/orders/4[0-9]"}'
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # `urlPathTemplate` binds the variable segment, so both calls satisfy it.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPathTemplate":"/e2e/cov-adminq-criteria-url-kinds-001/orders/{id}"}'
+    expect: {status: 200, body_json: {count: 2, requestJournalDisabled: false}}
+
+  # A template with one segment more matches neither, so the variable binds a
+  # single segment rather than the rest of the path.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"urlPathTemplate":"/e2e/cov-adminq-criteria-url-kinds-001/orders/{id}/items"}'
+    expect: {status: 200, body_json: {count: 0, requestJournalDisabled: false}}
+
+  # Criteria that name no URL at all match every URL, which is what WireMock's
+  # anyUrl() means. Both calls satisfy it, and they are the only two calls in
+  # the deployment carrying the marker header.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"headers":{"X-Cov-Adminq-Urlkinds":{"equalTo":"kinds"}}}'
+    expect: {status: 200, body_json: {count: 2, requestJournalDisabled: false}}
+
+  # The control for it: adding a URL clause to the same criteria narrows the
+  # answer. Without this, a "match every URL" that had degraded into "ignore the
+  # URL clause" would look identical.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: |
+        {"headers":{"X-Cov-Adminq-Urlkinds":{"equalTo":"kinds"}},
+         "urlPath":"/e2e/cov-adminq-criteria-url-kinds-001/orders/42"}
+    expect: {status: 200, body_json: {count: 1, requestJournalDisabled: false}}
+
+  # Removing this case's own entries keeps the shared journal from growing for
+  # the cases that come after it.
+  - admin:
+      method: POST
+      path: /__admin/requests/remove
+      body: '{"headers":{"X-Cov-Adminq-Urlkinds":{"equalTo":"kinds"}}}'
+    expect: {status: 200}

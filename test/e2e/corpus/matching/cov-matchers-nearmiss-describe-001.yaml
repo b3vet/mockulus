@@ -1,0 +1,287 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-matchers-nearmiss-describe-001
+behaviors:
+  - B-ADMIN-NEAR-MISSES-REQUEST-PATTERN-POST
+  - B-MATCH-AND-OR-NOT
+# The journal is off by default (deviation #1) and this endpoint ranks recorded
+# requests, so it runs on the variant that turns it on.
+config: journal
+# n/a: near-miss scoring is outside the strict-compat surface by SPEC §6.8 —
+# helpful and stable, not bit-identical — so the rendered criterion text and the
+# distances are ours by design and there is nothing to diff.
+wm: n/a
+#
+# A near miss reports which criterion did not line up, and it reports it by
+# rendering the criterion back. That rendering is the only place a team ever
+# sees what the server understood their matcher to be, which makes it the one
+# check that catches a matcher compiled into something other than what was
+# written: a combinator flattened to its first operand, a case-insensitive flag
+# dropped, an inner matcher lost behind its path. All of those still evaluate,
+# still fail, and still produce a difference — with a description that no longer
+# says what the stub asked for.
+#
+# Ranking is over the whole journal, which this case shares. It does not need
+# the journal to itself: every pattern below fails against a request that lacks
+# the field entirely, so any other case's traffic scores a full unit on the
+# criterion AND a non-zero distance on the URL, while this case's own request
+# matches the method and path exactly. Its entry is therefore first by
+# construction rather than by luck, which is what lets the case read
+# nearMisses[0] without owning the deployment.
+steps:
+  # One request, described nine ways below. It is unmatched, which is beside the
+  # point — this endpoint ranks what was recorded, matched or not.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-matchers-nearmiss-describe-001/probe
+      headers: {X-Cov-Tenant: acme-eu}
+      body: '{"id":"a1","tags":["x","y"]}'
+    expect: {status: 404}
+
+  # binaryEqualTo reports the operand as it was written — base64 — rather than
+  # the decoded bytes, which is the only form that can be pasted back into the
+  # mapping. The first probe polls, because entries are written off the request
+  # path (§11.4); once the entry is there the rest of the steps read it.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "bodyPatterns": [{"binaryEqualTo": "aGVsbG8="}]}
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: body
+                  expected: 'binaryEqualTo "aGVsbG8="'
+                  actual: '{"id":"a1","tags":["x","y"]}'
+            # The pattern is echoed on every entry, so a diagnostic pasted into
+            # a bug report carries what was asked as well as what was found.
+            requestPattern:
+              urlPath: /e2e/cov-matchers-nearmiss-describe-001/probe
+
+  # Two matcher keys on one criterion are a conjunction (deviation #26), and the
+  # description says so: a rendering that named only the first key would hide
+  # exactly the half of the criterion deviation #26 exists to keep.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "headers": {"X-Cov-Tenant": {"contains": "acme", "doesNotContain": "eu"}}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Cov-Tenant
+                  expected: 'and(contains "acme", doesNotContain "eu")'
+                  actual: acme-eu
+
+  # `or` renders as an alternation over both operands. A combinator collapsed to
+  # its first operand evaluates the same way here — neither branch holds — so
+  # only the description can tell the two apart.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "headers": {"X-Cov-Tenant": {"or": [{"equalTo": "alpha"}, {"equalTo": "beta"}]}}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Cov-Tenant
+                  expected: 'or(equalTo "alpha", equalTo "beta")'
+                  actual: acme-eu
+
+  # `not` renders around its operand rather than being folded into it, so a
+  # negation is legible as one. The operands of a criterion with several keys
+  # are rendered in key order, which is why the regex pair below reads
+  # doesNotMatch first: the order is sorted so the same document always renders
+  # the same way and two runs can be diffed.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "headers": {"X-Cov-Tenant": {"and": [{"not": {"equalTo": "acme-eu"}},
+                                              {"equalTo": "beta"}]}}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Cov-Tenant
+                  expected: 'and(not(equalTo "acme-eu"), equalTo "beta")'
+                  actual: acme-eu
+
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "headers": {"X-Cov-Tenant": {"matches": "[a-z]+", "doesNotMatch": ".*eu"}}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Cov-Tenant
+                  expected: 'and(doesNotMatch ".*eu", matches "[a-z]+")'
+                  actual: acme-eu
+
+  # caseInsensitive is a modifier on a sibling key rather than a matcher of its
+  # own, so it is the easiest thing in a criterion to lose on the way to the
+  # compiled form. The description carries it, which is what makes "I asked for
+  # a case-insensitive match and it still did not match" an answerable question.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "headers": {"X-Cov-Tenant": {"equalTo": "ACME", "caseInsensitive": true}}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Cov-Tenant
+                  expected: 'equalTo (case-insensitive) "ACME"'
+                  actual: acme-eu
+
+  # The nested form of matchesJsonPath renders the path and the inner matcher on
+  # either side of an arrow, because those are two separate reasons a criterion
+  # can fail and the author needs to know which one to go and look at.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "bodyPatterns": [{"matchesJsonPath": {"expression": "$.id", "equalTo": "zzz"}}]}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: body
+                  expected: 'matchesJsonPath "$.id" -> equalTo "zzz"'
+                  actual: '{"id":"a1","tags":["x","y"]}'
+
+  # The bare form renders the expression alone, and nesting two of them shows
+  # both: a combinator that rendered only the operand it stopped at would say
+  # one path was missing when the stub asked about two.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "bodyPatterns": [{"and": [{"matchesJsonPath": "$.missing"},
+                                   {"matchesJsonPath": "$.absent"}]}]}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: body
+                  expected: 'and(matchesJsonPath "$.missing", matchesJsonPath "$.absent")'
+                  actual: '{"id":"a1","tags":["x","y"]}'
+
+  # equalToJson's relaxation flags change what the criterion means, so they are
+  # named after the operand. "The documents look identical and it still did not
+  # match" is usually a flag the author thought they had set.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "bodyPatterns": [{"equalToJson": "{\"tags\":[\"zz\",\"x\"]}",
+                           "ignoreArrayOrder": true,
+                           "ignoreExtraElements": true}]}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: body
+                  expected: 'equalToJson "{\"tags\":[\"zz\",\"x\"]}" (ignoreArrayOrder, ignoreExtraElements)'
+                  actual: '{"id":"a1","tags":["x","y"]}'
+
+  # An operand is bounded before it is rendered. A diagnostic is read by a
+  # person, and an unbounded one is a criterion carrying a megabyte of expected
+  # document into a 200 that something has to hold in memory and someone has to
+  # scroll past. The regex pins the cut at 120 characters with an ellipsis after
+  # it: it anchors on the opening quote, so a build that stopped truncating —
+  # or truncated somewhere else — fails here rather than passing on a substring.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "headers": {"X-Cov-Tenant": {"equalTo": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"}}}
+    expect:
+      status: 200
+      body_regex: '"expected":"equalTo \\"k{120}…\\""'
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              differences:
+                - kind: header
+                  name: X-Cov-Tenant
+                  actual: acme-eu
+
+  # The control over every step above. The same request, described by a pattern
+  # it satisfies, reports no differences at all — so the rendered criteria are
+  # reports of a real failure rather than text emitted whenever a criterion is
+  # present.
+  - admin:
+      method: POST
+      path: /__admin/near-misses/request-pattern
+      body: |
+        {"method": "POST",
+         "urlPath": "/e2e/cov-matchers-nearmiss-describe-001/probe",
+         "headers": {"X-Cov-Tenant": {"equalTo": "acme-eu"}}}
+    expect:
+      status: 200
+      body_json_subset:
+        nearMisses:
+          - request: {url: /e2e/cov-matchers-nearmiss-describe-001/probe}
+            matchResult:
+              distance: 0
+              differences: null

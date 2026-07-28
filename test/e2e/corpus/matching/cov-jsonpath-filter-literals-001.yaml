@@ -1,0 +1,195 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-jsonpath-filter-literals-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# Every non-matching step lands on the 404 whose body differs by design:
+# WireMock renders a near-miss table there and mockulus deliberately does not
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # SPEC §6.7 commits the filter grammar to comparisons plus && and ||, and the
+  # right-hand side of a comparison is a literal. The three non-numeric literals
+  # are the ones a parser is most likely to get wrong, because each of them also
+  # reads as a bare word: `true` compared against the JSON boolean must not be
+  # the same thing as `'true'` compared against a string.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000010",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-filter-literals-001/vip",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.vip == true)]"}]},
+         "response": {"status": 200, "body": "vip",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/vip
+      body: '{"items":[{"vip":true}]}'
+    expect: {status: 200, body: "vip"}
+
+  # The boolean literal is a boolean, not the text "true" and not a truthy 1.
+  # Both of these would match a filter that had degraded to a string compare or
+  # to a truthiness test, and neither is what `== true` says.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/vip
+      body: '{"items":[{"vip":"true"}]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/vip
+      body: '{"items":[{"vip":1}]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/vip
+      body: '{"items":[{"vip":false}]}'
+    expect: {status: 404}
+
+  # `== false` has to select, which is the case an implementation loses if it
+  # evaluates the comparison and then applies a truthiness test to the result.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000011",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-filter-literals-001/notvip",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.vip == false)]"}]},
+         "response": {"status": 200, "body": "notvip",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/notvip
+      body: '{"items":[{"vip":false}]}'
+    expect: {status: 200, body: "notvip"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/notvip
+      body: '{"items":[{"vip":true}]}'
+    expect: {status: 404}
+
+  # `== null` distinguishes a member that is present and null from a member that
+  # is not there at all. An evaluator that read a missing key as null would match
+  # the second document too, and a stub written to find the records that were
+  # explicitly blanked would quietly also find the ones that were never filled
+  # in — the two the author was trying to tell apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000012",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-filter-literals-001/blanked",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.note == null)]"}]},
+         "response": {"status": 200, "body": "blanked",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/blanked
+      body: '{"items":[{"note":null}]}'
+    expect: {status: 200, body: "blanked"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/blanked
+      body: '{"items":[{}]}'
+    expect: {status: 404}
+  # An empty string is a value, so it is not null either.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/blanked
+      body: '{"items":[{"note":""}]}'
+    expect: {status: 404}
+
+  # The ordering operators. `<=` is the one that has to include its boundary,
+  # which is exactly what an off-by-one in the comparison loses.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000013",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-filter-literals-001/rank",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.rank <= 2)]"}]},
+         "response": {"status": 200, "body": "rank",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/rank
+      body: '{"items":[{"rank":2}]}'
+    expect: {status: 200, body: "rank"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/rank
+      body: '{"items":[{"rank":1.5}]}'
+    expect: {status: 200, body: "rank"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/rank
+      body: '{"items":[{"rank":3}]}'
+    expect: {status: 404}
+  # Numbers compare numerically, so the digits of a string are not a number: a
+  # comparison that fell back to text would order "10" before "2".
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/rank
+      body: '{"items":[{"rank":"2"}]}'
+    expect: {status: 404}
+
+  # Strings order lexically against a quoted literal, with the same boundary
+  # rule. The mixed-kind document is the control on the other side: a filter
+  # over heterogeneous data skips what does not fit rather than comparing a
+  # number to a string by some incidental rule.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000007-0000-4000-8000-000000000014",
+         "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-filter-literals-001/sku",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[?(@.sku >= 'M')]"}]},
+         "response": {"status": 200, "body": "sku",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/sku
+      body: '{"items":[{"sku":"M"}]}'
+    expect: {status: 200, body: "sku"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/sku
+      body: '{"items":[{"sku":"Z"}]}'
+    expect: {status: 200, body: "sku"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/sku
+      body: '{"items":[{"sku":"A"}]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/cov-jsonpath-filter-literals-001/sku
+      body: '{"items":[{"sku":5}]}'
+    expect: {status: 404}
