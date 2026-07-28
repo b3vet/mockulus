@@ -155,7 +155,7 @@ func TestStoreChoreographyIsRejectedWithoutItsDeclarations(t *testing.T) {
 // continuous test. Per-connection balancing would pin a case to one replica for
 // its whole run and let a broken replica through.
 func TestLoadBalancerSpreadsRequestsOverEveryReplica(t *testing.T) {
-	var backends []string
+	backends := make([]string, 0, 3)
 	hits := map[string]int{}
 	for i := range 3 {
 		name := fmt.Sprintf("replica-%d", i)
@@ -173,9 +173,13 @@ func TestLoadBalancerSpreadsRequestsOverEveryReplica(t *testing.T) {
 	}
 	defer func() { _ = proxy.Stop() }()
 
-	var order []string
+	order := make([]string, 0, 6)
 	for range 6 {
-		resp, err := http.Get(proxy.Addr + "/anything")
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, proxy.Addr+"/anything", nil)
+		if err != nil {
+			t.Fatalf("build the request: %v", err)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("through the load balancer: %v", err)
 		}

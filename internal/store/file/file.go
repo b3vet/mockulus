@@ -349,7 +349,9 @@ func (s *Store) scan(dir string, h hash.Hash64, visit func(rel, path string, inf
 			return err
 		}
 
-		fmt.Fprintf(h, "%s\x00%d\x00%d\n", rel, info.Size(), info.ModTime().UnixNano())
+		// Writing to a hash cannot fail — hash.Hash documents Write as never
+		// returning an error — so there is nothing to handle here.
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\n", rel, info.Size(), info.ModTime().UnixNano())
 
 		if visit == nil {
 			return nil

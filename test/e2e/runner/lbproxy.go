@@ -3,6 +3,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -36,7 +38,7 @@ type LBProxy struct {
 // as a direct one would.
 func StartLBProxy(backends []string, transport http.RoundTripper) (*LBProxy, error) {
 	if len(backends) == 0 {
-		return nil, fmt.Errorf("a load balancer needs at least one replica behind it")
+		return nil, errors.New("a load balancer needs at least one replica behind it")
 	}
 
 	targets := make([]*url.URL, 0, len(backends))
@@ -48,7 +50,8 @@ func StartLBProxy(backends []string, transport http.RoundTripper) (*LBProxy, err
 		targets = append(targets, u)
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +71,7 @@ func StartLBProxy(backends []string, transport http.RoundTripper) (*LBProxy, err
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, "the harness load balancer could not reach a replica: %v", err)
+			_, _ = fmt.Fprintf(w, "the harness load balancer could not reach a replica: %v", err)
 		},
 	}
 

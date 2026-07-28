@@ -117,7 +117,7 @@ func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
 		h.storeError(w, "get_journal_entry", err)
 		return
 	}
-	wmcompat.WriteJSON(w, http.StatusOK, json.RawMessage(entry.Data))
+	wmcompat.WriteJSON(w, http.StatusOK, entry.Data)
 }
 
 // deleteRequest removes one entry.

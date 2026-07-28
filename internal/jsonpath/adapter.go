@@ -4,6 +4,7 @@ package jsonpath
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -72,12 +73,12 @@ func (e *Evaluator) Source() string { return e.path.Source }
 // should not be able to disagree with itself about what that path selects.
 func TemplateHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("jsonPath takes a document and an expression")
+		return nil, errors.New("jsonPath takes a document and an expression")
 	}
 
 	expr, ok := args[1].(string)
 	if !ok {
-		return nil, fmt.Errorf("the jsonPath expression must be a string")
+		return nil, errors.New("the jsonPath expression must be a string")
 	}
 	path, err := Compile(expr)
 	if err != nil {
@@ -109,11 +110,11 @@ func asDocument(v any) (any, error) {
 	case string:
 		var doc any
 		if err := json.Unmarshal([]byte(t), &doc); err != nil {
-			return nil, fmt.Errorf("jsonPath: the document is not valid JSON")
+			return nil, errors.New("jsonPath: the document is not valid JSON")
 		}
 		return doc, nil
 	case nil:
-		return nil, fmt.Errorf("jsonPath: no document given")
+		return nil, errors.New("jsonPath: no document given")
 	default:
 		if s, ok := v.(fmt.Stringer); ok {
 			return asDocument(s.String())

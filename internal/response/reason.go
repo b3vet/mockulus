@@ -91,11 +91,11 @@ func writeWithReason(w http.ResponseWriter, r *http.Request, resp *stub.Compiled
 
 	header := w.Header()
 
-	buf.WriteString("HTTP/1.1 ")
-	buf.WriteString(strconv.Itoa(resp.Status))
-	buf.WriteString(" ")
-	buf.WriteString(resp.StatusMessage)
-	buf.WriteString("\r\n")
+	_, _ = buf.WriteString("HTTP/1.1 ")
+	_, _ = buf.WriteString(strconv.Itoa(resp.Status))
+	_, _ = buf.WriteString(" ")
+	_, _ = buf.WriteString(resp.StatusMessage)
+	_, _ = buf.WriteString("\r\n")
 
 	// The connection ends with this response. Keeping it alive would mean
 	// reading and dispatching the next request ourselves, because a hijacked
@@ -103,14 +103,14 @@ func writeWithReason(w http.ResponseWriter, r *http.Request, resp *stub.Compiled
 	// server we are standing inside, to save a handshake on the one kind of stub
 	// that opted into this path. WireMock keeps it alive; mockulus closing it is
 	// the cost of the phrase, and it is why nothing else takes this path.
-	buf.WriteString("Connection: close\r\n")
+	_, _ = buf.WriteString("Connection: close\r\n")
 
 	if _, declared := header["Date"]; !declared {
 		// net/http adds this on the ordinary path, and a stub should not lose a
 		// header merely by naming a reason phrase.
-		buf.WriteString("Date: ")
-		buf.WriteString(time.Now().UTC().Format(http.TimeFormat))
-		buf.WriteString("\r\n")
+		_, _ = buf.WriteString("Date: ")
+		_, _ = buf.WriteString(time.Now().UTC().Format(http.TimeFormat))
+		_, _ = buf.WriteString("\r\n")
 	}
 
 	// 1xx, 204 and 304 carry no body and must not be framed as if they did.
@@ -121,9 +121,9 @@ func writeWithReason(w http.ResponseWriter, r *http.Request, resp *stub.Compiled
 		// Content-Length rather than chunking: the body is already a complete
 		// []byte, so its length is known and the framing matches what the
 		// ordinary path sends (DECISIONS.md D-OPEN-4).
-		buf.WriteString("Content-Length: ")
-		buf.WriteString(strconv.Itoa(len(body)))
-		buf.WriteString("\r\n")
+		_, _ = buf.WriteString("Content-Length: ")
+		_, _ = buf.WriteString(strconv.Itoa(len(body)))
+		_, _ = buf.WriteString("\r\n")
 	}
 	for name, values := range header {
 		switch {
@@ -146,19 +146,19 @@ func writeWithReason(w http.ResponseWriter, r *http.Request, resp *stub.Compiled
 		// which writes nothing here — the same "no header at all" the ordinary
 		// path produces.
 		for _, v := range values {
-			buf.WriteString(name)
-			buf.WriteString(": ")
-			buf.WriteString(sanitizeHeaderValue(v))
-			buf.WriteString("\r\n")
+			_, _ = buf.WriteString(name)
+			_, _ = buf.WriteString(": ")
+			_, _ = buf.WriteString(sanitizeHeaderValue(v))
+			_, _ = buf.WriteString("\r\n")
 		}
 	}
 	if declareChunked && !bodyless {
 		// After the stub's own codings, never before: the field lines combine in
 		// the order they are sent, and chunked has to be the last coding applied
 		// or it does not describe the framing below.
-		buf.WriteString("Transfer-Encoding: chunked\r\n")
+		_, _ = buf.WriteString("Transfer-Encoding: chunked\r\n")
 	}
-	buf.WriteString("\r\n")
+	_, _ = buf.WriteString("\r\n")
 
 	// A HEAD response carries the headers of the GET and none of its body — and
 	// no terminating chunk either, since there is no chunked body to terminate.
@@ -188,16 +188,16 @@ func writeChunked(buf *bufio.Writer, body []byte) {
 	if len(body) > 0 {
 		writeChunk(buf, body)
 	}
-	buf.WriteString("0\r\n\r\n")
+	_, _ = buf.WriteString("0\r\n\r\n")
 }
 
 // writeChunk frames one chunk: its length in hex, the bytes, and the CRLF that
 // separates it from the next.
 func writeChunk(buf *bufio.Writer, b []byte) {
-	buf.WriteString(strconv.FormatInt(int64(len(b)), 16))
-	buf.WriteString("\r\n")
+	_, _ = buf.WriteString(strconv.FormatInt(int64(len(b)), 16))
+	_, _ = buf.WriteString("\r\n")
 	_, _ = buf.Write(b)
-	buf.WriteString("\r\n")
+	_, _ = buf.WriteString("\r\n")
 }
 
 // dribbleTo is dribble over a hijacked connection: the same division and the
@@ -230,7 +230,7 @@ func dribbleTo(buf *bufio.Writer, resp *stub.CompiledResponse, body []byte, chun
 	}
 
 	if chunked {
-		buf.WriteString("0\r\n\r\n")
+		_, _ = buf.WriteString("0\r\n\r\n")
 		_ = buf.Flush()
 	}
 }

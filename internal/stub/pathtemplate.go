@@ -3,6 +3,7 @@
 package stub
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -39,7 +40,7 @@ type templateSegment struct {
 // registration rather than letting it become a stub that never matches.
 func ParsePathTemplate(source string) (*PathTemplate, error) {
 	if source == "" {
-		return nil, fmt.Errorf("path template is empty")
+		return nil, errors.New("path template is empty")
 	}
 	if !strings.HasPrefix(source, "/") {
 		return nil, fmt.Errorf("path template %q must start with /", source)

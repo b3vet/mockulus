@@ -48,7 +48,8 @@ func faultMapping(path, fault string) string {
 func faultExchange(t *testing.T, addr, path string) ([]byte, error) {
 	t.Helper()
 
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial the mock port: %v", err)
 	}
@@ -120,7 +121,8 @@ func TestFaultRandomDataThenClose(t *testing.T) {
 	if bytes.HasPrefix(first, []byte("HTTP/")) {
 		t.Fatalf("RANDOM_DATA_THEN_CLOSE sent something beginning like a status line: %q", first[:16])
 	}
-	if _, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(first)), nil); err == nil {
+	if parsed, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(first)), nil); err == nil {
+		_ = parsed.Body.Close()
 		t.Fatalf("RANDOM_DATA_THEN_CLOSE sent bytes that parse as an HTTP response: %q", first[:64])
 	}
 
@@ -194,7 +196,7 @@ func TestFaultMalformedResponseChunk(t *testing.T) {
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{DisableKeepAlives: true},
 	}
-	resp, err := client.Get(m.mockURL("/e2e/gotest-fault-chunk/broken"))
+	resp, err := httpGet(t.Context(), client, m.mockURL("/e2e/gotest-fault-chunk/broken"))
 	if err != nil {
 		// Rejecting at header time is a legitimate way for a client to fail,
 		// and it is still a failure, which is the property under test. This
@@ -228,7 +230,7 @@ func TestFaultWithBodyRejected(t *testing.T) {
 	mapping := fmt.Sprintf(`{"request": {"method": "GET", "urlPath": %q},
 	                         "response": {"fault": "EMPTY_RESPONSE", "body": "served"}}`, path)
 
-	resp, err := harnessClient.Post(m.adminURL("/__admin/mappings"),
+	resp, err := httpPost(t.Context(), harnessClient, m.adminURL("/__admin/mappings"),
 		"application/json", strings.NewReader(mapping))
 	if err != nil {
 		t.Fatalf("register the fault-and-body stub: %v", err)

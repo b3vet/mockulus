@@ -14,6 +14,7 @@ package template
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -226,7 +227,7 @@ func randomValueHelper(_ []any, hash map[string]any) (any, error) {
 			return nil, fmt.Errorf("randomValue length: %w", err)
 		}
 		if n < 0 {
-			return nil, fmt.Errorf("randomValue length must not be negative")
+			return nil, errors.New("randomValue length must not be negative")
 		}
 		length = n
 	}
@@ -315,7 +316,7 @@ func randomIntHelper(_ []any, hash map[string]any) (any, error) {
 		upper = n
 	}
 	if upper < lower {
-		return nil, fmt.Errorf("randomInt upper must not be below lower")
+		return nil, errors.New("randomInt upper must not be below lower")
 	}
 	return lower + rand.IntN(upper-lower+1), nil
 }
@@ -337,14 +338,14 @@ func randomDecimalHelper(_ []any, hash map[string]any) (any, error) {
 		upper = f
 	}
 	if upper < lower {
-		return nil, fmt.Errorf("randomDecimal upper must not be below lower")
+		return nil, errors.New("randomDecimal upper must not be below lower")
 	}
 	return lower + rand.Float64()*(upper-lower), nil
 }
 
 func mathHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) != 3 {
-		return nil, fmt.Errorf("math takes a left operand, an operator and a right operand")
+		return nil, errors.New("math takes a left operand, an operator and a right operand")
 	}
 	left, err := toFloat(args[0])
 	if err != nil {
@@ -364,12 +365,12 @@ func mathHelper(args []any, _ map[string]any) (any, error) {
 		return left * right, nil
 	case "/":
 		if right == 0 {
-			return nil, fmt.Errorf("math: division by zero")
+			return nil, errors.New("math: division by zero")
 		}
 		return left / right, nil
 	case "%":
 		if right == 0 {
-			return nil, fmt.Errorf("math: modulo by zero")
+			return nil, errors.New("math: modulo by zero")
 		}
 		return math.Mod(left, right), nil
 	default:
@@ -428,7 +429,7 @@ func urlEncodeHelper(args []any, hash map[string]any) (any, error) {
 // rangeHelper builds a list, which {{#each}} then iterates.
 func rangeHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) != 2 {
-		return nil, fmt.Errorf("range takes a lower and an upper bound")
+		return nil, errors.New("range takes a lower and an upper bound")
 	}
 	lower, err := toInt(args[0])
 	if err != nil {
@@ -455,10 +456,17 @@ func rangeHelper(args []any, _ map[string]any) (any, error) {
 	return out, nil
 }
 
-// lookupHelper indexes a collection by a dynamic key.
+// lookupHelper indexes a collection by a dynamic key. A key that names nothing
+// — a map without that entry, an index that is not a number, an index past the
+// end, or an argument that is not a collection at all — is a miss and renders
+// as nothing, the same as Handlebars' own lookup. A miss is deliberately not an
+// error, and that is why the failed Atoi below is discarded rather than
+// returned: a template walking a list and asking for a key only some entries
+// carry would otherwise fail the whole response rather than leave one value
+// blank.
 func lookupHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) != 2 {
-		return nil, fmt.Errorf("lookup takes a collection and a key")
+		return nil, errors.New("lookup takes a collection and a key")
 	}
 	key := handlebars.Stringify(args[1])
 
@@ -468,14 +476,14 @@ func lookupHelper(args []any, _ map[string]any) (any, error) {
 	case map[string]string:
 		return coll[key], nil
 	case []any:
-		i, err := strconv.Atoi(key)
-		if err != nil || i < 0 || i >= len(coll) {
+		i, ok := elementIndex(key, len(coll))
+		if !ok {
 			return nil, nil
 		}
 		return coll[i], nil
 	case []string:
-		i, err := strconv.Atoi(key)
-		if err != nil || i < 0 || i >= len(coll) {
+		i, ok := elementIndex(key, len(coll))
+		if !ok {
 			return nil, nil
 		}
 		return coll[i], nil
@@ -486,7 +494,7 @@ func lookupHelper(args []any, _ map[string]any) (any, error) {
 
 func splitHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("split takes a string and a separator")
+		return nil, errors.New("split takes a string and a separator")
 	}
 	parts := strings.Split(handlebars.Stringify(args[0]), handlebars.Stringify(args[1]))
 	out := make([]any, len(parts))
@@ -498,7 +506,7 @@ func splitHelper(args []any, _ map[string]any) (any, error) {
 
 func joinHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("join takes a list and a separator")
+		return nil, errors.New("join takes a list and a separator")
 	}
 	sep := handlebars.Stringify(args[len(args)-1])
 
@@ -529,7 +537,7 @@ func concatHelper(args []any, _ map[string]any) (any, error) {
 // substringHelper slices by rune, so a multibyte body is not cut mid-character.
 func substringHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("substring takes a string, a start and an optional end")
+		return nil, errors.New("substring takes a string, a start and an optional end")
 	}
 	runes := []rune(handlebars.Stringify(args[0]))
 
@@ -552,7 +560,7 @@ func substringHelper(args []any, _ map[string]any) (any, error) {
 
 func replaceHelper(args []any, _ map[string]any) (any, error) {
 	if len(args) != 3 {
-		return nil, fmt.Errorf("replace takes a string, a target and a replacement")
+		return nil, errors.New("replace takes a string, a target and a replacement")
 	}
 	return strings.ReplaceAll(
 		handlebars.Stringify(args[0]),
@@ -627,7 +635,7 @@ func toFloat(v any) (float64, error) {
 		}
 		return f, nil
 	case nil:
-		return 0, fmt.Errorf("expected a number, got nothing")
+		return 0, errors.New("expected a number, got nothing")
 	case fmt.Stringer:
 		// Query parameters, header values and path segments arrive as a value
 		// that is both a scalar and an indexable list (§10.2). A number helper
@@ -648,4 +656,17 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// elementIndex resolves a lookup key against a collection of n elements. A key
+// that is not a number, or that falls outside the collection, selects nothing —
+// the same answer a lookup of an absent map member gives, and the reason this
+// returns a bool rather than the error strconv produced: there is no failure
+// here to report, only a key that named no element.
+func elementIndex(key string, n int) (int, bool) {
+	i, err := strconv.Atoi(key)
+	if err != nil || i < 0 || i >= n {
+		return 0, false
+	}
+	return i, true
 }

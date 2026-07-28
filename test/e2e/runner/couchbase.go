@@ -177,9 +177,10 @@ func (c *Couchbase) Stop() error {
 	if c.container == "" {
 		return nil
 	}
-	// Deliberately not ctx-bound: teardown runs on the way out of a cancelled
-	// run, and a cancelled context there would leave the container behind.
-	return exec.Command("docker", "rm", "-f", c.container).Run()
+	// Deliberately a background context rather than the run's: teardown happens
+	// on the way out of a cancelled run, and binding the removal to a context
+	// that is already done would kill it and leave the container behind.
+	return exec.CommandContext(context.Background(), "docker", "rm", "-f", c.container).Run()
 }
 
 // provision walks the container from "process started" to "usable keyspace".
@@ -276,7 +277,7 @@ func (c *Couchbase) waitBucketQueryable(ctx context.Context) error {
 			return fmt.Errorf("decode the bucket document: %w", err)
 		}
 		if len(doc.Nodes) == 0 {
-			return fmt.Errorf("the bucket reports no nodes yet")
+			return errors.New("the bucket reports no nodes yet")
 		}
 		for _, n := range doc.Nodes {
 			if n.Status != "healthy" {
@@ -307,7 +308,7 @@ func (c *Couchbase) waitBucketQueryable(ctx context.Context) error {
 			return fmt.Errorf("decode the query answer: %w", err)
 		}
 		if len(doc.Results) == 0 || doc.Results[0] == 0 {
-			return fmt.Errorf("the query service does not list the bucket yet")
+			return errors.New("the query service does not list the bucket yet")
 		}
 		return nil
 	})
@@ -368,8 +369,13 @@ func (c *Couchbase) do(req *http.Request) (httpAnswer, error) {
 // containerLogs is the tail of the container's own output, attached to a
 // bring-up failure so the reason is in the failure rather than in a container
 // that the same failure is about to remove.
+//
+// Like the removal itself this runs on a background context: one reason
+// bring-up fails is that the run was cancelled, and that is precisely when the
+// log tail still has to be collected.
 func (c *Couchbase) containerLogs() string {
-	out, err := exec.Command("docker", "logs", "--tail", "40", c.container).CombinedOutput()
+	out, err := exec.CommandContext(context.Background(),
+		"docker", "logs", "--tail", "40", c.container).CombinedOutput()
 	if err != nil {
 		return ""
 	}
@@ -411,7 +417,8 @@ func claimLane(ctx context.Context, name, image string) error {
 		log("waiting for the T2/T3 lane, held by " + holder)
 	}
 
-	args := []string{"run", "-d", "--name", name, "--label", couchbaseLabel}
+	args := make([]string, 0, 7+2*len(couchbasePorts))
+	args = append(args, "run", "-d", "--name", name, "--label", couchbaseLabel)
 	for _, port := range couchbasePorts {
 		args = append(args, "-p", "127.0.0.1:"+port+":"+port)
 	}
@@ -503,7 +510,8 @@ func runnerAlive(container string) bool {
 // Unrecognisable answers count as a runner, keeping the conservative direction
 // wherever this cannot tell.
 func looksLikeRunner(pid int) bool {
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	out, err := exec.CommandContext(context.Background(),
+		"ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
 	if err != nil {
 		return true
 	}

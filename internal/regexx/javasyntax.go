@@ -139,11 +139,7 @@ func (t *javaTranslator) run() error {
 		}
 		switch c := t.src[i]; c {
 		case '\\':
-			next, err := t.escape(i)
-			if err != nil {
-				return err
-			}
-			i = next
+			i = t.escape(i)
 
 		case '[':
 			next, err := t.class(i)
@@ -255,8 +251,10 @@ func (t *javaTranslator) makeAtomic() {
 	t.changed = true
 }
 
-// escape handles a backslash sequence outside a character class.
-func (t *javaTranslator) escape(i int) (int, error) {
+// escape handles a backslash sequence outside a character class. Unlike class,
+// it has no refusals to report: every escape either has a faithful rewrite or
+// is copied through for the engine to accept or reject on its own terms.
+func (t *javaTranslator) escape(i int) int {
 	end := escapeEnd(t.src, i)
 	esc := t.src[i:end]
 
@@ -300,7 +298,7 @@ func (t *javaTranslator) escape(i int) (int, error) {
 		t.atom = len(t.out)
 		t.out = append(t.out, esc...)
 	}
-	return end, nil
+	return end
 }
 
 // quotedText returns the literal text of a `\Q…\E` block. escapeEnd has already
@@ -580,9 +578,9 @@ func runeWidth(src string, i int) int {
 	return w
 }
 
-func digitRun(src string, i, max int, is func(byte) bool) int {
+func digitRun(src string, i, limit int, is func(byte) bool) int {
 	n := 0
-	for i+n < len(src) && n < max && is(src[i+n]) {
+	for i+n < len(src) && n < limit && is(src[i+n]) {
 		n++
 	}
 	return n
@@ -610,19 +608,6 @@ func countedClosure(src string, i int) (int, bool) {
 		return j + 1, true
 	}
 	return 0, false
-}
-
-// closureMinIsZero reports whether the counted closure at i can take none of
-// the atom before it, which is what makes that atom optional.
-func closureMinIsZero(src string, i int) bool {
-	if _, ok := countedClosure(src, i); !ok {
-		return false
-	}
-	j := i + 1
-	for j < len(src) && src[j] == '0' {
-		j++
-	}
-	return j > i+1 && j < len(src) && (src[j] == ',' || src[j] == '}')
 }
 
 // complementRanges returns the ranges a negated class covers. Java's negated

@@ -3,6 +3,7 @@
 package gotests
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"syscall"
@@ -60,7 +61,9 @@ func TestShutdownDrainKeepsServingWhileUnready(t *testing.T) {
 	stub := m.mockURL("/e2e/gotests-shutdown-drain/hello")
 	readyz := m.adminURL("/readyz")
 
-	if status, _, err := plainGet(readyz); err != nil || status != http.StatusOK {
+	ctx := t.Context()
+
+	if status, _, err := plainGet(ctx, readyz); err != nil || status != http.StatusOK {
 		t.Fatalf("/readyz before SIGTERM: status %d, err %v; want 200", status, err)
 	}
 
@@ -75,7 +78,7 @@ func TestShutdownDrainKeepsServingWhileUnready(t *testing.T) {
 	served := make(chan []observation, 1)
 	go func() {
 		served <- sampleUntil(sent, window, 20*time.Millisecond, func() (int, string, error) {
-			return plainGet(stub)
+			return plainGet(ctx, stub)
 		})
 	}()
 
@@ -83,12 +86,12 @@ func TestShutdownDrainKeepsServingWhileUnready(t *testing.T) {
 	// signal, because signal delivery is not instantaneous and a probe that
 	// wins that race would see the pre-SIGTERM 200 and prove nothing. How long
 	// the drop took is asserted separately, below.
-	dropped, ok := awaitNotReady(readyz, 2*time.Second)
+	dropped, ok := awaitNotReady(ctx, readyz, 2*time.Second)
 	if !ok {
 		t.Fatal("/readyz never answered 503 after SIGTERM: a terminating pod that stays ready keeps receiving new traffic")
 	}
 	readiness := sampleUntil(sent, window, 20*time.Millisecond, func() (int, string, error) {
-		return plainGet(readyz)
+		return plainGet(ctx, readyz)
 	})
 	stubbed := <-served
 
@@ -148,7 +151,8 @@ func TestShutdownTimeoutBoundsAnOpenConnection(t *testing.T) {
 	// naive shutdown: net/http cannot treat it as idle, since the client may be
 	// about to send a request, so Shutdown waits on it. Without a bound a
 	// terminating pod would sit here; shutdown_timeout is the bound.
-	conn, err := net.DialTimeout("tcp", m.mockAddr, 5*time.Second)
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(t.Context(), "tcp", m.mockAddr)
 	if err != nil {
 		t.Fatalf("dial the mock port: %v", err)
 	}
@@ -176,10 +180,10 @@ func TestShutdownTimeoutBoundsAnOpenConnection(t *testing.T) {
 }
 
 // awaitNotReady polls until readiness drops, reporting how long that took.
-func awaitNotReady(url string, within time.Duration) (time.Duration, bool) {
+func awaitNotReady(ctx context.Context, url string, within time.Duration) (time.Duration, bool) {
 	start := time.Now()
 	for time.Since(start) < within {
-		if status, _, err := plainGet(url); err == nil && status == http.StatusServiceUnavailable {
+		if status, _, err := plainGet(ctx, url); err == nil && status == http.StatusServiceUnavailable {
 			return time.Since(start), true
 		}
 		time.Sleep(5 * time.Millisecond)

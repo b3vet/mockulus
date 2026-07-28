@@ -801,9 +801,9 @@ func describeAll(ms []Matcher) string {
 }
 
 func quote(s string) string {
-	const max = 120
-	if len(s) > max {
-		s = s[:max] + "…"
+	const maxBytes = 120
+	if len(s) > maxBytes {
+		s = s[:maxBytes] + "…"
 	}
 	b, err := json.Marshal(s)
 	if err != nil {

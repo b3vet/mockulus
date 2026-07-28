@@ -152,7 +152,7 @@ func (r *renderer) block(n *Node) error {
 
 	case "each":
 		if len(n.Expr.Args) != 1 {
-			return fmt.Errorf("{{#each}} takes exactly one argument")
+			return errors.New("{{#each}} takes exactly one argument")
 		}
 		value, err := r.eval(n.Expr.Args[0])
 		if err != nil {
@@ -162,7 +162,7 @@ func (r *renderer) block(n *Node) error {
 
 	case "with":
 		if len(n.Expr.Args) != 1 {
-			return fmt.Errorf("{{#with}} takes exactly one argument")
+			return errors.New("{{#with}} takes exactly one argument")
 		}
 		value, err := r.eval(n.Expr.Args[0])
 		if err != nil {

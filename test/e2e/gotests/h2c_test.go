@@ -147,7 +147,7 @@ func TestH2CEnabledGatesCleartextHTTP2(t *testing.T) {
 		defer tr.CloseIdleConnections()
 		client := &http.Client{Transport: tr, Timeout: 15 * time.Second}
 
-		resp, err := client.Get(off.mockURL("/e2e/cfg-h2c-enabled/prior-knowledge"))
+		resp, err := httpGet(t.Context(), client, off.mockURL("/e2e/cfg-h2c-enabled/prior-knowledge"))
 		if err == nil {
 			_ = resp.Body.Close()
 			t.Fatalf("a prior-knowledge HTTP/2 connection was accepted (proto %s) on an instance "+
@@ -165,7 +165,7 @@ func TestH2CEnabledGatesCleartextHTTP2(t *testing.T) {
 		defer tr.CloseIdleConnections()
 		client := &http.Client{Transport: tr, Timeout: 15 * time.Second}
 
-		resp, err := client.Get(on.mockURL("/e2e/cfg-h2c-enabled/prior-knowledge"))
+		resp, err := httpGet(t.Context(), client, on.mockURL("/e2e/cfg-h2c-enabled/prior-knowledge"))
 		if err != nil {
 			t.Fatalf("h2c on: prior-knowledge HTTP/2 failed: %v", err)
 		}
@@ -187,12 +187,13 @@ func TestH2CEnabledGatesCleartextHTTP2(t *testing.T) {
 		// The other half of h2c: an ordinary HTTP/1.1 request that asks to be
 		// switched (RFC 7540 §3.2). Go's client cannot send one, so the request
 		// goes out by hand and the answer is read frame by frame.
-		conn, err := net.Dial("tcp", on.mockAddr)
+		var d net.Dialer
+		conn, err := d.DialContext(t.Context(), "tcp", on.mockAddr)
 		if err != nil {
 			t.Fatalf("dial mock port: %v", err)
 		}
 		defer func() { _ = conn.Close() }()
-		if err := conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatalf("set deadline: %v", err)
 		}
 
@@ -264,15 +265,16 @@ func TestFaultFidelityDegradesOverH2C(t *testing.T) {
 	// HTTP/1.1: byte-faithful. EMPTY_RESPONSE means the connection is taken
 	// over and closed with nothing written, so a raw socket sees zero bytes and
 	// then end-of-file — connection-level breakage, no status to read.
-	conn, err := net.Dial("tcp", inst.mockAddr)
+	var d net.Dialer
+	conn, err := d.DialContext(t.Context(), "tcp", inst.mockAddr)
 	if err != nil {
 		t.Fatalf("dial mock port: %v", err)
 	}
 	defer func() { _ = conn.Close() }()
-	if err := conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+	if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
 		t.Fatalf("set deadline: %v", err)
 	}
-	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", faultPath, inst.mockAddr); err != nil {
+	if _, err = fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", faultPath, inst.mockAddr); err != nil {
 		t.Fatalf("write request: %v", err)
 	}
 	got, err := io.ReadAll(conn)
@@ -292,7 +294,7 @@ func TestFaultFidelityDegradesOverH2C(t *testing.T) {
 	tr := h2cTransport()
 	defer tr.CloseIdleConnections()
 
-	h2conn, err := net.Dial("tcp", inst.mockAddr)
+	h2conn, err := d.DialContext(t.Context(), "tcp", inst.mockAddr)
 	if err != nil {
 		t.Fatalf("dial mock port for h2c: %v", err)
 	}
@@ -303,7 +305,7 @@ func TestFaultFidelityDegradesOverH2C(t *testing.T) {
 		t.Fatalf("open h2c connection: %v", err)
 	}
 
-	faultReq, err := http.NewRequest(http.MethodGet, inst.mockURL(faultPath), nil)
+	faultReq, err := http.NewRequestWithContext(t.Context(), http.MethodGet, inst.mockURL(faultPath), nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -322,7 +324,7 @@ func TestFaultFidelityDegradesOverH2C(t *testing.T) {
 
 	// The connection outliving the reset is the difference from HTTP/1.1: there
 	// the socket is gone, here only the stream is.
-	okReq, err := http.NewRequest(http.MethodGet, inst.mockURL(okPath), nil)
+	okReq, err := http.NewRequestWithContext(t.Context(), http.MethodGet, inst.mockURL(okPath), nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}

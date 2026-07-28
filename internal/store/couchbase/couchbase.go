@@ -434,11 +434,11 @@ func unmarshalWrites(data []byte) (publishedWrites, error) {
 					key, len(pair))
 			}
 			var seq uint64
-			if err := json.Unmarshal(pair[0], &seq); err != nil {
+			if err = json.Unmarshal(pair[0], &seq); err != nil {
 				return nil, fmt.Errorf("vbucket %s sequence number: %w", key, err)
 			}
 			var uuid string
-			if err := json.Unmarshal(pair[1], &uuid); err != nil {
+			if err = json.Unmarshal(pair[1], &uuid); err != nil {
 				return nil, fmt.Errorf("vbucket %s uuid: %w", key, err)
 			}
 			n, err := strconv.ParseUint(uuid, 10, 64)
@@ -556,7 +556,7 @@ func (s *Store) readPublished(ctx context.Context) (publishedWrites, gocb.Cas, e
 		return nil, 0, err
 	}
 	var doc json.RawMessage
-	if err := res.Content(&doc); err != nil {
+	if err = res.Content(&doc); err != nil {
 		return nil, res.Cas(), fmt.Errorf("%w: %w", errUnreadableWatermark, err)
 	}
 	published, err := unmarshalWrites(doc)
@@ -807,9 +807,9 @@ func (s *Store) checkSchema(ctx context.Context) error {
 	res, err := s.meta.Get(keySchema, &gocb.GetOptions{Context: ctx, Timeout: s.kvTimeout})
 	if err != nil {
 		if errors.Is(err, gocb.ErrDocumentNotFound) {
-			_, err := s.meta.Upsert(keySchema, schemaDoc{SchemaVersion: store.SchemaVersion},
+			_, writeErr := s.meta.Upsert(keySchema, schemaDoc{SchemaVersion: store.SchemaVersion},
 				&gocb.UpsertOptions{Context: ctx, Timeout: s.kvTimeout})
-			return err
+			return writeErr
 		}
 		return fmt.Errorf("read the schema marker: %w", err)
 	}

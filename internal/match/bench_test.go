@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func BenchmarkMatch(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			snap := tc.snap(b)
-			req := httptest.NewRequest(tc.method, tc.target, nil)
+			req := httptest.NewRequestWithContext(context.Background(), tc.method, tc.target, nil)
 			body := []byte(tc.body)
 
 			// Candidates evaluated per request is reported alongside ns/op,
@@ -229,7 +230,7 @@ func (w *benchWriter) reset() {
 // out. TestHotPathAllocBudget asserts the ceiling; this reports the number.
 func BenchmarkMatchAndRender(b *testing.B) {
 	snap := exactSnapshot(b, 1000)
-	req := httptest.NewRequest("GET", exactPath(500), nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", exactPath(500), nil)
 	w := newBenchWriter()
 
 	b.ReportAllocs()
@@ -270,7 +271,7 @@ func BenchmarkServe(b *testing.B) {
 		b.Run(shape.name, func(b *testing.B) {
 			e := benchEngine(b)
 			e.Swap(shape.snap(b))
-			req := httptest.NewRequest(shape.method, shape.target, nil)
+			req := httptest.NewRequestWithContext(context.Background(), shape.method, shape.target, nil)
 			w := newBenchWriter()
 
 			b.ReportAllocs()
@@ -295,7 +296,7 @@ func benchEngine(b *testing.B) *Engine {
 // BenchmarkRebuild).
 func BenchmarkBuildSnapshot(b *testing.B) {
 	for _, n := range []int{1000, 10000} {
-		b.Run(fmt.Sprint(n), func(b *testing.B) {
+		b.Run(strconv.Itoa(n), func(b *testing.B) {
 			stubs := make([]*stub.CompiledStub, 0, n)
 			for i := range n {
 				stubs = append(stubs, benchCompile(b, uint64(i), exactStub(i)))
@@ -408,7 +409,7 @@ func BenchmarkSwapUnderLoad(b *testing.B) {
 			}
 		}()
 
-		req := httptest.NewRequest("GET", exactPath(5000), nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", exactPath(5000), nil)
 		b.ReportAllocs()
 		b.ResetTimer()
 		b.RunParallel(func(pb *testing.PB) {

@@ -21,17 +21,17 @@ func TestJavaConstructsMatchWhatJavaMatches(t *testing.T) {
 	}{{
 		name:    "horizontal whitespace",
 		pattern: `\h+`,
-		match:   []string{" ", "\t", " ", " ", "᠎", " ", " ", " ", " ", "　", " \t"},
-		reject:  []string{"h", "hh", "\n", "​", " ", ""},
+		match:   []string{" ", "\t", " ", " ", "\u180e", " ", " ", " ", " ", "　", " \t"},
+		reject:  []string{"h", "hh", "\n", "\u200b", " ", ""},
 	}, {
 		name:    "non-horizontal whitespace",
 		pattern: `\H+`,
-		match:   []string{"abc", "H", "\n", "​"},
+		match:   []string{"abc", "H", "\n", "\u200b"},
 		reject:  []string{" ", "\t", "　"},
 	}, {
 		name:    "vertical whitespace",
 		pattern: `\v`,
-		match:   []string{"\n", "\v", "\f", "\r", "", " ", " "},
+		match:   []string{"\n", "\v", "\f", "\r", "\u0085", " ", " "},
 		reject:  []string{"v", " ", " "},
 	}, {
 		name:    "non-vertical whitespace",
@@ -41,7 +41,7 @@ func TestJavaConstructsMatchWhatJavaMatches(t *testing.T) {
 	}, {
 		name:    "any line break",
 		pattern: `\R`,
-		match:   []string{"\r\n", "\n", "\v", "\f", "\r", "", " ", " "},
+		match:   []string{"\r\n", "\n", "\v", "\f", "\r", "\u0085", " ", " "},
 		reject:  []string{"R", "\n\r", "ab"},
 	}, {
 		name:    "line break is one atom under a quantifier",
@@ -78,7 +78,7 @@ func TestJavaConstructsMatchWhatJavaMatches(t *testing.T) {
 		name:    "POSIX cntrl excludes the C1 controls",
 		pattern: `\p{Cntrl}`,
 		match:   []string{"\x00", "\x1f", "\x7f"},
-		reject:  []string{"", "", " "},
+		reject:  []string{"\u0080", "\u0085", " "},
 	}, {
 		name:    "POSIX space",
 		pattern: `\p{Space}+`,

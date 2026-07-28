@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -405,7 +406,7 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 		// working TLS listener from a broken one.
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(fixture.CertPEM) {
-			return nil, fmt.Errorf("the generated TLS fixture is not a usable certificate")
+			return nil, errors.New("the generated TLS fixture is not a usable certificate")
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
@@ -433,16 +434,16 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 		// The admin listener is never TLS-wrapped, only the mock port is.
 		inst.AdminAddr = "http://" + normalizeAddr(line.AdminAddr)
 	case <-time.After(30 * time.Second):
-		_ = inst.Stop()
+		inst.Stop()
 		return nil, fmt.Errorf("mockulus (%s/%s) did not report a startup line within 30s:\n%s",
 			topology, variant, strings.Join(inst.Logs(), "\n"))
 	case <-ctx.Done():
-		_ = inst.Stop()
+		inst.Stop()
 		return nil, ctx.Err()
 	}
 
 	if err := inst.waitReady(ctx); err != nil {
-		_ = inst.Stop()
+		inst.Stop()
 		return nil, err
 	}
 	return inst, nil
@@ -544,9 +545,12 @@ func (i *Instance) Logs() []string {
 func (i *Instance) Client() *http.Client { return i.client }
 
 // Stop terminates the instance.
-func (i *Instance) Stop() error {
+//
+// Nothing is reported back: the process is asked to leave, and if it will not
+// it is killed, so there is no outcome a caller could act on differently.
+func (i *Instance) Stop() {
 	if i.cmd == nil || i.cmd.Process == nil {
-		return nil
+		return
 	}
 	_ = i.cmd.Process.Signal(os.Interrupt)
 	done := make(chan error, 1)
@@ -557,7 +561,6 @@ func (i *Instance) Stop() error {
 		_ = i.cmd.Process.Kill()
 		<-done
 	}
-	return nil
 }
 
 // PodAny is the `pod:` selector that lets the load balancer choose. It is the
@@ -626,7 +629,7 @@ func (d *Deployment) Stop() {
 		_ = proxy.Stop()
 	}
 	for _, pod := range d.pods {
-		_ = pod.Stop()
+		pod.Stop()
 	}
 }
 

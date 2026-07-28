@@ -63,7 +63,9 @@ func StartWireMock(ctx context.Context, versionFile string) (*WireMock, error) {
 
 	portOut, err := exec.CommandContext(ctx, "docker", "port", name, "8080/tcp").Output()
 	if err != nil {
-		_ = exec.Command("docker", "rm", "-f", name).Run()
+		// A background context, because one reason the port lookup failed is
+		// that the run was cancelled, and the container still has to go.
+		_ = exec.CommandContext(context.Background(), "docker", "rm", "-f", name).Run()
 		return nil, fmt.Errorf("resolve the published port: %w", err)
 	}
 	hostPort := strings.TrimSpace(strings.Split(string(portOut), "\n")[0])
@@ -165,7 +167,10 @@ func (w *WireMock) Stop() error {
 	if w.container == "" {
 		return nil
 	}
-	return exec.Command("docker", "rm", "-f", w.container).Run()
+	// Teardown runs on the way out of a cancelled run, so the removal is bound
+	// to a background context: the run's would already be done and would kill
+	// the removal, leaving the container behind.
+	return exec.CommandContext(context.Background(), "docker", "rm", "-f", w.container).Run()
 }
 
 // Client exposes the HTTP client used against the oracle.
@@ -440,7 +445,7 @@ func findListed(want any, got []any) error {
 			continue
 		}
 		if err := jsonSubset(want, c, "$"); err != nil {
-			return fmt.Errorf("listed entry %s: %s", id, err)
+			return fmt.Errorf("listed entry %s: %w", id, err)
 		}
 		return nil
 	}

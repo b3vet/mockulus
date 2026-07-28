@@ -53,9 +53,9 @@ type SpecRow struct {
 // Markdown formatting but sensitive to content.
 func (r SpecRow) Hash() string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\n%s\n", r.Source, normalizeCell(r.Key))
+	_, _ = fmt.Fprintf(h, "%s\n%s\n", r.Source, normalizeCell(r.Key))
 	for _, c := range r.Cells {
-		fmt.Fprintf(h, "%s\n", normalizeCell(c))
+		_, _ = fmt.Fprintf(h, "%s\n", normalizeCell(c))
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,8 @@ import (
 func reservePort(t *testing.T) int {
 	t.Helper()
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve a port: %v", err)
 	}
@@ -53,7 +55,7 @@ func TestStoreUnreachableAtBootStaysLiveAndUnready(t *testing.T) {
 	// therefore unreachable in the way that matters — reachable network, no
 	// service — rather than unresolvable, which some clients fail differently.
 	m := launch(t, map[string]string{
-		"MOCKULUS_ADMIN_PORT":         fmt.Sprint(adminPort),
+		"MOCKULUS_ADMIN_PORT":         strconv.Itoa(adminPort),
 		"MOCKULUS_STORE":              "couchbase",
 		"MOCKULUS_COUCHBASE_CONNSTR":  fmt.Sprintf("couchbase://127.0.0.1:%d", reservePort(t)),
 		"MOCKULUS_COUCHBASE_USERNAME": "mockulus",
@@ -62,7 +64,7 @@ func TestStoreUnreachableAtBootStaysLiveAndUnready(t *testing.T) {
 	})
 	t.Cleanup(m.stop)
 
-	admin := "http://127.0.0.1:" + fmt.Sprint(adminPort)
+	admin := "http://127.0.0.1:" + strconv.Itoa(adminPort)
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// The admin listener binds before the store connects, which is the whole
@@ -71,7 +73,7 @@ func TestStoreUnreachableAtBootStaysLiveAndUnready(t *testing.T) {
 	deadline := time.Now().Add(45 * time.Second)
 	var live bool
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(admin + "/healthz")
+		resp, err := httpGet(t.Context(), client, admin+"/healthz")
 		if err == nil {
 			_ = resp.Body.Close()
 			live = resp.StatusCode == http.StatusOK
@@ -93,7 +95,7 @@ func TestStoreUnreachableAtBootStaysLiveAndUnready(t *testing.T) {
 	// 200/200 would draw traffic the pod cannot serve.
 	until := time.Now().Add(3 * time.Second)
 	for time.Now().Before(until) {
-		resp, err := client.Get(admin + "/readyz")
+		resp, err := httpGet(t.Context(), client, admin+"/readyz")
 		if err != nil {
 			t.Fatalf("/readyz stopped answering, so the process did not stay live: %v", err)
 		}
@@ -103,7 +105,7 @@ func TestStoreUnreachableAtBootStaysLiveAndUnready(t *testing.T) {
 			t.Fatalf("/readyz answered %d, want 503 while the store is unreachable", code)
 		}
 
-		resp, err = client.Get(admin + "/healthz")
+		resp, err = httpGet(t.Context(), client, admin+"/healthz")
 		if err != nil {
 			t.Fatalf("/healthz stopped answering: %v", err)
 		}

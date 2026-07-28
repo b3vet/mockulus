@@ -239,7 +239,7 @@ func (h *Handler) importMappings(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// An overwrite preserves the stub's precedence, exactly as PUT does.
-		seq := uint64(0)
+		var seq uint64
 		created := time.Now().UTC()
 		if item.existing != nil {
 			seq, created = item.existing.Seq, item.existing.CreatedAt
@@ -318,7 +318,7 @@ func (h *Handler) findByMetadata(w http.ResponseWriter, r *http.Request) {
 
 	mappings := make([]json.RawMessage, 0, len(matched))
 	for _, s := range matched {
-		mappings = append(mappings, json.RawMessage(s.Mapping))
+		mappings = append(mappings, s.Mapping)
 	}
 	wmcompat.WriteJSON(w, http.StatusOK, map[string]any{
 		"mappings": mappings,
@@ -342,7 +342,7 @@ func (h *Handler) removeByMetadata(w http.ResponseWriter, r *http.Request) {
 			h.storeError(w, "delete_stub", err)
 			return
 		}
-		removed = append(removed, json.RawMessage(s.Mapping))
+		removed = append(removed, s.Mapping)
 	}
 
 	if len(removed) > 0 {

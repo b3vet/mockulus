@@ -11,6 +11,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -109,7 +110,7 @@ func (s *Store) expireLocked() {
 // PutStub upserts a mapping, applying the ephemeral TTL when it is not persistent.
 func (s *Store) PutStub(_ context.Context, stub store.StoredStub) error {
 	if stub.ID == "" {
-		return fmt.Errorf("memory store: stub has no id")
+		return errors.New("memory store: stub has no id")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

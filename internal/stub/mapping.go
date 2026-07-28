@@ -17,6 +17,7 @@ package stub
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -367,7 +368,7 @@ var urlFields = []struct {
 func parseURL(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, cs *CompiledStub, opts Options) {
 	var (
 		found []string
-		kind  uint8 = URLAny
+		kind  = URLAny
 		value string
 		field string
 	)
@@ -647,7 +648,7 @@ func WithIdentity(raw []byte, id string) ([]byte, error) {
 		// never get here — but the file driver stamps every mapping a project
 		// declares no id for, before anything has looked at it, so a `mappings/`
 		// file holding `null` took the process down on load.
-		return nil, fmt.Errorf("stub mapping is null, not an object")
+		return nil, errors.New("stub mapping is null, not an object")
 	}
 	encoded, err := json.Marshal(id)
 	if err != nil {

@@ -3,6 +3,7 @@
 package gotests
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -160,6 +161,7 @@ func (m *mockulus) hammer(t *testing.T, path string, clients, total int) {
 	var issued atomic.Int64
 	failures := make(chan string, clients)
 
+	ctx := t.Context()
 	var wg sync.WaitGroup
 	for range clients {
 		wg.Add(1)
@@ -167,7 +169,7 @@ func (m *mockulus) hammer(t *testing.T, path string, clients, total int) {
 			defer wg.Done()
 			c := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{}}
 			for issued.Add(1) <= int64(total) {
-				status, _, err := serve(c, m.mockURL(path))
+				status, _, err := serve(ctx, c, m.mockURL(path))
 				if err != nil {
 					failures <- fmt.Sprintf("request failed: %v", err)
 					return
@@ -205,7 +207,7 @@ func (m *mockulus) expectServed(t *testing.T, path, want string) {
 func (m *mockulus) serveBody(t *testing.T, path string) string {
 	t.Helper()
 
-	status, body, err := serve(harnessClient, m.mockURL(path))
+	status, body, err := serve(t.Context(), harnessClient, m.mockURL(path))
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
@@ -217,8 +219,8 @@ func (m *mockulus) serveBody(t *testing.T, path string) string {
 
 // serve issues one request and returns its status and body without touching
 // *testing.T, so the goroutines of a load phase can call it.
-func serve(client *http.Client, url string) (int, string, error) {
-	resp, err := client.Get(url)
+func serve(ctx context.Context, client *http.Client, url string) (int, string, error) {
+	resp, err := httpGet(ctx, client, url)
 	if err != nil {
 		return 0, "", err
 	}
@@ -236,7 +238,7 @@ func serve(client *http.Client, url string) (int, string, error) {
 func (m *mockulus) counters(t *testing.T, names ...string) map[string]float64 {
 	t.Helper()
 
-	resp, err := harnessClient.Get(m.adminURL("/metrics"))
+	resp, err := httpGet(t.Context(), harnessClient, m.adminURL("/metrics"))
 	if err != nil {
 		t.Fatalf("scrape /metrics: %v", err)
 	}

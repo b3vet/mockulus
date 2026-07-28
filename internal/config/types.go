@@ -62,8 +62,7 @@ func (b Bytes) String() string {
 		return strconv.FormatInt(scaled, 10) + suffix, true
 	}
 
-	switch {
-	case n == 0:
+	if n == 0 {
 		return "0"
 	}
 	for _, u := range []struct {

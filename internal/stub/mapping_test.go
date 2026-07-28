@@ -3,6 +3,7 @@
 package stub
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func hasProblem(problems []wmcompat.Error, code int, pointer string) bool {
 func TestMinimalMapping(t *testing.T) {
 	cs := compileOK(t, `{"request":{"method":"GET","urlPath":"/x"},"response":{"status":200}}`)
 
-	if cs.Method != "GET" || cs.URLKind != URLExactPath || cs.URLLiteral != "/x" {
+	if cs.Method != http.MethodGet || cs.URLKind != URLExactPath || cs.URLLiteral != "/x" {
 		t.Errorf("request compiled to method=%q kind=%d literal=%q", cs.Method, cs.URLKind, cs.URLLiteral)
 	}
 	if cs.Response.Status != 200 {

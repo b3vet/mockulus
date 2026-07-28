@@ -3,6 +3,8 @@
 package match
 
 import (
+	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,7 +12,7 @@ import (
 
 func newRequest(t *testing.T, method, target, body string, headers map[string]string) *ParsedRequest {
 	t.Helper()
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
 	for k, v := range headers {
 		req.Header.Add(k, v)
 	}
@@ -21,7 +23,7 @@ func TestRequestSplitsPathAndQuery(t *testing.T) {
 	r := newRequest(t, "GET", "/api/orders?a=1&b=2", "", nil)
 	defer ReleaseRequest(r)
 
-	if r.Method != "GET" {
+	if r.Method != http.MethodGet {
 		t.Errorf("method = %q", r.Method)
 	}
 	if r.Path != "/api/orders" {
@@ -320,7 +322,7 @@ func TestRequestTargetIsTheTargetAsReceived(t *testing.T) {
 	}
 
 	for _, target := range targets {
-		req := httptest.NewRequest("GET", target, nil)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", target, nil)
 		pr := AcquireRequest(req, nil)
 		if pr.FullURL != target {
 			t.Errorf("FullURL for %q = %q, want the target as received", target, pr.FullURL)
@@ -339,7 +341,7 @@ func TestRequestTargetIsTheTargetAsReceived(t *testing.T) {
 // case RequestURI cannot be used verbatim for, because a stub's URL criterion
 // is written against the origin form.
 func TestAbsoluteRequestTargetFallsBackToTheOriginForm(t *testing.T) {
-	req := httptest.NewRequest("GET", "/api/orders?a=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/orders?a=1", nil)
 	req.RequestURI = "http://mocks.example.internal/api/orders?a=1"
 
 	pr := AcquireRequest(req, nil)
@@ -354,7 +356,7 @@ func TestAbsoluteRequestTargetFallsBackToTheOriginForm(t *testing.T) {
 }
 
 func BenchmarkAcquireRelease(b *testing.B) {
-	req := httptest.NewRequest("GET", "/api/orders/42", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/api/orders/42", nil)
 	body := []byte(nil)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -366,7 +368,7 @@ func BenchmarkAcquireRelease(b *testing.B) {
 }
 
 func BenchmarkHeaderLookup(b *testing.B) {
-	req := httptest.NewRequest("GET", "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/x", nil)
 	req.Header.Set("Content-Type", "application/json")
 	pr := AcquireRequest(req, nil)
 	defer ReleaseRequest(pr)
