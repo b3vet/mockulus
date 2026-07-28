@@ -21,7 +21,7 @@ steps:
          "request": {"method": "GET", "urlPath": "/e2e/wmv-tmpl-now-tokens-001/calendar"},
          "response": {"status": 200,
                       "headers": {"Content-Type": "text/plain"},
-                      "body": "day={{now format='yyyy-MM-dd'}} year={{now format='yyyy'}} yy={{now format='yy'}} month={{now format='MMMM'}} mon={{now format='MMM'}} dow={{now format='EEEE'}} dow3={{now format='EEE'}} dnum={{now format='d'}} plus={{now offset='3 days' format='yyyy-MM-dd'}} minus={{now offset='-7 days' format='yyyy-MM-dd'}} zz={{now format='ZZ'}} syd={{now timezone='Australia/Sydney' format='XXX'}} quoted={{now format=\"'day' yyyy\"}}",
+                      "body": "day={{now format='yyyy-MM-dd'}} year={{now format='yyyy'}} yy={{now format='yy'}} month={{now format='MMMM'}} mon={{now format='MMM'}} dow={{now format='EEEE'}} dow3={{now format='EEE'}} dnum={{now format='d'}} plus={{now offset='3 days' format='yyyy-MM-dd'}} minus={{now offset='-7 days' format='yyyy-MM-dd'}} zz={{now format='ZZ'}} utc={{now format='XXX'}} syd={{now timezone='Australia/Sydney' format='XXX'}} quoted={{now format=\"'day' yyyy\"}} qz={{now format=\"'Z'\"}}",
                       "transformers": ["response-template"]}}
     expect: {status: 201}
 
@@ -36,13 +36,27 @@ steps:
   # substituted inside the quotes renders the day name where the word "day"
   # should be.
   #
-  # `zz` and `syd` are the same instant's offset at UTC and in a zone that is
-  # never at UTC, so a `timezone` option that was parsed and dropped renders
-  # "+0000" twice and fails.
+  # `zz`, `utc` and `syd` are one instant's offset written three ways, and the
+  # three are here because they disagree in exactly the places a translation
+  # gets wrong.
+  #
+  # `zz` and `syd` are the same offset at UTC and in a zone that is never at
+  # UTC, so a `timezone` option that was parsed and dropped renders "+0000"
+  # twice and fails. `utc` is the token whose whole difference from `zz` shows
+  # up only at a zero offset: Java's XXX collapses to a bare "Z" there and
+  # writes a numeric offset everywhere else, which is why `syd` alone cannot
+  # tell a correct mapping from one that is numeric always. An implementation
+  # that renders "+00:00" here is producing a timestamp that is still ISO-8601
+  # and still not the one the oracle wrote — and UTC is where a mock clock
+  # spends nearly all of its time.
+  #
+  # `qz` is the control on that: the same letter quoted is literal text, so a
+  # pattern hard-coding a Zulu marker keeps it whatever the offset. A
+  # translator that reached inside the quotes would render an offset here.
   - request: {port: mock, method: GET, path: /e2e/wmv-tmpl-now-tokens-001/calendar}
     expect:
       status: 200
-      body_regex: '^day=20\d\d-\d\d-\d\d year=20\d\d yy=\d\d month=(January|February|March|April|May|June|July|August|September|October|November|December) mon=[A-Z][a-z]{2} dow=(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) dow3=(Mon|Tue|Wed|Thu|Fri|Sat|Sun) dnum=\d{1,2} plus=20\d\d-\d\d-\d\d minus=20\d\d-\d\d-\d\d zz=\+0000 syd=\+1[01]:00 quoted=day 20\d\d$'
+      body_regex: '^day=20\d\d-\d\d-\d\d year=20\d\d yy=\d\d month=(January|February|March|April|May|June|July|August|September|October|November|December) mon=[A-Z][a-z]{2} dow=(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) dow3=(Mon|Tue|Wed|Thu|Fri|Sat|Sun) dnum=\d{1,2} plus=20\d\d-\d\d-\d\d minus=20\d\d-\d\d-\d\d zz=\+0000 utc=Z syd=\+1[01]:00 quoted=day 20\d\d qz=Z$'
 
   # The control. A body carrying date patterns is exactly the mock data that
   # must survive untouched — a fixture recording somebody else's template, or a
