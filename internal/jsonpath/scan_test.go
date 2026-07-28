@@ -177,8 +177,13 @@ func valueText(v any) string {
 	return string(encoded)
 }
 
-// TestScannableIsDefiniteWithoutNegativeIndices records the one place the two
-// kinds of path part company, so narrowing or widening it is a deliberate act.
+// TestScannableIsDefiniteWithoutNegativeIndices records where the two kinds of
+// path part company, so narrowing or widening it is a deliberate act.
+//
+// Definite and scannable are not the same set, and the rows that differ are the
+// point: a negative index needs a length one forward pass does not have, and a
+// merged union or a length() selects a node the document does not contain, so
+// there is no byte range for a scanner to come back with.
 func TestScannableIsDefiniteWithoutNegativeIndices(t *testing.T) {
 	cases := []struct {
 		expr      string
@@ -197,6 +202,12 @@ func TestScannableIsDefiniteWithoutNegativeIndices(t *testing.T) {
 		{"$[*]", false, false},
 		{"$.a[0:2]", false, false},
 		{"$.a[?(@.b)]", false, false},
+		{"$.a.length()", true, false},
+		{"$['a','b']", true, false},
+		{"$['a','b'].length()", true, false},
+		{"$['a','b'].c", false, false},
+		{"$.a[0,1]", false, false},
+		{"$.a[*].length()", false, false},
 	}
 
 	for _, c := range cases {

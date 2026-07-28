@@ -1,0 +1,182 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-union-name-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A union of names asks whether a document carries any of several members,
+  # which is what makes it worth writing: one criterion for a payload that
+  # spells the same field two ways.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001f-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-name-001/either",
+                     "bodyPatterns": [{"matchesJsonPath": "$['customerId','customer_id']"}]},
+         "response": {"status": 200, "body": "either",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/either
+      body: '{"customerId":"C-1"}'
+    expect: {status: 200, body: "either"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/either
+      body: '{"customer_id":"C-1"}'
+    expect: {status: 200, body: "either"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/either
+      body: '{"customerId":"C-1","customer_id":"C-2"}'
+    expect: {status: 200, body: "either"}
+
+  # Neither spelling present is the only miss, and a document that has some
+  # other member is not a near thing — the union selected an empty result.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/either
+      body: '{"accountId":"A-1"}'
+    expect: {status: 404}
+
+  # A member holding null is still a member: what the union at the end of a
+  # path returns is the object it assembled, and that object is not empty.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/either
+      body: '{"customerId":null}'
+    expect: {status: 200, body: "either"}
+
+  # The control for the step above, and the reason it is not a contradiction of
+  # the null rule: selected on its own, the same null IS the result, and a null
+  # result does not match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001f-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-name-001/one",
+                     "bodyPatterns": [{"matchesJsonPath": "$['customerId']"}]},
+         "response": {"status": 200, "body": "one",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/one
+      body: '{"customerId":null}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/one
+      body: '{"customerId":"C-1"}'
+    expect: {status: 200, body: "one"}
+
+  # An array carries no named members, so a union over one selects nothing.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/either
+      body: '["customerId"]'
+    expect: {status: 404}
+
+  # What the nested form sees is that assembled object rather than each member
+  # in turn, and a stub can tell: the text carries the member NAMES, which no
+  # single member's value ever would.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001f-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-name-001/assembled",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$['a','b']",
+                                                           "contains": "\"a\""}}]},
+         "response": {"status": 200, "body": "assembled",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/assembled
+      body: '{"a":1,"b":2}'
+    expect: {status: 200, body: "assembled"}
+
+  # Only the members the union names are assembled, so a document whose "a" is
+  # somewhere else does not put that name into the text.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/assembled
+      body: '{"b":2,"c":{"a":1}}'
+    expect: {status: 404}
+
+  # In the middle of a path the union branches instead, carrying each member on
+  # separately — so the step after it sees two documents and the criterion is
+  # any-of over what they hold.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001f-4000-8000-000000000004",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-name-001/branch",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$['billing','shipping'].city",
+                                                           "equalTo": "Ankara"}}]},
+         "response": {"status": 200, "body": "branch",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/branch
+      body: '{"billing":{"city":"Ankara"},"shipping":{"city":"Izmir"}}'
+    expect: {status: 200, body: "branch"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/branch
+      body: '{"billing":{"city":"Izmir"},"shipping":{"city":"Ankara"}}'
+    expect: {status: 200, body: "branch"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/branch
+      body: '{"billing":{"city":"Izmir"},"shipping":{"city":"Bursa"}}'
+    expect: {status: 404}
+
+  # The separator is a separator only outside the quotes. A key that carries a
+  # comma is one name, and the union parser has to leave it alone — otherwise
+  # every such key becomes a union of two members no document has.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001f-4000-8000-000000000005",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-name-001/comma",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$['a,b']",
+                                                           "equalTo": "held"}}]},
+         "response": {"status": 200, "body": "comma",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/comma
+      body: '{"a,b":"held"}'
+    expect: {status: 200, body: "comma"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-name-001/comma
+      body: '{"a":"held","b":"held"}'
+    expect: {status: 404}

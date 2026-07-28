@@ -70,6 +70,15 @@ var pathSeeds = []string{
 	"$.items[?(@.sku == 'a' || @.sku == 'b')]",
 	"$.items[?(@.missing)]",
 	"$[?(@.customer)]",
+	"$.items[0,2]",
+	"$.items[-1,0]",
+	"$['customer','account']",
+	"$['customer','account'].id",
+	"$['a,b']",
+	"$.items.length()",
+	"$.items[*].length()",
+	"$['customer','account'].length()",
+	"$.items[?(@.tags.length() > 1)]",
 	"$",
 	"",
 	" ",
@@ -85,6 +94,11 @@ var pathSeeds = []string{
 	"$.items[?(x.qty > 1)]",
 	"$[1:2:3]",
 	"$[9223372036854775808]",
+	"$[0,]",
+	"$['a',0]",
+	"$[0:1,2]",
+	"$.items.sum()",
+	"$..length()",
 }
 
 // FuzzCompile drives the expression parser, then evaluates whatever compiled.

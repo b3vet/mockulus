@@ -1,0 +1,174 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonpath-union-index-001
+behaviors: [B-MATCH-MATCHESJSONPATH]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2/#18). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # A union names several indexes at once. What it returns is a list of what it
+  # could reach, so the nested form is any-of over that list — the first and the
+  # third element here, and nothing in between.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001e-4000-8000-000000000001",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-index-001/ends",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[0,2]",
+                                                           "equalTo": "gold"}}]},
+         "response": {"status": 200, "body": "ends",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/ends
+      body: '{"items":["gold","x","y"]}'
+    expect: {status: 200, body: "ends"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/ends
+      body: '{"items":["x","y","gold"]}'
+    expect: {status: 200, body: "ends"}
+
+  # The middle element is not selected, which is what makes the union a
+  # selection rather than a scan of the array.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/ends
+      body: '{"items":["x","gold","y"]}'
+    expect: {status: 404}
+
+  # An index the array does not reach drops out of the union instead of
+  # emptying it: a two-element array still offers its first element to the
+  # matcher.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/ends
+      body: '{"items":["gold","x"]}'
+    expect: {status: 200, body: "ends"}
+
+  # …and when nothing the union names is there, it selects nothing.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/ends
+      body: '{"items":[]}'
+    expect: {status: 404}
+
+  # An object has no indexes, so a union over one selects nothing rather than
+  # falling back to its members.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/ends
+      body: '{"items":{"0":"gold"}}'
+    expect: {status: 404}
+
+  # A union returns a LIST of hits, and the bare form asks whether that list is
+  # empty. So a union over nulls matches — the list is not.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001e-4000-8000-000000000002",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-index-001/hits",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[0,1]"}]},
+         "response": {"status": 200, "body": "hits",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/hits
+      body: '{"items":[null,null]}'
+    expect: {status: 200, body: "hits"}
+
+  # The control that says the answer above is about the list and not about the
+  # values in it: the same null, selected by a plain index, is the node itself
+  # and does not match.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001e-4000-8000-000000000003",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-index-001/single",
+                     "bodyPatterns": [{"matchesJsonPath": "$.items[0]"}]},
+         "response": {"status": 200, "body": "single",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/single
+      body: '{"items":[null]}'
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/single
+      body: '{"items":["there"]}'
+    expect: {status: 200, body: "single"}
+
+  # A union counts from the end where a plain index does, and it may name the
+  # same element twice without that meaning anything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001e-4000-8000-000000000004",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-index-001/last",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[-1,0]",
+                                                           "equalTo": "omega"}}]},
+         "response": {"status": 200, "body": "last",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/last
+      body: '{"items":["a","b","omega"]}'
+    expect: {status: 200, body: "last"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/last
+      body: '{"items":["omega","b","c"]}'
+    expect: {status: 200, body: "last"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/last
+      body: '{"items":["a","omega","c"]}'
+    expect: {status: 404}
+
+  # A step after the union applies to each hit, so the union is a branch in the
+  # path rather than a terminal selection.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000005-001e-4000-8000-000000000005",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonpath-union-index-001/through",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.items[0,2].sku",
+                                                           "equalTo": "S-3"}}]},
+         "response": {"status": 200, "body": "through",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/through
+      body: '{"items":[{"sku":"S-1"},{"sku":"S-2"},{"sku":"S-3"}]}'
+    expect: {status: 200, body: "through"}
+
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonpath-union-index-001/through
+      body: '{"items":[{"sku":"S-1"},{"sku":"S-3"},{"sku":"S-2"}]}'
+    expect: {status: 404}

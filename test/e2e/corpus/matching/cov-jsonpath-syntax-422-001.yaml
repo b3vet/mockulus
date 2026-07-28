@@ -7,9 +7,9 @@ behaviors: [B-MATCH-MATCHESJSONPATH, B-ERR-10]
 # syntax → 422 at registration (compile-time), never a silent non-match".
 wm: n/a
 steps:
-  # Fourteen expressions, one per production the parser can refuse, in one
-  # document — and one answer naming all fourteen. Failing fast on the first
-  # would cost a stub author fourteen round trips to fix one file, which is what
+  # Eighteen expressions, one per production the parser can refuse, in one
+  # document — and one answer naming all eighteen. Failing fast on the first
+  # would cost a stub author eighteen round trips to fix one file, which is what
   # the Appendix B "collect, don't fail-fast" rule exists to prevent.
   #
   # The order is the order of the array, so the pointers stay reproducible for
@@ -35,7 +35,11 @@ steps:
                                       {"matchesJsonPath": "$[?()]"},
                                       {"matchesJsonPath": "$[?(x == 1)]"},
                                       {"matchesJsonPath": "$[?(@.a == foo)]"},
-                                      {"matchesJsonPath": "$[0,1]"}]},
+                                      {"matchesJsonPath": "$['a',0]"},
+                                      {"matchesJsonPath": "$[0,]"},
+                                      {"matchesJsonPath": "$[0:1,2]"},
+                                      {"matchesJsonPath": "$.xs.sum()"},
+                                      {"matchesJsonPath": "$..length()"}]},
          "response": {"status": 200, "body": "never served"}}
     expect:
       status: 422
@@ -79,12 +83,31 @@ steps:
           - code: 10
             source: {pointer: "/request/bodyPatterns/12/matchesJsonPath"}
             detail: 'JSONPath does not compile: unsupported filter literal "foo" (in "$[?(@.a == foo)]")'
-          # An index union is on §6.7's target list and is where this subset
-          # stops. Refusing it names the gap; compiling it to something that
-          # happens to parse is how a stub silently never matches.
+          # Unions are in the dialect and compile — see wmv-jsonpath-union-*.
+          # What is refused is a union that cannot mean anything: a document is
+          # an array or an object and not both, a member that is not there at
+          # all, and a slice standing where a member belongs. WireMock refuses
+          # all three at registration too, so a mappings file carrying one is
+          # refused wherever it is pointed.
           - code: 10
             source: {pointer: "/request/bodyPatterns/13/matchesJsonPath"}
-            detail: 'JSONPath does not compile: unsupported bracket expression "0,1" (in "$[0,1]")'
+            detail: 'JSONPath does not compile: a union selects names or indexes, not both (in "$[''a'',0]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/14/matchesJsonPath"}
+            detail: 'JSONPath does not compile: a union has an empty member (in "$[0,]")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/15/matchesJsonPath"}
+            detail: 'JSONPath does not compile: a union member is neither a quoted name nor an index: "0:1" (in "$[0:1,2]")'
+          # A call this dialect does not carry, and a call where no name can
+          # precede it. Both would otherwise compile to a member name no
+          # document has, which is where §6.7 draws its line: a gap is named at
+          # registration or it is a stub that never matches and never says why.
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/16/matchesJsonPath"}
+            detail: 'JSONPath does not compile: unsupported JSONPath function "sum()" (a member with this name is selectable as [''sum()'']) (in "$.xs.sum()")'
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/17/matchesJsonPath"}
+            detail: 'JSONPath does not compile: a function cannot follow .. in "$..length()"'
 
   # Rejection is all-or-nothing: fourteen problems, zero writes.
   - admin: {method: GET, path: /__admin/mappings/c0000007-0000-4000-8000-000000000001}
@@ -92,9 +115,10 @@ steps:
   - request: {port: mock, method: POST, path: /e2e/cov-jsonpath-syntax-422-001/refused, body: '{"a":"x"}'}
     expect: {status: 404}
 
-  # The control that makes the refusals mean something. Each of these three is
+  # The control that makes the refusals mean something. Each of these six is
   # the corrected spelling of one refused above — a quoted key, a slice with a
-  # numeric end, a filter with a quoted literal — and the stub registers and
+  # numeric end, a filter with a quoted literal, a union of one kind of member
+  # each way, and the one call this dialect carries — and the stub registers and
   # matches for real. Without it, a parser that refused every expression would
   # pass the steps above.
   - admin:
@@ -105,7 +129,10 @@ steps:
          "request": {"method": "POST", "urlPath": "/e2e/cov-jsonpath-syntax-422-001/accepted",
                      "bodyPatterns": [{"matchesJsonPath": "$['a']"},
                                       {"matchesJsonPath": "$.items[1:2]"},
-                                      {"matchesJsonPath": "$.tags[?(@.kind == 'foo')]"}]},
+                                      {"matchesJsonPath": "$.tags[?(@.kind == 'foo')]"},
+                                      {"matchesJsonPath": "$.items[0,2]"},
+                                      {"matchesJsonPath": "$['a','b']"},
+                                      {"matchesJsonPath": "$.items.length()"}]},
          "response": {"status": 200, "body": "accepted"}}
     expect: {status: 201}
 
@@ -116,8 +143,8 @@ steps:
       body: '{"a":"x","items":[1,2,3],"tags":[{"kind":"foo"}]}'
     expect: {status: 200, body: "accepted"}
 
-  # …and all three are load-bearing criteria rather than expressions that parse
-  # and then match anything: changing only the filter's operand loses the match.
+  # …and they are load-bearing criteria rather than expressions that parse and
+  # then match anything: changing only the filter's operand loses the match.
   - request:
       port: mock
       method: POST

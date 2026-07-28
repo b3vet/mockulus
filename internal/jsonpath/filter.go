@@ -88,12 +88,28 @@ func parseTerm(src string) (term, error) {
 
 // compileRelative compiles the `@.x` form used inside a filter, by rewriting it
 // to a root-relative path over the item under test.
+//
+// A union is refused here even though the dialect carries one elsewhere. The
+// pinned WireMock resolves no union inside a predicate — `?(@['a','b'])` and
+// `?(@.xs[0,1] == 'a')` both select nothing over documents where the
+// single-member spellings of the same operands match — so there is no behaviour
+// to agree with, and an operand that silently never resolves is a filter that
+// silently never selects.
 func compileRelative(src string) (*Path, error) {
 	src = strings.TrimSpace(src)
 	if !strings.HasPrefix(src, "@") {
 		return nil, fmt.Errorf("a filter operand must start with @, got %q", src)
 	}
-	return Compile("$" + src[1:])
+	path, err := Compile("$" + src[1:])
+	if err != nil {
+		return nil, err
+	}
+	for _, st := range path.steps {
+		if st.kind == stepUnionIndex || st.kind == stepUnionName {
+			return nil, fmt.Errorf("a union is not supported inside a filter operand: %q", src)
+		}
+	}
+	return path, nil
 }
 
 func parseLiteral(src string) (any, error) {
