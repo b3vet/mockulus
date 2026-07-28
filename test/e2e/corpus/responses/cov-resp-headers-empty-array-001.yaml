@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-resp-headers-empty-array-001
+behaviors:
+  - B-RESP-HEADERS
+  - B-STUB-RESPONSE
+  - B-ERR-10
+# Verified against pinned WireMock 3.13.2: it answers 422 to an empty header
+# value array ("No value for X-A") and registers nothing.
+wm: verified
+# Two ignores.
+#
+# $unmatched-body covers the steps that check nothing was persisted, where the
+# 404 body is deviation #2/#18.
+#
+# $.errors gives up the wording and the pointer of the refusal, and only those.
+# Both servers answer 422 with an errors array, which is what this case claims
+# and what the status comparison checks on every step; what differs is where
+# they point — mockulus names the header at /response/headers/X-A and WireMock
+# names the block at /response — and requiring those to match would assert that
+# our error catalogue is Jackson's (§14, Appendix B). The mockulus envelope is
+# still asserted in full below, against mockulus.
+wm_ignore: ["$unmatched-body", "$.errors"]
+#
+# An empty array is a header name with nothing to say. Read literally there is
+# nothing to send, so the natural implementation — decode the array, loop over
+# it, append each value — runs its loop zero times, reports no problem, and
+# registers a stub that serves no such header. That is the accept-and-ignore
+# failure P3 rules out, and it is the shape a generator produces on its own: a
+# template that collects a header's values into a list and emits the list emits
+# `[]` for the case where it found none. The author reads 201 and believes the
+# header is configured; the client waiting for it gets a response without it,
+# and the mock is the last place anyone looks.
+#
+# Refusing is also the strictly safer direction across the two servers. WireMock
+# refuses it too, so no mappings file that registers there stops registering
+# here — the change can only reject documents that were already impossible to
+# move to the server being mocked.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000009-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-resp-headers-empty-array-001/empty"},
+         "response": {"status": 200, "body": "never served",
+                      "headers": {"X-A": []}}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/response/headers/X-A"}
+            detail: "a response header value array must not be empty"
+
+  # The refusal is total. A stub that registered anyway — the header dropped and
+  # the rest kept — would answer here, which is exactly the outcome the 422
+  # exists to prevent and the one a status-only assertion would miss.
+  - request: {port: mock, method: GET, path: /e2e/cov-resp-headers-empty-array-001/empty}
+    expect: {status: 404}
+
+  # The same document with a perfectly good header beside the empty one, because
+  # the tempting repair is to drop the offending entry and register the rest.
+  # Both servers refuse the whole mapping instead: half a response definition is
+  # not what the author wrote, and the half that survived is the half nobody
+  # would think to check.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000009-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-resp-headers-empty-array-001/mixed"},
+         "response": {"status": 200, "body": "never served",
+                      "headers": {"Content-Type": "text/plain", "X-Good": "kept", "X-A": []}}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/headers/X-A"}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-resp-headers-empty-array-001/mixed}
+    expect: {status: 404}
+
+  # The control, and the line between this refusal and the array form itself: an
+  # array with values in it is how a header that legitimately repeats is stated,
+  # and it still registers. Without this step "empty arrays are refused" would be
+  # indistinguishable from "arrays are refused", which would break every stub
+  # setting two Set-Cookie lines.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000009-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-resp-headers-empty-array-001/valued"},
+         "response": {"status": 200, "body": "served",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-A": ["one", "two"]}}}
+    expect:
+      status: 201
+      body_json_subset:
+        response:
+          headers:
+            X-A: ["one", "two"]
+
+  # X-A is asserted at its first value, because the runner reads headers through
+  # Header.Get and that returns the first of a repeated header. That both values
+  # go out is what the differential checks — its normalizer joins repeats, so a
+  # dropped second value shows up there as a header mismatch against WireMock.
+  - request: {port: mock, method: GET, path: /e2e/cov-resp-headers-empty-array-001/valued}
+    expect:
+      status: 200
+      body: "served"
+      headers: {X-A: "one"}
+
+  # The sharper control, and the one that says what "empty" means here: an array
+  # holding an empty string is not an empty array. The author wrote a value —
+  # a header present and blank, which a client testing "is this flag set at all"
+  # reads differently from a header that is not there — and both servers keep it.
+  # A guard written over the values rather than over the array would refuse this
+  # one too, and would then be refusing a stub WireMock serves.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0000009-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-resp-headers-empty-array-001/blank"},
+         "response": {"status": 200, "body": "blank",
+                      "headers": {"Content-Type": "text/plain", "X-Blank": ["set", ""]}}}
+    expect: {status: 201}
+
+  # Header.Get returns the first of a repeated header, so the line below reads
+  # the value that is there rather than the empty slot after it; that the empty
+  # slot survives is what the differential checks, by joining the repeats before
+  # comparing them. The absence control holds the other end — X-A belongs to the
+  # stub above and must not leak onto this one.
+  - request: {port: mock, method: GET, path: /e2e/cov-resp-headers-empty-array-001/blank}
+    expect:
+      status: 200
+      body: "blank"
+      headers: {X-Blank: "set"}
+      header_absent: [X-A, X-Never-Declared]
