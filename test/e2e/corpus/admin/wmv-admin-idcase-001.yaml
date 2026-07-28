@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-idcase-001
+behaviors:
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-ADMIN-MAPPINGS-ID-PUT
+  - B-ADMIN-MAPPINGS-ID-DELETE
+wm: verified
+# The step showing the deleted stub stops matching is an unmatched request,
+# whose body is the near-miss table WireMock renders and mockulus does not
+# (deviation #2/#18).
+wm_ignore: ["$unmatched-body"]
+steps:
+  # Registered in lower case, which is the only spelling a stub is ever stored
+  # under: the id is a UUID value and registration canonicalises it (SPEC §5.2).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1dca5e01-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-idcase-001/lane"},
+         "response": {"status": 200, "body": "registered"}}
+    expect: {status: 201}
+
+  # The same id in upper case names the same stub. Anything else would make the
+  # admin API disagree with itself about one identity: the canonicalisation on
+  # the write path means the id a client sent is not necessarily the id it got
+  # back, so a read using its own spelling has to resolve or the stub is
+  # addressable only by a string the server chose.
+  - admin: {method: GET, path: /__admin/mappings/1DCA5E01-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json:
+        id: "1dca5e01-0000-4000-8000-000000000001"
+        uuid: "1dca5e01-0000-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-idcase-001/lane}
+        response: {status: 200, body: "registered"}
+
+  # A read resolving is not enough on its own: the verbs that write have to
+  # agree with it, or a suite could see its stub and not be able to replace it.
+  # The document that comes back reports the canonical identity, not the
+  # spelling the path used.
+  - admin:
+      method: PUT
+      path: /__admin/mappings/1DCA5E01-0000-4000-8000-000000000001
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-idcase-001/lane"},
+         "response": {"status": 200, "body": "replaced"}}
+    expect:
+      status: 200
+      body_json:
+        id: "1dca5e01-0000-4000-8000-000000000001"
+        uuid: "1dca5e01-0000-4000-8000-000000000001"
+        request: {method: GET, urlPath: /e2e/wmv-admin-idcase-001/lane}
+        response: {status: 200, body: "replaced"}
+
+  # And the write went to the stub that serves, rather than to a second stub
+  # registered under a second spelling of one id.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-idcase-001/lane}
+    expect: {status: 200, body: "replaced"}
+
+  # The control that the resolution is a rule about identity and not about
+  # matching loosely: a well-formed UUID nothing was registered under is still
+  # absent, in either case, on the verb that would otherwise create something.
+  - admin: {method: GET, path: /__admin/mappings/1DCA5E01-0000-4000-8000-0000000000FF}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  - admin:
+      method: PUT
+      path: /__admin/mappings/1DCA5E01-0000-4000-8000-0000000000FF
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/wmv-admin-idcase-001/ghost"},
+         "response": {"status": 200, "body": "ghost"}}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  # A PUT through an unknown id is a refusal and not an upsert, so the path it
+  # described answers nothing.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-idcase-001/ghost}
+    expect: {status: 404}
+
+  - admin: {method: DELETE, path: /__admin/mappings/1DCA5E01-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json: {}
+
+  # The delete landed on the registered stub: the id no longer reads back, and
+  # the path it served stops matching in the same admin call.
+  - admin: {method: GET, path: /__admin/mappings/1dca5e01-0000-4000-8000-000000000001}
+    expect:
+      status: 404
+      body: ""
+      header_absent: [Content-Type]
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-idcase-001/lane}
+    expect: {status: 404}

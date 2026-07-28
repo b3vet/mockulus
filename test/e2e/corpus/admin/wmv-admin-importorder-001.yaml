@@ -1,0 +1,196 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-admin-importorder-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-STUB-PRIORITY
+wm: verified
+steps:
+  # Two stubs that can both answer one request, at the same priority, in one
+  # payload. Nothing about the mappings themselves decides between them, so the
+  # importer does — and a mappings file listing overlapping stubs is the
+  # ordinary shape of one, which is why the end that wins has to be a stated
+  # rule rather than a consequence of the apply loop.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "1e00de01-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/lane"},
+            "response": {"status": 200, "body": "first element"}},
+           {"id": "1e00de01-0000-4000-8000-000000000002",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/lane"},
+            "response": {"status": 200, "body": "last element"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  # The first element wins. The batch is applied back to front, so it holds the
+  # newest insertion sequence and takes the equal-priority tie-break (SPEC §5.3)
+  # — the opposite of what walking the array in order produces, and the reason
+  # this case exists at all: a file whose author expected the first stub to win
+  # would otherwise serve the last one here and say nothing about it.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-importorder-001/lane}
+    expect: {status: 200, body: "first element"}
+
+  # Both elements landed, so the step above measured precedence and not a
+  # payload that half imported.
+  - admin: {method: GET, path: /__admin/mappings/1e00de01-0000-4000-8000-000000000002}
+    expect:
+      status: 200
+      body_json:
+        id: "1e00de01-0000-4000-8000-000000000002"
+        uuid: "1e00de01-0000-4000-8000-000000000002"
+        request: {method: GET, urlPath: /e2e/wmv-admin-importorder-001/lane}
+        response: {status: 200, body: "last element"}
+
+  # The control on the reversal. Position decides only what priority leaves
+  # undecided, so a later element that outranks an earlier one still serves. An
+  # importer that had turned "apply back to front" into "the first element
+  # always wins" would fail here, and it would fail quietly in every fixture
+  # file that ranks its stubs deliberately.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "1e00de01-0000-4000-8000-000000000003",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/ranked"},
+            "response": {"status": 200, "body": "first element, default priority"}},
+           {"id": "1e00de01-0000-4000-8000-000000000004",
+            "priority": 1,
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/ranked"},
+            "response": {"status": 200, "body": "last element, ranked"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-importorder-001/ranked}
+    expect: {status: 200, body: "last element, ranked"}
+
+  # One id repeated inside one payload under OVERWRITE. Every occurrence after
+  # the first one applied is an overwrite of the stub the batch itself created,
+  # so walking back to front leaves the document the payload listed first — the
+  # same end of the array that wins the tie above, which is what makes this one
+  # rule rather than two.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "1e00de01-0000-4000-8000-000000000005",
+            "name": "the first occurrence",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/repeated"},
+            "response": {"status": 200, "body": "first occurrence"}},
+           {"id": "1e00de01-0000-4000-8000-000000000005",
+            "name": "the last occurrence",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/repeated"},
+            "response": {"status": 200, "body": "last occurrence"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-importorder-001/repeated}
+    expect: {status: 200, body: "first occurrence"}
+
+  - admin: {method: GET, path: /__admin/mappings/1e00de01-0000-4000-8000-000000000005}
+    expect:
+      status: 200
+      body_json:
+        id: "1e00de01-0000-4000-8000-000000000005"
+        uuid: "1e00de01-0000-4000-8000-000000000005"
+        name: "the first occurrence"
+        request: {method: GET, urlPath: /e2e/wmv-admin-importorder-001/repeated}
+        response: {status: 200, body: "first occurrence"}
+
+  # The same payload under IGNORE keeps the other end, and that is not a
+  # contradiction: IGNORE drops an occurrence that collides with something
+  # already registered, and the only occurrence with nothing in front of it is
+  # the one applied first — the payload's last. It is also the half that would
+  # regress if the apply order were reversed without moving the duplicate
+  # lookup with it, since deciding collisions against the store as it stood
+  # before the batch makes every occurrence of a fresh id look new.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "1e00de01-0000-4000-8000-000000000006",
+            "name": "the first occurrence",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/repeated-ignore"},
+            "response": {"status": 200, "body": "first occurrence"}},
+           {"id": "1e00de01-0000-4000-8000-000000000006",
+            "name": "the last occurrence",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/repeated-ignore"},
+            "response": {"status": 200, "body": "last occurrence"}}
+         ],
+         "importOptions": {"duplicatePolicy": "IGNORE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-importorder-001/repeated-ignore}
+    expect: {status: 200, body: "last occurrence"}
+
+  - admin: {method: GET, path: /__admin/mappings/1e00de01-0000-4000-8000-000000000006}
+    expect:
+      status: 200
+      body_json:
+        id: "1e00de01-0000-4000-8000-000000000006"
+        uuid: "1e00de01-0000-4000-8000-000000000006"
+        name: "the last occurrence"
+        request: {method: GET, urlPath: /e2e/wmv-admin-importorder-001/repeated-ignore}
+        response: {status: 200, body: "last occurrence"}
+
+  # A stub the deployment already holds, overwritten by a payload that names it
+  # twice. Both occurrences are collisions from the start, so the document left
+  # standing is again the payload's first — and the stub keeps the place in the
+  # selection order it was registered with, which is what stops an import of an
+  # unchanged fixture file from repointing traffic.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1e00de01-0000-4000-8000-000000000007",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/incumbent"},
+         "response": {"status": 200, "body": "registered"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "1e00de01-0000-4000-8000-000000000008",
+         "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/incumbent"},
+         "response": {"status": 200, "body": "newer neighbour"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-importorder-001/incumbent}
+    expect: {status: 200, body: "newer neighbour"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "1e00de01-0000-4000-8000-000000000007",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/incumbent"},
+            "response": {"status": 200, "body": "first occurrence"}},
+           {"id": "1e00de01-0000-4000-8000-000000000007",
+            "request": {"method": "GET", "urlPath": "/e2e/wmv-admin-importorder-001/incumbent"},
+            "response": {"status": 200, "body": "last occurrence"}}
+         ],
+         "importOptions": {"duplicatePolicy": "OVERWRITE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  # The neighbour still serves, so the overwritten stub did not draw a fresh
+  # sequence on its way through the batch.
+  - request: {port: mock, method: GET, path: /e2e/wmv-admin-importorder-001/incumbent}
+    expect: {status: 200, body: "newer neighbour"}
+
+  - admin: {method: GET, path: /__admin/mappings/1e00de01-0000-4000-8000-000000000007}
+    expect:
+      status: 200
+      body_json:
+        id: "1e00de01-0000-4000-8000-000000000007"
+        uuid: "1e00de01-0000-4000-8000-000000000007"
+        request: {method: GET, urlPath: /e2e/wmv-admin-importorder-001/incumbent}
+        response: {status: 200, body: "first occurrence"}
