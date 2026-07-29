@@ -138,24 +138,31 @@ func TestTheClientIPIsThePeerAndIgnoresForwardingHeaders(t *testing.T) {
 // trace is stitched together, so reusing an id the caller did not send would
 // join two unrelated requests, and failing to generate one would leave the
 // field empty on every request that omitted the header.
-func TestTheRequestIDPrefersTheCallersHeaderAndOtherwiseDrawsOne(t *testing.T) {
-	withHeader := httptest.NewRequestWithContext(context.Background(), "GET", "/e2e/model/id", nil)
-	withHeader.Header.Set("X-Request-Id", "3f2504e0-4f89-11d3-9a0c-0305e82c3301")
-
-	if got := requestFields(t, BuildContext(withHeader, nil, nil, nil))["id"]; got != "3f2504e0-4f89-11d3-9a0c-0305e82c3301" {
-		t.Errorf("id = %v, want the header the caller sent", got)
-	}
-
-	// The lowercase spelling is the same header as far as net/http is
-	// concerned, and a template author who saw it on the wire in lower case
-	// must get the same answer.
-	lower := httptest.NewRequestWithContext(context.Background(), "GET", "/e2e/model/id", nil)
-	lower.Header.Set("x-request-id", "from-lowercase")
-	if got := requestFields(t, BuildContext(lower, nil, nil, nil))["id"]; got != "from-lowercase" {
-		t.Errorf("id = %v, want the header under its lowercase spelling", got)
-	}
-
+// TestTheRequestIDIsDrawnAndNeverTakenFromTheCaller pins `request.id` as the id
+// this server gave the request, which is what WireMock's is.
+//
+// An inbound X-Request-Id is deliberately ignored. Honouring it reads as a
+// courtesy — the mock joining your tracing — but it lets the caller choose what
+// a template renders, and a caller can choose a value that collides with
+// another request's. `clientIp` was asked the same question and answered the
+// same way: the model reports what the server observed, not what the request
+// asserted about itself.
+func TestTheRequestIDIsDrawnAndNeverTakenFromTheCaller(t *testing.T) {
 	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+	for _, spelling := range []string{"X-Request-Id", "x-request-id"} {
+		withHeader := httptest.NewRequestWithContext(context.Background(), "GET", "/e2e/model/id", nil)
+		withHeader.Header.Set(spelling, "3f2504e0-4f89-11d3-9a0c-0305e82c3301")
+
+		got, _ := requestFields(t, BuildContext(withHeader, nil, nil, nil))["id"].(string)
+		if got == "3f2504e0-4f89-11d3-9a0c-0305e82c3301" {
+			t.Errorf("%s: id echoed the caller's header", spelling)
+		}
+		if !uuid.MatchString(got) {
+			t.Errorf("%s: id = %q, want a drawn version 4 UUID", spelling, got)
+		}
+	}
+
 	bare := httptest.NewRequestWithContext(context.Background(), "GET", "/e2e/model/id", nil)
 
 	first, _ := requestFields(t, BuildContext(bare, nil, nil, nil))["id"].(string)

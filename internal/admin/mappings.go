@@ -279,7 +279,20 @@ const canonicalIDLen = 36
 func (h *Handler) mappingID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	segment := r.PathValue("id")
 	parsed, err := uuid.Parse(segment)
-	if err != nil || len(segment) != canonicalIDLen {
+	if err != nil {
+		// Not a UUID at all, which is a different answer from an id that is
+		// well formed and names nothing. 404 says "no such stub" and invites a
+		// client to believe it once existed; this segment could never have
+		// named one, and saying so is what stops a caller re-deriving the id
+		// and asking again. WireMock answers the same way, 400 with code 10.
+		wmcompat.WriteErrors(w, http.StatusBadRequest,
+			wmcompat.NewError(wmcompat.CodeMalformed, segment+" is not a valid UUID"))
+		return "", false
+	}
+	if len(segment) != canonicalIDLen {
+		// Parseable but not in the spelling a stub can be registered under, so
+		// it names no stub — the same answer an unregistered id gets, and for
+		// the same reason (see above, and deviation 24).
 		h.mappingNotFound(w)
 		return "", false
 	}

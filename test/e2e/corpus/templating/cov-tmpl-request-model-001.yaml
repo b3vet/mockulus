@@ -24,15 +24,20 @@ steps:
                       "transformers": ["response-template"]}}
     expect: {status: 201}
 
+  # An inbound X-Request-Id is deliberately not honoured, which is WireMock's
+  # answer too: `request.id` is the id this server gave the request, and letting
+  # a caller name it means a template renders a value the caller chose — and two
+  # callers can choose the same one. The header is sent here precisely to show
+  # it makes no difference; the assertion is the same UUID shape as below.
   - request:
       method: GET
       path: /e2e/cov-tmpl-request-model-001/identity
       headers: {X-Request-Id: "cov-tmpl-request-model-001-corr"}
     expect:
       status: 200
-      body: "id=[cov-tmpl-request-model-001-corr]"
+      body_regex: '^id=\[[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\]$'
 
-  # The same stub with no correlation header. It has to produce an id anyway,
+  # The same stub with no header at all. It has to produce an id either way,
   # and a version-4 UUID rather than a counter or an empty field: a stub whose
   # id was blank half the time is one whose id nobody downstream can rely on.
   # The version and variant nibbles are pinned, so thirty-two random hex

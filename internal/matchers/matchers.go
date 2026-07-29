@@ -199,8 +199,16 @@ type BinaryEqualTo struct {
 }
 
 // Match implements Matcher.
+//
+// The presence gate every other body matcher applies is skipped for an empty
+// operand, and that is the whole of this matcher's disagreement with the rule
+// Body.Present states. A zero-length body reads as absent, so `matches:".*"`
+// and `equalTo:""` are both refused against one — but `binaryEqualTo: ""` is
+// asking whether zero bytes equal zero bytes, which they do. Refusing it would
+// make this the one body matcher that cannot say "the body is empty", and
+// WireMock, which compares the two byte arrays directly, answers true.
 func (m *BinaryEqualTo) Match(s Subject) bool {
-	if !s.Present() {
+	if !s.Present() && len(m.Expected) > 0 {
 		return false
 	}
 	got := s.Bytes()

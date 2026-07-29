@@ -4,8 +4,62 @@ package admin
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
+
+// TestASegmentThatIsNotAUUIDIsRefusedRatherThanNotFound separates the two ways
+// an id in a path can fail to name a stub.
+//
+// A well-formed UUID that was never registered is a 404: it could have named a
+// stub and does not. A segment that is not a UUID at all could never have named
+// one, and answering 404 there invites a caller to re-derive the id and ask
+// again for something that was never addressable. WireMock answers it 400 with
+// code 10, and so does this.
+func TestASegmentThatIsNotAUUIDIsRefusedRatherThanNotFound(t *testing.T) {
+	h := newTestHandler(t)
+	h.createStub(t, idCaseStub)
+
+	// Both of these fail to parse as a UUID, so both take the same branch.
+	//
+	// The short group is the interesting one. Java's parser reads `-ab-` as a
+	// padded `-00ab-` and WireMock therefore resolves the stub; Go's rejects it,
+	// which makes it a non-UUID here by exactly the rule this server states.
+	// mockulus differs from WireMock on this segment whichever answer it gives —
+	// it will not resolve a spelling it refuses to store (deviation 24) — and of
+	// the two answers available, "this is not a valid UUID" is the true one and
+	// "no such stub" is not.
+	segments := []string{"not-a-uuid", "c1000001-ab-4000-8000-0000000000cd"}
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete}
+
+	for _, segment := range segments {
+		for _, method := range methods {
+			t.Run(method+"/"+segment, func(t *testing.T) {
+				got := h.admin(t, method, "/__admin/mappings/"+segment, "{}")
+				if got.Code != http.StatusBadRequest {
+					t.Fatalf("%s answered %d, want 400", method, got.Code)
+				}
+				if !strings.Contains(got.Body.String(), "not a valid UUID") {
+					t.Errorf("the body does not say why: %s", got.Body.String())
+				}
+				if !strings.Contains(got.Body.String(), `"code":10`) {
+					t.Errorf("want the malformed-request code 10: %s", got.Body.String())
+				}
+			})
+		}
+	}
+
+	// The control, and the whole point of the split: an id that is a UUID and
+	// simply is not there keeps its 404, so this did not turn every miss into a
+	// 400. And the stub itself is untouched by any of it.
+	unregistered := "aaaaaaaa-0000-4000-8000-000000000001"
+	if got := h.admin(t, http.MethodGet, "/__admin/mappings/"+unregistered, ""); got.Code != http.StatusNotFound {
+		t.Errorf("an unregistered UUID answered %d, want 404", got.Code)
+	}
+	if body := h.serve(t, "/unit/id-case"); body != "registered" {
+		t.Errorf("the stub now serves %q", body)
+	}
+}
 
 // The stub every case here addresses. It is registered in lower case, which is
 // the only spelling the store ever holds: registration canonicalises (SPEC
@@ -85,16 +139,14 @@ func TestMappingPathIDRefusesSpellingsRegistrationRefuses(t *testing.T) {
 	h := newTestHandler(t)
 	h.createStub(t, idCaseStub)
 
+	// Every one of these is a UUID value in a spelling a stub cannot be
+	// registered under, so each names no stub — the same answer an id that was
+	// never registered gets. A segment that is not a UUID at all is a different
+	// question with a different answer; see the test below.
 	segments := map[string]string{
 		"brace-wrapped": "%7B" + idCaseLower + "%7D",
 		"urn-prefixed":  "urn:uuid:" + idCaseLower,
 		"dashless":      "c100000100ab400080000000000000cd",
-		"not-a-uuid":    "not-a-uuid",
-		// Java's UUID parser reads a short group as a padded one, so WireMock
-		// resolves this spelling; ours is the canonical-form rule the write path
-		// applies, and accepting it here would mean addressing a stub by a
-		// spelling this server refuses to store.
-		"short-group": "c1000001-ab-4000-8000-0000000000cd",
 	}
 	for name, segment := range segments {
 		t.Run(name, func(t *testing.T) {
