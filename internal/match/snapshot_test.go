@@ -715,3 +715,108 @@ func itoa(n int) string {
 	}
 	return string(buf[i:])
 }
+
+// mustCompileWith is mustCompile under compilation options other than the
+// package default, for the tests that need a feature the default leaves off.
+func mustCompileWith(t *testing.T, opts stub.Options, seq uint64, id, doc string) *stub.CompiledStub {
+	t.Helper()
+	cs, errs := stub.Compile([]byte(doc), seq, opts)
+	if errs != nil {
+		t.Fatalf("compile %s: %v", doc, errs.Errors())
+	}
+	cs.ID = id
+	return cs
+}
+
+// SplitURL is what the admin and journal paths use to key a recorded request
+// the same way the snapshot indexes a live one, so the two forms it returns
+// have to agree with what bind produces for the same target.
+func TestSplitURLSeparatesThePathFromTheWholeTarget(t *testing.T) {
+	for _, tc := range []struct {
+		target string
+		path   string
+		full   string
+	}{
+		{"/api/orders", "/api/orders", "/api/orders"},
+		{"/api/orders?a=1", "/api/orders", "/api/orders?a=1"},
+		// A bare marker is still a query as far as this function is concerned:
+		// it splits, it does not normalise. Dropping the marker is bind's job,
+		// and doing it in two places is how the two would come to disagree.
+		{"/api/orders?", "/api/orders", "/api/orders?"},
+		{"/", "/", "/"},
+		{"", "", ""},
+		// Only the first marker separates; everything after it is query, ? and
+		// all, because that is what the client wrote.
+		{"/a?b=1?c=2", "/a", "/a?b=1?c=2"},
+	} {
+		path, full := SplitURL(tc.target)
+		if path != tc.path || full != tc.full {
+			t.Errorf("SplitURL(%q) = %q, %q, want %q, %q", tc.target, path, full, tc.path, tc.full)
+		}
+	}
+}
+
+// The id index is what every admin read goes through, so a stub that serves and
+// a stub that can be fetched have to be the same set — and the same pointer,
+// since a copy would let an edit read back stale.
+func TestEveryServedStubIsAddressableByItsID(t *testing.T) {
+	stubs := []*stub.CompiledStub{
+		mustCompile(t, 1, "a", `{"request":{"urlPath":"/a"},"response":{}}`),
+		mustCompile(t, 2, "b", `{"request":{"urlPattern":"/b/.*"},"response":{}}`),
+	}
+	snap := BuildSnapshot(stubs, 1)
+
+	for _, want := range stubs {
+		got, ok := snap.ByID(want.ID)
+		if !ok {
+			t.Errorf("stub %s is served but not addressable", want.ID)
+			continue
+		}
+		if got != want {
+			t.Errorf("ByID(%s) returned a different stub than the one being served", want.ID)
+		}
+	}
+	if _, ok := snap.ByID("never-registered"); ok {
+		t.Error("an id that was never registered resolved to a stub")
+	}
+	if _, ok := EmptySnapshot().ByID("anything"); ok {
+		t.Error("the empty snapshot resolved an id")
+	}
+}
+
+// A URL kind this build does not know must never match. The kind is a bare
+// uint8 on the compiled stub, so this default is the only thing standing
+// between a kind added to the compiler ahead of the matcher and a stub that
+// answers every request in the deployment.
+func TestAnUnrecognisedURLKindMatchesNothing(t *testing.T) {
+	cs := mustCompile(t, 1, "odd", `{"request":{"method":"GET","urlPath":"/a"},"response":{}}`)
+	cs.URLKind = 250
+	snap := BuildSnapshot([]*stub.CompiledStub{cs}, 1)
+
+	if id := match(t, snap, "GET", "/a", "", nil); id != "" {
+		t.Errorf("a stub with an unrecognised URL kind matched as %q", id)
+	}
+}
+
+// The literal prefix is what lets a template candidate be discarded without
+// running the template at all. It has to reject only paths that could not have
+// matched: a prefix check that is too eager turns a working stub into a 404
+// that nothing in the mapping explains.
+func TestAPathTemplateIsSkippedOnlyForPathsItCouldNotHaveMatched(t *testing.T) {
+	snap := BuildSnapshot([]*stub.CompiledStub{
+		mustCompile(t, 1, "template",
+			`{"request":{"method":"GET","urlPathTemplate":"/api/orders/{id}"},"response":{}}`),
+	}, 1)
+
+	if id := match(t, snap, "GET", "/api/orders/42", "", nil); id != "template" {
+		t.Errorf("a path the template matches selected %q, want template", id)
+	}
+	// Nothing in common with the literal prefix, so the template never runs.
+	if id := match(t, snap, "GET", "/other/42", "", nil); id != "" {
+		t.Errorf("a path outside the template's prefix selected %q", id)
+	}
+	// Shares the prefix but is not a match, so the template does run and says no.
+	if id := match(t, snap, "GET", "/api/orders/42/items", "", nil); id != "" {
+		t.Errorf("a path the template does not match selected %q", id)
+	}
+}

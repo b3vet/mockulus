@@ -4,6 +4,7 @@ package match
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -510,5 +511,154 @@ func BenchmarkHeaderLookup(b *testing.B) {
 		if !pr.HeaderSubject("content-type").Present() {
 			b.Fatal("expected the header")
 		}
+	}
+}
+
+// The scenario state a request read is memoized, so a request touching several
+// stubs in one scenario reads the store once rather than once per candidate. At
+// a hundred stubs in a flow that is the difference between one round trip and a
+// hundred (SPEC §9.2).
+func TestAScenarioStateIsRememberedForTheRestOfTheRequest(t *testing.T) {
+	r := newRequest(t, "GET", "/x", "", nil)
+	defer ReleaseRequest(r)
+
+	if _, ok := r.ScenarioState("order"); ok {
+		t.Error("a state was reported before anything read one")
+	}
+
+	r.MemoizeScenarioState("order", "created")
+	state, ok := r.ScenarioState("order")
+	if !ok || state != "created" {
+		t.Errorf("ScenarioState = %q, %v, want created, true", state, ok)
+	}
+	// Memoizing one scenario must not answer for another: two flows in one
+	// request would otherwise share whichever state was read first.
+	if _, ok := r.ScenarioState("shipping"); ok {
+		t.Error("a state was reported for a scenario nobody read")
+	}
+}
+
+// The first failure is the one that made the request unanswerable, and a later
+// candidate's error says nothing new about why. Keeping the last would report
+// whichever stub happened to be evaluated last, which is an ordering detail the
+// person reading the 500 has no way to know.
+func TestOnlyTheFirstScenarioReadFailureIsReported(t *testing.T) {
+	r := newRequest(t, "GET", "/x", "", nil)
+	defer ReleaseRequest(r)
+
+	if err := r.ScenarioError(); err != nil {
+		t.Fatalf("a fresh request already carries an error: %v", err)
+	}
+
+	first := errors.New("couchbase unreachable")
+	r.FailScenarioRead(first)
+	r.FailScenarioRead(errors.New("a later candidate also failed"))
+
+	if got := r.ScenarioError(); !errors.Is(got, first) {
+		t.Errorf("ScenarioError = %v, want the first failure %v", got, first)
+	}
+
+	// And it must not survive into the next request that reuses this instance.
+	r.Reset()
+	if err := r.ScenarioError(); err != nil {
+		t.Errorf("a scenario failure survived the reset: %v", err)
+	}
+}
+
+// The bindings a template reads as request.path.<name> are the same map the
+// path-parameter criteria matched against, so a stub whose URL bound a variable
+// can render it without the engine deriving it a second time.
+func TestPathVariablesAreVisibleToTheResponseTemplate(t *testing.T) {
+	r := newRequest(t, "GET", "/orders/42", "", nil)
+	defer ReleaseRequest(r)
+
+	r.BindPathVar("id", "42")
+	vars := r.PathVars()
+	if vars["id"] != "42" {
+		t.Errorf("PathVars = %v, want id=42", vars)
+	}
+
+	r.ClearPathVars()
+	if len(r.PathVars()) != 0 {
+		t.Errorf("PathVars = %v after clearing, want empty", r.PathVars())
+	}
+}
+
+// The raw body is handed to the journal and to the template context, so it has
+// to be the bytes that arrived rather than anything derived from them.
+func TestTheRawBodyIsExposedExactlyAsItArrived(t *testing.T) {
+	const body = "{\"a\":1}\n\x00trailing"
+	r := newRequest(t, "POST", "/b", body, map[string]string{"Content-Type": "application/json"})
+	defer ReleaseRequest(r)
+
+	if string(r.Body()) != body {
+		t.Errorf("Body() = %q, want %q", r.Body(), body)
+	}
+
+	r.Reset()
+	if r.Body() != nil {
+		t.Errorf("the body reference survived the reset: %q", r.Body())
+	}
+}
+
+// The key buffer grows to the longest URL an instance has seen, and net/http
+// will accept a request line close to a megabyte. Without the ceiling, one such
+// request permanently inflates a pooled entry that every later request reuses —
+// a leak that only shows up under the load that hides it.
+func TestAnOutsizedKeyBufferIsNotKeptForReuse(t *testing.T) {
+	r := &ParsedRequest{
+		pathVars:       map[string]string{},
+		scenarioStates: map[string]string{},
+		keyBuf:         make([]byte, 0, maxPooledKeyBuf+1),
+	}
+	r.Reset()
+	if r.keyBuf != nil {
+		t.Errorf("a %d-byte key buffer was kept for reuse", cap(r.keyBuf))
+	}
+
+	// The ordinary buffer is truncated rather than dropped: keeping its
+	// capacity is the whole reason an index lookup allocates nothing.
+	r.keyBuf = make([]byte, 8, maxPooledKeyBuf)
+	r.Reset()
+	if r.keyBuf == nil || cap(r.keyBuf) != maxPooledKeyBuf || len(r.keyBuf) != 0 {
+		t.Errorf("keyBuf = len %d cap %d, want an empty buffer of the same capacity",
+			len(r.keyBuf), cap(r.keyBuf))
+	}
+}
+
+// A Cookie header is a list, and a browser will happily send one containing an
+// empty element or a bare flag with no value at all. Neither is a cookie, and
+// neither may disturb the pairs on either side of it.
+func TestMalformedCookieElementsDoNotDisturbTheirNeighbours(t *testing.T) {
+	r := newRequest(t, "GET", "/c", "", map[string]string{
+		"Cookie": "before=1; ; bare-flag ;  ; after=2",
+	})
+	defer ReleaseRequest(r)
+
+	for name, want := range map[string]string{"before": "1", "after": "2"} {
+		subject := r.CookieSubject(name)
+		if !subject.Present() {
+			t.Errorf("cookie %q was lost to a malformed neighbour", name)
+			continue
+		}
+		if got := subject.Values(); len(got) != 1 || got[0] != want {
+			t.Errorf("cookie %q = %v, want [%s]", name, got, want)
+		}
+	}
+	if r.CookieSubject("bare-flag").Present() {
+		t.Error("a cookie element with no value was read as a cookie")
+	}
+}
+
+// Form criteria read the media type off the request, and a request that
+// declares none is not form-encoded. Treating an absent Content-Type as
+// permission to parse the body would make every POST a form.
+func TestARequestWithNoContentTypeHasNoFormFields(t *testing.T) {
+	r := newRequest(t, "POST", "/f", "a=1&b=2", nil)
+	defer ReleaseRequest(r)
+	r.header.Del("Content-Type")
+
+	if r.FormSubject("a").Present() {
+		t.Error("a request with no Content-Type was parsed as a form")
 	}
 }
