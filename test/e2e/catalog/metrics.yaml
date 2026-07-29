@@ -215,3 +215,13 @@ behaviors:
     evidence: "mockulus_match_candidates is exposed on /metrics"
     evidence_tokens: ["mockulus_match_candidates"]
     status: "ok"
+  - id: "B-METRIC-TRACE-EXPORT-FAILURES-TOTAL"
+    spec_row: "spec:14.1:metrics|mockulus_trace_export_failures_total"
+    spec_hash: "c57186ecdd541153"
+    spec: "#141-metrics-prometheus-metrics-on-admin-port"
+    kind: "observability"
+    impl_milestone: "M7"
+    summary: "mockulus_trace_export_failures_total"
+    evidence: "a collector that refuses every batch moves the counter, so a deployment whose tracing is broken does not read as one with nothing to say"
+    evidence_tokens: ["mockulus_trace_export_failures_total"]
+    status: "ok"

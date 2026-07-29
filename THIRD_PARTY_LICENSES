@@ -21,6 +21,11 @@ License: MIT
 Source:  https://github.com/beorn7/perks/blob/v1.0.1/LICENSE
 
 --------------------------------------------------------------------------------
+github.com/cenkalti/backoff/v5
+License: MIT
+Source:  https://github.com/cenkalti/backoff/blob/v5.0.3/LICENSE
+
+--------------------------------------------------------------------------------
 github.com/cespare/xxhash/v2
 License: MIT
 Source:  https://github.com/cespare/xxhash/blob/v2.3.0/LICENSE.txt
@@ -81,6 +86,11 @@ License: BSD-2-Clause
 Source:  https://github.com/gorilla/websocket/blob/v1.5.3/LICENSE
 
 --------------------------------------------------------------------------------
+github.com/grpc-ecosystem/grpc-gateway/v2
+License: BSD-3-Clause
+Source:  https://github.com/grpc-ecosystem/grpc-gateway/blob/v2.27.7/LICENSE
+
+--------------------------------------------------------------------------------
 github.com/munnerz/goautoneg
 License: BSD-3-Clause
 Source:  https://github.com/munnerz/goautoneg/blob/a7dc8b61c822/LICENSE
@@ -131,14 +141,34 @@ License: Apache-2.0
 Source:  https://github.com/open-telemetry/opentelemetry-go/blob/v1.40.0/LICENSE
 
 --------------------------------------------------------------------------------
+go.opentelemetry.io/otel/exporters/otlp/otlptrace
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/v1.40.0/exporters/otlp/otlptrace/LICENSE
+
+--------------------------------------------------------------------------------
+go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/otlptracehttp/v1.40.0/exporters/otlp/otlptrace/otlptracehttp/LICENSE
+
+--------------------------------------------------------------------------------
 go.opentelemetry.io/otel/metric
 License: Apache-2.0
 Source:  https://github.com/open-telemetry/opentelemetry-go/blob/metric/v1.40.0/metric/LICENSE
 
 --------------------------------------------------------------------------------
+go.opentelemetry.io/otel/sdk
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/sdk/v1.40.0/sdk/LICENSE
+
+--------------------------------------------------------------------------------
 go.opentelemetry.io/otel/trace
 License: Apache-2.0
 Source:  https://github.com/open-telemetry/opentelemetry-go/blob/trace/v1.40.0/trace/LICENSE
+
+--------------------------------------------------------------------------------
+go.opentelemetry.io/proto/otlp
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-proto-go/blob/otlp/v1.9.0/otlp/LICENSE
 
 --------------------------------------------------------------------------------
 go.uber.org/multierr
@@ -164,6 +194,11 @@ Source:  https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE
 golang.org/x/text
 License: BSD-3-Clause
 Source:  https://cs.opensource.google/go/x/text/+/v0.40.0:LICENSE
+
+--------------------------------------------------------------------------------
+google.golang.org/genproto/googleapis/api/httpbody
+License: Apache-2.0
+Source:  https://github.com/googleapis/go-genproto/blob/8636f8732409/googleapis/api/LICENSE
 
 --------------------------------------------------------------------------------
 google.golang.org/genproto/googleapis/rpc

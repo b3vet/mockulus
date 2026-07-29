@@ -791,6 +791,12 @@ Precedence: **env var > YAML file (`--config` / `MOCKULUS_CONFIG`) > default**. 
 | `log.requests` | `false` | Per-request access logs (hot path — keep off under load) |
 | `log.request_sample_n` | `100` | With `log.requests`, log every Nth request |
 | `metrics_enabled` | `true` | |
+| `tracing.enabled` | `false` | Export OpenTelemetry traces (off by default; §14.3) |
+| `tracing.endpoint` | — | OTLP/HTTP collector as `host:port` (e.g. `otel-collector:4318`); required when enabled |
+| `tracing.insecure` | `false` | Send over plain HTTP rather than HTTPS |
+| `tracing.headers` | — | Exporter headers as `k=v,k=v` (e.g. an ingestion token) |
+| `tracing.sample_ratio` | `0.1` | Sampling ratio for traces this pod starts itself (0–1); a caller's decision always wins |
+| `tracing.service_name` | `mockulus` | `service.name` reported on exported spans |
 
 Config struct is defined in one package with struct tags driving env/yaml binding and the generated docs table (`make config-docs` regenerates this section's table — spec and code can't drift).
 
@@ -820,6 +826,7 @@ mockulus_journal_enqueued_total / mockulus_journal_dropped_total / mockulus_jour
 mockulus_template_render_errors_total
 mockulus_regex_timeouts_total
 mockulus_match_candidates                                        histogram # candidates evaluated per request
+mockulus_trace_export_failures_total                             counter   # §14.3; only moves when tracing is on
 ```
 
 `mockulus_http_request_duration_seconds` powers HPA-on-RPS/latency via Prometheus Adapter (§15.4).
@@ -830,7 +837,14 @@ mockulus_match_candidates                                        histogram # can
 
 ### 14.3 Profiling & tracing
 
-`/debug/pprof` always on the admin port (never the mock port), and behind `admin_auth_token` whenever one is set: a heap profile is a copy of every stub body the process is holding, which is exactly what §17 keeps out of the logs. `/healthz`, `/readyz` and `/metrics` stay unauthenticated on that port whatever the token setting — the kubelet and Prometheus cannot present one, and none of the three carries stub content. OpenTelemetry tracing: roadmap (off-by-default even then).
+`/debug/pprof` always on the admin port (never the mock port), and behind `admin_auth_token` whenever one is set: a heap profile is a copy of every stub body the process is holding, which is exactly what §17 keeps out of the logs. `/healthz`, `/readyz` and `/metrics` stay unauthenticated on that port whatever the token setting — the kubelet and Prometheus cannot present one, and none of the three carries stub content.
+
+**OpenTelemetry tracing** is optional and **off by default** (`tracing.enabled`, §13). Off, it costs one atomic load and a branch per request: no span is started, no request context is replaced, and nothing in `internal/tracing` is constructed — the same nil-pointer shape the journal uses, and the reason the alloc budget of §16.3 rule 1 is measured with the default configuration and holds unchanged. The SLOs of §16.1 are stated for that default; a deployment that turns tracing on is choosing a different trade, and what it costs is measured nightly rather than gated.
+
+- **Transport**: OTLP/HTTP only, to `tracing.endpoint` (`host:port`; `tracing.insecure` chooses http over https, and an endpoint carrying a scheme is refused at startup rather than reinterpreted). Export is batched on a background processor, never on the request path (§16.3 rule 3). A collector that refuses or cannot be reached drops the batch and increments `mockulus_trace_export_failures_total` (§14.1), with the reason logged at most once a minute — silence is what a working collector looks like, so an outage must not also be silent.
+- **Sampling**: `ParentBased(TraceIDRatioBased(tracing.sample_ratio))`. A request arriving with W3C trace context follows its caller's decision, so the spans of a mock always appear inside the trace of the test that drove it; the ratio (default `0.1`) governs only traces this pod starts itself, which is what keeps flipping the switch on a busy deployment from becoming an export storm.
+- **Propagation**: W3C `tracecontext` only. Baggage is not propagated — nothing here reads it.
+- **Spans**: one server span per mock request (`mock <METHOD>`) and one per admin request (`admin <endpoint group>`). Mock spans carry the match outcome, the serving stub's id and name, and the snapshot epoch; admin spans cover authentication, so a 401 is a span rather than a gap. `/__admin` served on the mock port is excluded from mock spans, as it is from the mock-port metrics (§14.1). Span names are a fixed vocabulary: an unrecognised request method is reported as `_OTHER` with the original carried as an attribute, and admin spans are named by endpoint group, so mock traffic can no more mint span names than it can mint metric series. No span name or attribute carries a stub body or header.
 
 ---
 
@@ -927,6 +941,7 @@ internal/journal/         entry model, batch writer, query service
 internal/store/           StubStore interface + drivers: couchbase/, memory/, file/
 internal/response/        renderer: delays, faults, dribble, body assembly
 internal/metrics/         registry, collectors
+internal/tracing/         OpenTelemetry seam: provider, sampler, spans (§14.3)
 internal/wmcompat/        error catalog, WM JSON envelopes, near-miss scoring
 test/e2e/                 E2E harness (§19): runner/ (standalone Go binary), catalog/ (behavior IDs),
                           corpus/ (YAML cases), gotests/ (socket-level cases), topologies/ (compose/kind),
@@ -935,7 +950,7 @@ test/load/                k6 scenarios, compose rigs (§16)
 deploy/chart/  deploy/manifests/  
 ```
 
-**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
+**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), `go.opentelemetry.io/otel` + `otel/trace` + `otel/sdk` + the OTLP/HTTP trace exporter (§14.3 — the API half was already in the module graph transitively, and the exporter is only linked in, never started, unless `tracing.enabled`), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
 
 Interfaces kept narrow and defined **at the consumer** (Go idiom); `memory` store doubles as the test fake — no mock-generation tooling (fitting, given the project name).
 

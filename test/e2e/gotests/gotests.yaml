@@ -128,3 +128,62 @@ tests:
       steps are fixed text with no way to carry a value between them. The other
       half needs the process too: "the entry is gone" is a statement about the
       whole journal, which no case sharing an instance is in a position to make.
+  - name: TestTracingExportsMockAndAdminServerSpans
+    behaviors: [B-CFG-TRACING-ENABLED, B-CFG-TRACING-ENDPOINT, B-CFG-TRACING-INSECURE]
+    why: >-
+      What a traced request produces is not a response but a span at a
+      collector. A corpus case asserts on what came back, and nothing came back
+      differently: the served body is byte-identical with tracing on and off.
+      Proving the span exists means being the collector, which means speaking
+      OTLP over a socket the case itself is listening on.
+  - name: TestTracingDisabledExportsNothing
+    behaviors: [B-CFG-TRACING-ENABLED]
+    why: >-
+      The assertion is that a channel carried nothing. There is no response to
+      look at — the case has to hold the collector open, drive traffic, and find
+      it still empty, which is an observation a YAML expectation has no shape
+      for.
+  - name: TestTracingJoinsCallerTraceContext
+    behaviors: [B-CFG-TRACING-SAMPLE-RATIO]
+    why: >-
+      The observable is which trace the exported span belongs to. That answer
+      lives in the span's own trace and parent ids at the collector, so the case
+      must send a traceparent of its own choosing and then read the binary ids
+      back out of an OTLP payload.
+  - name: TestTracingUnsampledRootProducesNoSpans
+    behaviors: [B-CFG-TRACING-SAMPLE-RATIO]
+    why: >-
+      It is the negative half of the sampling decision, and negatives about a
+      second output channel are exactly what a response-shaped expectation
+      cannot state.
+  - name: TestTracingSendsConfiguredHeadersAndServiceName
+    behaviors: [B-CFG-TRACING-HEADERS, B-CFG-TRACING-SERVICE-NAME]
+    why: >-
+      Both are properties of the request mockulus makes outward, not of any
+      request made to it: one is a header on the export call, the other a
+      resource attribute inside its protobuf body. Only the receiving end can
+      see either.
+  - name: TestTraceExportFailuresAreCounted
+    behaviors: [B-METRIC-TRACE-EXPORT-FAILURES-TOTAL]
+    why: >-
+      The counter only moves when an export is refused, so the case has to be a
+      collector that refuses. A metricsprobe can read the value but cannot
+      create the outage that produces it.
+  - name: TestTracingRefusesAnEndpointWithAScheme
+    behaviors: [B-CFG-TRACING-ENDPOINT]
+    why: >-
+      What is asserted is that no serving process exists. A corpus case needs a
+      started instance before it can assert anything, and this configuration is
+      one that must never reach a started instance.
+  - name: TestTracingEnabledWithoutEndpointRefusesToStart
+    behaviors: [B-CFG-TRACING-ENDPOINT]
+    why: >-
+      Same shape: the outcome is a non-zero exit naming the offending key, which
+      happens before either listener binds.
+  - name: TestTracingInsecureSelectsPlainHTTP
+    behaviors: [B-CFG-TRACING-INSECURE]
+    why: >-
+      The key chooses the scheme mockulus speaks outward, and the failure it
+      guards against is a TLS handshake against a listener that has none. Both
+      the choice and its consequence happen on a connection mockulus opens to
+      somewhere else, so nothing a corpus case can send or receive touches it.
