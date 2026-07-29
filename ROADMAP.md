@@ -21,10 +21,8 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 - **Sketch**: compile expected instant/offset at registration; parse actual per WM's accepted formats. Pure matcher addition.
 - **Depends on**: nothing. **Size**: S.
 
-### 1.3 `equalToJson` placeholders (json-unit)
-- **What**: `${json-unit.ignore}`, `${json-unit.any-string}`, `${json-unit.regex}…` inside expected JSON (v1 compares them literally — deviation #5).
-- **Sketch**: detect placeholders at compile time, lower the expected document into a matcher tree instead of a literal comparison.
-- **Depends on**: nothing. **Size**: S/M.
+### 1.3 `equalToJson` placeholders (json-unit) — shipped in v1
+- **Status**: implemented during M1, not deferred after all. This entry predates the Appendix C probe that showed WM interprets the placeholders **by default**, so parity required v1 to as well. The supported set (`ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, `regex`) and its semantics are recorded in SPEC §5.2 (`equalToJson` row) and deviations #5 (an *unrecognised* placeholder is refused at registration — the inverse of the compare-literally behavior this entry used to describe) and #25; pinned by the `matchers-json-*` corpus cases. Entry retained under its number so existing references stay valid.
 
 ### 1.4 `matchesJsonSchema`
 - **What**: validate request body against an embedded JSON Schema (WM 3.3+).
