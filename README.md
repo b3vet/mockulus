@@ -6,13 +6,25 @@ N replicas behind a Service, stubs persisted in Couchbase, all mock traffic serv
 in-memory snapshot at ≥50k RPS per 2-vCPU pod with sub-2 ms p99.
 
 **Status: in development.** The core is being built milestone by milestone against
-the plan in SPEC §20; the compatibility surface is not yet complete, and nothing is released.
+the plan in SPEC §20; nothing is released yet.
 
-- **[SPEC.md](SPEC.md)** — the authoritative technical specification and implementation plan
-  (architecture, compatibility contract, data model, performance SLOs, E2E gate, milestones M0–M6).
-- **[ROADMAP.md](ROADMAP.md)** — features deliberately deferred from v1, with design sketches,
-  and explicit non-goals.
-- **[test/e2e/README.md](test/e2e/README.md)** — how the regression gate works and how to add to it.
+## Documentation
+
+Start at **[docs/](docs/README.md)**.
+
+- **[Getting started](docs/getting-started.md)** — install, start with no configuration,
+  register a stub, and see what a refusal looks like.
+- **[Migrating from WireMock](docs/migrating-from-wiremock.md)** — what moves, what changes
+  shape, what to turn on.
+- **[Compatibility matrix](docs/compatibility.md)** — every catalogued behavior and the test
+  that proves it, generated from the catalog and the corpus.
+- **[Deviations](docs/deviations.md)** · **[Configuration](docs/configuration.md)** ·
+  **[Operations](docs/operations.md)**
+
+Deeper: **[SPEC.md](SPEC.md)** is the authoritative specification — the docs above are written
+from it, and the behavior catalog is parsed out of it. **[ROADMAP.md](ROADMAP.md)** is what was
+deliberately left out of v1, which every unsupported-feature 422 points at.
+**[test/e2e/README.md](test/e2e/README.md)** is how the gate works.
 
 ```sh
 make build && ./bin/mockulus      # zero-config: memory store, ports 8080 and 9090

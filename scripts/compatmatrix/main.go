@@ -434,10 +434,9 @@ func classify(marker string) supportClass {
 // group is one section of the generated matrix: a block of spec rows that share
 // a shape, rendered as one table.
 type group struct {
-	source string
-	title  string
-	specRef,
-	anchor string
+	source  string
+	title   string
+	specRef string
 	// itemHeader names the first column — "Endpoint", "Field", "Key".
 	itemHeader string
 	// extraHeaders are the columns between the item and the evidence column,
