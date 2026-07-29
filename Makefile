@@ -73,6 +73,19 @@ vet: ## Run go vet
 config-docs: ## Regenerate the SPEC §13 configuration table from the config struct
 	$(GO) test ./internal/config -run TestSpecConfigTable -update
 
+# The compatibility matrix is derived from the same three files the E2E gate is
+# derived from — the spec's rows, the behavior catalog, the corpus — so the
+# document cannot claim support the gate does not enforce (SPEC §20, M6). The
+# hand-written preamble of docs/compatibility.md is preserved; only the region
+# between the GENERATED MATRIX markers is rewritten.
+.PHONY: compat-docs
+compat-docs: ## Regenerate docs/compatibility.md from the behavior catalog and corpus
+	$(GO) run ./scripts/compatmatrix
+
+.PHONY: compat-docs-check
+compat-docs-check: ## Verify docs/compatibility.md matches the catalog and corpus
+	$(GO) run ./scripts/compatmatrix -check
+
 .PHONY: spdx
 spdx: ## Verify every mockulus-authored source file carries an SPDX header
 	@./scripts/check-spdx.sh
