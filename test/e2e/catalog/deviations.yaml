@@ -475,3 +475,13 @@ behaviors:
     evidence: "two URL criteria on one stub are refused 422"
     evidence_tokens: ["422"]
     status: "ok"
+  - id: "B-DEV-DEVIATION-48"
+    spec_row: "spec:5.5:deviations|deviation-48"
+    spec_hash: "fda47926c83f29fd"
+    spec: "#55-deviations-from-wiremock-complete-list-v1"
+    kind: "functional"
+    impl_milestone: "M1"
+    summary: "deviation-48"
+    evidence: "a response declaring Content-Type more than once is refused 422"
+    evidence_tokens: ["Content-Type"]
+    status: "ok"
