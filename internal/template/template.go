@@ -177,10 +177,16 @@ func pathSegments(path string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-func requestID(r *http.Request) string {
-	if id := r.Header.Get("X-Request-Id"); id != "" {
-		return id
-	}
+// requestID is the id this server gave the request, which is what WireMock's
+// `request.id` is and therefore what a template written against it expects.
+//
+// It deliberately does not honour an inbound `X-Request-Id`. Letting the caller
+// name it reads as a courtesy — a mock that joins your tracing — but it means a
+// template rendering `{{request.id}}` echoes a value the client chose, and a
+// client can then choose one that collides with another request's. The same
+// question was asked of `clientIp` and answered the same way: the model reports
+// what the server observed, not what the request asserted about itself.
+func requestID(_ *http.Request) string {
 	return randomUUID()
 }
 

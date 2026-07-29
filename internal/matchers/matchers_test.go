@@ -1262,7 +1262,7 @@ func TestEmptyBodyIsAbsent(t *testing.T) {
 		}
 		for _, doc := range []string{
 			`{"matches":".*"}`, `{"matches":"a*"}`, `{"equalTo":""}`,
-			`{"contains":""}`, `{"equalToJson":"{}"}`, `{"binaryEqualTo":""}`,
+			`{"contains":""}`, `{"equalToJson":"{}"}`,
 		} {
 			if compileBody(t, doc).Match(subject) {
 				t.Errorf("%s should fail against an empty body", doc)
@@ -1270,6 +1270,19 @@ func TestEmptyBodyIsAbsent(t *testing.T) {
 		}
 		if !compile(t, `{"absent":true}`).Match(subject) {
 			t.Error("absent:true should match an empty body")
+		}
+		// binaryEqualTo with an empty operand is the one exception to the rule
+		// above, and it is not an inconsistency: every matcher in that list asks
+		// a question about a body's content, which an absent body has none of,
+		// while this one compares two byte arrays that are both empty. WireMock
+		// answers it the same way. Without it this would be the only body
+		// matcher that cannot express "the body is empty".
+		if !compileBody(t, `{"binaryEqualTo":""}`).Match(subject) {
+			t.Error(`binaryEqualTo:"" should match an empty body`)
+		}
+		// And it stays a comparison rather than becoming a wildcard.
+		if compileBody(t, `{"binaryEqualTo":"eA=="}`).Match(subject) {
+			t.Error("a non-empty binaryEqualTo operand should fail against an empty body")
 		}
 	}
 
