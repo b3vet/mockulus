@@ -12,6 +12,7 @@
 package match
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -174,7 +175,11 @@ const candidateLists = 5
 //
 // gate, when non-nil, is consulted for stubs in a scenario. Returning false
 // treats the stub as non-matching and iteration continues (SPEC §9.2).
-func (s *Snapshot) Match(req *ParsedRequest, gate ScenarioGate, evaluated *int) *stub.CompiledStub {
+//
+// ctx is carried for the gate's sake: the state read it performs is the one
+// piece of I/O the match path is allowed to do (P1), and it is the request's
+// cancellation and its span that belong on it.
+func (s *Snapshot) Match(ctx context.Context, req *ParsedRequest, gate ScenarioGate, evaluated *int) *stub.CompiledStub {
 	if len(s.Ordered) == 0 {
 		return nil
 	}
@@ -211,7 +216,7 @@ func (s *Snapshot) Match(req *ParsedRequest, gate ScenarioGate, evaluated *int) 
 		if !fullMatch(cs, req) {
 			continue
 		}
-		if cs.Scenario != nil && gate != nil && !gate(cs.Scenario, req) {
+		if cs.Scenario != nil && gate != nil && !gate(ctx, cs.Scenario, req) {
 			// A scenario-gated stub whose state does not match is treated as
 			// non-matching, and iteration continues to the next candidate.
 			continue
@@ -232,7 +237,7 @@ func (s *Snapshot) Match(req *ParsedRequest, gate ScenarioGate, evaluated *int) 
 // It is a function rather than an interface so the engine has no dependency on
 // the scenario client, and so a snapshot can be matched against in tests with
 // no store at all.
-type ScenarioGate func(ref *stub.ScenarioRef, req *ParsedRequest) bool
+type ScenarioGate func(ctx context.Context, ref *stub.ScenarioRef, req *ParsedRequest) bool
 
 // fullMatch evaluates every criterion a stub specifies, cheapest first
 // (SPEC §6.5). A candidate drawn from an exact-URL index has already satisfied

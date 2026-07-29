@@ -423,7 +423,7 @@ func podName() string {
 // stubs are unaffected, which is what keeps the failure contained to the
 // deployments actually using scenarios (SPEC §4.6, §9.2).
 func scenarioGate(client *scenario.Client, m *metrics.Metrics, log *slog.Logger) match.ScenarioGate {
-	return func(ref *stub.ScenarioRef, req *match.ParsedRequest) bool {
+	return func(ctx context.Context, ref *stub.ScenarioRef, req *match.ParsedRequest) bool {
 		if ref.RequiredState == "" {
 			return true
 		}
@@ -434,7 +434,7 @@ func scenarioGate(client *scenario.Client, m *metrics.Metrics, log *slog.Logger)
 			return state == ref.RequiredState
 		}
 
-		state, err := client.State(context.Background(), ref.Name)
+		state, err := client.State(ctx, ref.Name)
 		if err != nil {
 			m.StoreErrors.WithLabelValues("scenario_read").Inc()
 			log.Warn("scenario state unavailable; failing the request",

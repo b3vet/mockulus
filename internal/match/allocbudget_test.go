@@ -65,7 +65,7 @@ func TestJSONPathBodyAllocBudget(t *testing.T) {
 		b.ResetTimer()
 		for range b.N {
 			pr := AcquireRequest(req, body)
-			cs := snap.Match(pr, nil, nil)
+			cs := snap.Match(context.Background(), pr, nil, nil)
 			ReleaseRequest(pr)
 			if cs == nil {
 				b.Fatal("expected a match")
