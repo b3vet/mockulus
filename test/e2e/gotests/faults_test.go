@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -26,9 +27,41 @@ import (
 // Nothing here is about shutdown, and every case in this file needs its own
 // process; waiting out the default five-second drain five times over would cost
 // more than the assertions do.
+var (
+	faultOnce     sync.Once
+	faultShared   *mockulus
+	faultStartErr string
+)
+
+// faultInstance returns the one instance every fault case shares.
+//
+// It is shared because starting mockulus is the whole cost of these tests: the
+// exchange each one measures is a few milliseconds on a socket, and the process
+// it needs takes about three and a half seconds to come up. Five cases starting
+// five servers spent nearly twenty seconds booting to do a fraction of a second
+// of work, and gave the package five chances to lose the startup race under a
+// loaded machine rather than one — which is what it did, timing out at the
+// thirty-second ceiling in `start`.
+//
+// Sharing is safe here because a fault is a property of the stub, not of the
+// server: each case registers its own under its own path prefix, and none of
+// them touches deployment-wide state. `MOCKULUS_SHUTDOWN_DRAIN=0` is the only
+// configuration any of them needs, and they all need the same one.
 func faultInstance(t *testing.T) *mockulus {
 	t.Helper()
-	return start(t, map[string]string{"MOCKULUS_SHUTDOWN_DRAIN": "0"})
+	faultOnce.Do(func() {
+		m := spawn(t, map[string]string{"MOCKULUS_SHUTDOWN_DRAIN": "0"}, true)
+		if !m.awaitStartup(30 * time.Second) {
+			faultStartErr = "mockulus never reported a startup line:\n" + strings.Join(m.logs(), "\n")
+			return
+		}
+		faultShared = m
+	})
+	if faultShared == nil {
+		t.Fatalf("the shared fault instance did not start: %s", faultStartErr)
+	}
+	faultShared.waitReady(t)
+	return faultShared
 }
 
 // faultMapping is a stub whose entire response is the named fault. A fault

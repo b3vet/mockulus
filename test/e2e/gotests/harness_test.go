@@ -29,10 +29,28 @@ import (
 // a package-level temporary directory outlives every individual test.
 func TestMain(m *testing.M) {
 	code := m.Run()
+	stopPersistent()
 	if buildDir != "" {
 		_ = os.RemoveAll(buildDir)
 	}
 	os.Exit(code)
+}
+
+var (
+	persistentMu        sync.Mutex
+	persistentInstances []*mockulus
+)
+
+// stopPersistent shuts down the instances shared between cases. They cannot be
+// bound to any one test's cleanup, because the test that happened to start one
+// is not the test that finishes with it.
+func stopPersistent() {
+	persistentMu.Lock()
+	defer persistentMu.Unlock()
+	for _, m := range persistentInstances {
+		m.stop()
+	}
+	persistentInstances = nil
 }
 
 var (
@@ -119,7 +137,17 @@ func start(t *testing.T, env map[string]string) *mockulus {
 // launch starts a process and returns without waiting for it to serve — or even
 // to survive. A case about a fail-loud configuration needs the process before it
 // is healthy, and a case about shutdown needs it after it stops being.
+//
+// The instance is stopped when the test that started it ends.
 func launch(t *testing.T, env map[string]string) *mockulus {
+	t.Helper()
+	return spawn(t, env, false)
+}
+
+// spawn is launch's body. `persistent` decides who owns the instance: an
+// ordinary case owns its own and it dies with the test, while an instance
+// several cases share has to outlive all of them and is stopped by TestMain.
+func spawn(t *testing.T, env map[string]string, persistent bool) *mockulus {
 	t.Helper()
 
 	// The child is deliberately not tied to the test's context. That context is
@@ -153,7 +181,13 @@ func launch(t *testing.T, env map[string]string) *mockulus {
 		started: make(chan startupLine, 1),
 		exited:  make(chan struct{}),
 	}
-	t.Cleanup(m.stop)
+	if persistent {
+		persistentMu.Lock()
+		persistentInstances = append(persistentInstances, m)
+		persistentMu.Unlock()
+	} else {
+		t.Cleanup(m.stop)
+	}
 
 	// The reader owns Wait: the pipe has to be drained to EOF before the child
 	// is reaped, or the last lines written — the ones that explain a failure to
