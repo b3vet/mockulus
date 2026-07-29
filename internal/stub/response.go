@@ -145,6 +145,8 @@ func parseResponseHeaders(errs *wmcompat.ErrorList, doc map[string]json.RawMessa
 		// The pointer of any complaint names the spelling the author used, not
 		// the one the fold kept, so the message points at a line of their
 		// document rather than at a name that appears elsewhere in it.
+		before := len(resp.Headers)
+
 		for _, source := range header.sources {
 			var single string
 			if err := json.Unmarshal(source.value, &single); err == nil {
@@ -175,6 +177,27 @@ func parseResponseHeaders(errs *wmcompat.ErrorList, doc map[string]json.RawMessa
 			}
 			errs.Addf(wmcompat.CodeMalformed, "/response/headers/"+source.name,
 				"a response header value must be a string or an array of strings")
+		}
+
+		// A response carries exactly one Content-Type, and its value is one
+		// media type, so several of them is a document asking for something the
+		// wire has no way to express. Neither answer available is right: joining
+		// them sends `application/json, text/plain`, which is not a media type
+		// any client can parse, and taking the last — WireMock's answer, with a
+		// charset appended that the stub never mentioned — serves neither of the
+		// values that were written. Both quietly hand back a header the author
+		// did not ask for.
+		//
+		// So it is refused, and the author finds out at registration rather than
+		// from whichever client tried to read it. This is P3's rule applied to
+		// an ambiguity rather than to an unsupported feature: there is no
+		// reading of two media types that is more likely to be what was meant,
+		// and guessing is the thing that rule exists to prevent.
+		if len(resp.Headers)-before > 1 && strings.EqualFold(header.name, "Content-Type") {
+			errs.Addf(wmcompat.CodeMalformed, "/response/headers/"+header.name,
+				"Content-Type takes a single media type, and this response declares "+
+					strconv.Itoa(len(resp.Headers)-before))
+			resp.Headers = resp.Headers[:before]
 		}
 	}
 }

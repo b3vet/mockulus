@@ -240,3 +240,45 @@ func TestStoredMappingWithoutResponseHeaders(t *testing.T) {
 		}
 	}
 }
+
+// TestAMultiValuedContentTypeIsRefused pins the one header a stub may not
+// declare twice.
+//
+// A response carries exactly one Content-Type and its value is one media type,
+// so two of them describes a message the wire cannot carry. Both available
+// answers hand back something the author did not write — joining produces
+// `application/json, text/plain`, which no client can parse as a media type,
+// and taking the last is WireMock's answer and silently drops the other — so
+// the document is refused and the author hears about it at registration
+// instead of from whichever client tried to read the result.
+func TestAMultiValuedContentTypeIsRefused(t *testing.T) {
+	refused := []struct{ name, headers, pointer string }{
+		{"an array of two", `{"Content-Type":["application/json","text/plain"]}`, "/response/headers/Content-Type"},
+		{"an array of three", `{"Content-Type":["a/b","c/d","e/f"]}`, "/response/headers/Content-Type"},
+		{"two spellings of the name", `{"Content-Type":"application/json","content-type":"text/plain"}`, "/response/headers/Content-Type"},
+		{"a lower-case name", `{"content-type":["application/json","text/plain"]}`, "/response/headers/content-type"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := compileErrs(t, headerDoc(tc.headers))
+			if !hasProblem(problems, wmcompat.CodeMalformed, tc.pointer) {
+				t.Errorf("headers %s should be refused at %s, got %v",
+					tc.headers, tc.pointer, problems)
+			}
+		})
+	}
+
+	// The controls. Refusing two must not refuse one, must not refuse the
+	// one-element array spelling of one, and must not reach any other header —
+	// a repeated header is ordinary and stays ordinary.
+	for _, headers := range []string{
+		`{"Content-Type":"application/json"}`,
+		`{"Content-Type":["application/json"]}`,
+		`{"X-Multi":["a","b"],"Content-Type":"application/json"}`,
+		`{"X-Multi":["a","b"]}`,
+	} {
+		if cs := compileOK(t, headerDoc(headers)); cs == nil {
+			t.Errorf("headers %s were refused", headers)
+		}
+	}
+}

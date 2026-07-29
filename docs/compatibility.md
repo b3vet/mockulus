@@ -134,13 +134,13 @@ what makes the Evidence column worth reading.
 | WireMock surface — supported | 73 |
 | WireMock surface — supported with a documented deviation | 7 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 9 |
-| Deliberate deviations from WireMock | 47 |
-| Catalogued behaviors in total | 212 |
+| Deliberate deviations from WireMock | 48 |
+| Catalogued behaviors in total | 213 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 3 |
-| E2E corpus cases | 536 |
+| E2E corpus cases | 537 |
 | … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 353 |
-| … `wm: n/a` — expectations from the spec | 183 |
+| … `wm: n/a` — expectations from the spec | 184 |
 | Go-native cases (raw socket, process lifecycle) | 16 |
 
 Milestone cursor `M6`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
@@ -273,7 +273,7 @@ Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`
 |---|---|---|---|---|
 | `status` | ✅ | 11 · verified | `B-RESP-STATUS` | Default 200 |
 | `statusMessage` | 🔶 | 6 · verified | `B-RESP-STATUSMESSAGE` | Sent as the HTTP/1.1 reason phrase. Go's `net/http` cannot choose one, so a stub that sets this is written over a hijacked connection and **the connection closes after the response** (deviation #7); a stub that does not set it is untouched (P2). The phrase is encoded once at registration exactly as WM does: CR and LF each become `?`, a rune outside Latin-1 becomes `?` — so it can neither split the response nor be rejected for something WM accepts. HTTP/2 has no reason phrase, so it is dropped there |
-| `headers` | ✅ | 23 · verified | `B-RESP-HEADERS` | Templated when templating active |
+| `headers` | ✅ | 24 · verified | `B-RESP-HEADERS` | Templated when templating active |
 | `body` / `jsonBody` / `base64Body` / `bodyFileName` | ✅ | 23 · verified | `B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME` | Exactly one — more than one is rejected 422 (deviation #19). No `Content-Type` is emitted unless the stub sets one. `bodyFileName` resolved from the files store **at snapshot build**, and on the admin write that registers the stub, so the pod that handled the write serves the file's bytes on the very next request rather than an empty body until the next reload (body inlined into memory either way — P1); file missing when resolved ⇒ stub serves 500 code 1022 until the file appears (§6.9) |
 | `fixedDelayMilliseconds` | ✅ | 6 · verified | `B-RESP-FIXEDDELAYMILLISECONDS` | §12.4 |
 | `delayDistribution` | ✅ | 2 · verified | `B-RESP-DELAYDISTRIBUTION` | `uniform` (lower/upper) and `lognormal` (median/sigma) |
@@ -305,7 +305,7 @@ The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt
 
 ## Deliberate deviations
 
-[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 47 deviations
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 48 deviations
 
 The complete list — every place a request that WireMock would accept is answered
 differently here, or refused. Each is deliberate and, where it makes sense, has a
@@ -500,6 +500,10 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 > `B-DEV-DEVIATION-47` · 1 case · wm: n/a · two URL criteria on one stub are refused 422
 
+**48.** A response declaring `Content-Type` more than once — as an array of media types, or under two spellings of the name — is refused 422. WireMock accepts it, takes the last value and appends a charset the stub never named, so neither of the declared values reaches the wire. A response carries exactly one Content-Type and its value is one media type: two of them describes a message that cannot be sent, there is no reading of the pair more likely to be what was meant than any other, and refusing is the only answer that does not hand back a header the author did not write. One value, in either the bare or the one-element-array spelling, is unaffected, and every other header may repeat freely.
+
+> `B-DEV-DEVIATION-48` · 1 case · wm: n/a · a response declaring Content-Type more than once is refused 422
+
 ## Beyond the WireMock surface
 
 A single-node oracle has nothing to diff these against: an operational contract
@@ -528,7 +532,7 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 
 | Code | HTTP | Evidence | Behavior | Notes |
 |---|---|---|---|---|
-| 10 | 422 | 23 · verified | `B-ERR-10` | Malformed JSON / schema violation (WM parity code, verified) |
+| 10 | 422 | 24 · verified | `B-ERR-10` | Malformed JSON / schema violation (WM parity code, verified) |
 | 109 | 422 | 6 · verified | `B-ERR-109` | Stub id already exists on create (WM parity code) |
 | 1000 | 422 | 8 · n/a | `B-ERR-1000` | Unsupported stub feature (pointer names the field) |
 | 1001 | 404 | 1 · n/a | `B-ERR-1001` | Unsupported admin endpoint (body links ROADMAP) |

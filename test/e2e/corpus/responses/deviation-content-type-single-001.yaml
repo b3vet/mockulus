@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-content-type-single-001
+behaviors: [B-DEV-DEVIATION-48, B-RESP-HEADERS, B-ERR-10]
+# Deviation #48. A response carries exactly one Content-Type and its value is
+# one media type, so a stub declaring two describes a message that cannot be
+# sent. It is refused here.
+#
+# `wm: n/a` because WireMock accepts it: it takes the last value and appends a
+# charset the stub never named, so `["application/json","text/plain"]` leaves as
+# `text/plain;charset=utf-8` — neither of the values that were written. The
+# alternative we had was joining them into `application/json, text/plain`, which
+# is not a media type any client can parse. Both hand back a header the author
+# did not write, which is why neither is the answer.
+wm: n/a
+steps:
+  # The array spelling.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de480001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-content-type-single-001/array"},
+         "response": {"status": 200, "body": "x",
+                      "headers": {"Content-Type": ["application/json", "text/plain"]}}}
+    expect:
+      status: 422
+      body_json_contains:
+        - path: errors
+          match:
+            code: 10
+            source: {pointer: "/response/headers/Content-Type"}
+
+  # Refused means refused: nothing was registered, so the path is unmatched.
+  - request: {port: mock, method: GET, path: /e2e/deviation-content-type-single-001/array}
+    expect: {status: 404}
+
+  # The same contradiction written as two spellings of the name rather than as
+  # an array. The fold that makes `X-DUP` and `x-dup` one header is what makes
+  # this the same document as the one above, and it has to be refused for the
+  # same reason — otherwise the rule would be about JSON syntax rather than
+  # about how many media types the response declares.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de480001-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-content-type-single-001/spellings"},
+         "response": {"status": 200, "body": "x",
+                      "headers": {"Content-Type": "application/json", "content-type": "text/plain"}}}
+    expect:
+      status: 422
+      body_json_contains:
+        - path: errors
+          match:
+            code: 10
+
+  # The controls, and what keeps this a rule about Content-Type rather than a
+  # rule about arrays. One media type registers and is served, in either
+  # spelling of one value.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de480001-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-content-type-single-001/one"},
+         "response": {"status": 200, "body": "{\"ok\":true}",
+                      "headers": {"Content-Type": "application/json"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-content-type-single-001/one}
+    expect:
+      status: 200
+      headers: {Content-Type: application/json}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de480001-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-content-type-single-001/one-array"},
+         "response": {"status": 200, "body": "x",
+                      "headers": {"Content-Type": ["text/plain"]}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-content-type-single-001/one-array}
+    expect:
+      status: 200
+      headers: {Content-Type: text/plain}
+
+  # And every other header may still repeat, which is the control that stops
+  # this from having been implemented as "no header may have two values".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "de480001-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-content-type-single-001/repeated"},
+         "response": {"status": 200, "body": "x",
+                      "headers": {"Content-Type": "text/plain", "X-Tag": ["one", "two"]}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-content-type-single-001/repeated}
+    expect:
+      status: 200
+      headers_contain: {X-Tag: one}
