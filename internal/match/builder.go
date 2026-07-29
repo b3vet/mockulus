@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/store"
 	"github.com/b3vet/mockulus/internal/stub"
+	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
 // Quarantine reasons reported on `mockulus_snapshot_quarantined_total`
@@ -212,8 +214,13 @@ func (b *Builder) compile(doc store.StoredStub, files map[string][]byte) (*stub.
 
 	cs, errs := stub.Compile(doc.Mapping, doc.Seq, b.stubOpts)
 	if errs != nil {
+		// The pointers, not just the count. For the file driver this log line
+		// is the only place a rejection is ever reported — there is no admin
+		// write to answer 422 — so a count alone leaves an operator with a
+		// stub that vanished and no way to learn which field did it.
 		b.log.Warn("stub quarantined: mapping does not compile",
-			"id", doc.ID, "problems", len(errs.Errors()))
+			"id", doc.ID, "problems", len(errs.Errors()),
+			"fields", quarantineFields(errs))
 		return nil, quarantineStub
 	}
 	if cs.ID == "" {
@@ -259,3 +266,21 @@ func resolveBodyFile(cs *stub.CompiledStub, files map[string][]byte, log *slog.L
 // CacheSize reports how many compiled stubs are held for reuse, which is what
 // makes the cache's effect observable rather than assumed.
 func (b *Builder) CacheSize() int { return b.cache.size() }
+
+// quarantineFields renders the JSON pointers of a compile failure for the log,
+// which is the same information the 422 of Appendix B would have carried on the
+// admin path. The detail text is left out deliberately: it can hold operand
+// values from the mapping, and a log line is a wider audience than the response
+// to the caller who wrote them.
+func quarantineFields(errs *wmcompat.ErrorList) string {
+	items := errs.Errors()
+	pointers := make([]string, 0, len(items))
+	for _, e := range items {
+		if e.Source != nil && e.Source.Pointer != "" {
+			pointers = append(pointers, e.Source.Pointer)
+			continue
+		}
+		pointers = append(pointers, "/")
+	}
+	return strings.Join(pointers, " ")
+}

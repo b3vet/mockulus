@@ -233,11 +233,23 @@ func (h *Handler) rebuild(r *http.Request, because string) {
 }
 
 // storeError reports a store failure as the 503 of SPEC §4.6.
+//
+// A read-only store is answered separately. The status and the code are the
+// same — §4.6 gives one answer for "the store cannot take this write" — but the
+// two conditions are not the same thing to be told: an outage ends on its own
+// and a read-only driver never will. Reading "the stub store is unavailable"
+// after pointing mockulus at a WireMock project directory sends the reader
+// looking for a Couchbase problem they do not have.
 func (h *Handler) storeError(w http.ResponseWriter, op string, err error) {
 	h.metrics.StoreErrors.WithLabelValues(op).Inc()
 	h.log.Error("store operation failed", "op", op, "error", err)
-	wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeStoreUnavailable,
-		"the stub store is unavailable; the admin write was not applied"))
+	detail := "the stub store is unavailable; the admin write was not applied"
+	if errors.Is(err, store.ErrReadOnly) {
+		detail = "this deployment's store is read-only, so the admin write was not applied; " +
+			"the file driver serves a project directory as its source of truth, and a change " +
+			"belongs in those files rather than in an admin call"
+	}
+	wmcompat.WriteError(w, wmcompat.NewError(wmcompat.CodeStoreUnavailable, detail))
 }
 
 // canonicalIDLen is the length of the 8-4-4-4-12 spelling, which is the only

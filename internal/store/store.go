@@ -29,6 +29,22 @@ var ErrNotFound = errors.New("not found")
 // translate it into the degraded-mode behavior of SPEC §4.6.
 var ErrUnavailable = errors.New("store unavailable")
 
+// ErrReadOnly is returned by a driver that refuses every write by design rather
+// than because anything is wrong. It wraps ErrUnavailable so the degraded-mode
+// handling of §4.6 is unchanged — the status and the error code a client sees
+// are the same — but it lets the layer writing that error say which of the two
+// happened. They are not the same problem: one is an outage that will end, and
+// the other is a deployment doing exactly what it was configured to do.
+var ErrReadOnly = fmt.Errorf("%w: this store is read-only", ErrUnavailable)
+
+// ErrCASConflict is returned by a compare-and-swap write that lost its race —
+// the document changed under it, or an insert found one already there. It is a
+// sentinel rather than a message because the alternative is matching on driver
+// error text, and driver error text contains the document key: a scenario named
+// "document exists" would make every failure on it look like a lost race, and a
+// caller that retries lost races would then swallow a real outage.
+var ErrCASConflict = errors.New("compare-and-swap conflict")
+
 // StoredStub is the envelope a stub mapping is persisted in (SPEC §7.2). The
 // mapping itself is kept verbatim so that a GET returns byte-identical JSON to
 // what was registered.
