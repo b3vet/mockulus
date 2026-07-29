@@ -24,3 +24,11 @@ covdata/
 # output after the package directory and drops it in the working directory.
 /runner
 /mockulus
+
+# Internal working documents. The decision log and the differential findings are
+# deliberation rather than product: they name unreleased reasoning, half-settled
+# positions and the reproduction of every place this server disagrees with the
+# one it mirrors. SPEC.md deliberately stays tracked — the E2E gate parses it to
+# derive the behavior catalog's universe (§19.2), so a checkout without it
+# cannot run the gate at all.
+/internalDocs/
