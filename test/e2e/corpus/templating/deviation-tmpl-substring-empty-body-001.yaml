@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-tmpl-substring-empty-body-001
+behaviors: [B-DEV-DEVIATION-39]
+# n/a, and the other half of the same rule: a helper that finds nothing renders
+# nothing. `substring` over an empty request body produces the empty string
+# here; WireMock produces the digit `0`, which is not a substring of anything
+# and disagrees with what its own `size` reports about the very same request.
+# A literal `0` dropped into a body is worse than nothing, because it reads as
+# data. There is no oracle to diff against, so what follows is mockulus
+# (SPEC §5.5 row 39, §10.3).
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000039-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-tmpl-substring-empty-body-001/receipt"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "head=[{{substring request.body 0 4}}] tail=[{{substring request.body 2}}] size=[{{size request.body}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The empty body is the deviation. Both arities of the helper are asserted,
+  # the two-index form and the offset-only form, because a fallback that
+  # invented a length would have to be wired into each of them separately and a
+  # build that fixed only one would still be wrong.
+  #
+  # `size` is on the same line on purpose. It is the number the request really
+  # does have, and it renders 0 in both servers — so this line shows the digit
+  # WireMock puts in the `substring` slots arriving legitimately in the slot
+  # that means a count, next to slots that mean text and are therefore empty.
+  - request:
+      method: POST
+      path: /e2e/deviation-tmpl-substring-empty-body-001/receipt
+      headers: {Content-Type: text/plain}
+      body: ""
+    expect:
+      status: 200
+      body: "head=[] tail=[] size=[0]"
+
+  # The control, over the same stub. Without it a renderer that had quietly
+  # stopped substringing altogether would satisfy the assertion above, and this
+  # case would be pinning a bug instead of a deviation. The offsets are chosen
+  # so neither slot could be produced by the other: four characters from the
+  # front, and everything from the third character on.
+  - request:
+      method: POST
+      path: /e2e/deviation-tmpl-substring-empty-body-001/receipt
+      headers: {Content-Type: text/plain}
+      body: "checkout-42"
+    expect:
+      status: 200
+      body: "head=[chec] tail=[eckout-42] size=[11]"

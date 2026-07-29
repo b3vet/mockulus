@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-tmpl-base64body-templated-001
+behaviors: [B-DEV-DEVIATION-46]
+# n/a: a `base64Body` on a stub that asked for response templating is templated
+# here, after the base64 has been decoded (SPEC §10.1 — templating happens on
+# whichever body form is used, after file and base64 resolution). WireMock
+# templates an inline `body` and a `jsonBody` and never a `base64Body`, so a
+# payload that was encoded precisely to keep a literal `{{` away from the
+# renderer renders here and stays literal there. Two servers, two answers, no
+# diff: what follows pins mockulus (SPEC §5.5 row 46).
+wm: n/a
+steps:
+  # The base64 decodes to `tier={{request.query.tier}} sum={{math 2 '+' 3}}`.
+  # Two expressions rather than one, so the case fails whether a build stopped
+  # resolving the request model or stopped running helpers.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000039-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-tmpl-base64body-templated-001/encoded"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "base64Body": "dGllcj17e3JlcXVlc3QucXVlcnkudGllcn19IHN1bT17e21hdGggMiAnKycgM319",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # The control, and the reason it is in this case rather than a neighbouring
+  # one: the deviation is that `base64Body` is templated, not that templating
+  # works. The same text is registered inline on a second stub, and the two
+  # served bodies have to come out identical. If they ever diverge, either the
+  # base64 path stopped being templated — the deviation gone — or the inline
+  # path did, which is a plain defect; the pair tells those apart.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000039-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-tmpl-base64body-templated-001/inline"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "tier={{request.query.tier}} sum={{math 2 '+' 3}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # A third stub carries the same encoded payload and asks for no transformer at
+  # all. Under the default activation this is the shape that must come back
+  # literally, which is what keeps the case honest about scope: it is claiming
+  # that opting in reaches the decoded bytes, not that base64 bodies are
+  # rendered unconditionally.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000039-0000-4000-8000-000000000006",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-tmpl-base64body-templated-001/opaque"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "base64Body": "dGllcj17e3JlcXVlc3QucXVlcnkudGllcn19IHN1bT17e21hdGggMiAnKycgM319"}}
+    expect: {status: 201}
+
+  # The deviation itself. Note what the ordering has to be for this to render:
+  # the encoded text contains no `{{` anywhere, so the cheap "no braces, skip
+  # the renderer" test that §10.1 allows must be applied to the decoded bytes.
+  # An implementation that tested the stored `base64Body` string would find no
+  # braces, skip, and serve the template source — which is exactly WireMock's
+  # answer, arrived at by accident.
+  - request:
+      method: GET
+      path: /e2e/deviation-tmpl-base64body-templated-001/encoded?tier=gold
+    expect:
+      status: 200
+      headers: {Content-Type: "text/plain"}
+      body: "tier=gold sum=5"
+
+  - request:
+      method: GET
+      path: /e2e/deviation-tmpl-base64body-templated-001/inline?tier=gold
+    expect:
+      status: 200
+      body: "tier=gold sum=5"
+
+  # Decoded and served untouched, braces and all.
+  - request:
+      method: GET
+      path: /e2e/deviation-tmpl-base64body-templated-001/opaque?tier=gold
+    expect:
+      status: 200
+      body: "tier={{request.query.tier}} sum={{math 2 '+' 3}}"

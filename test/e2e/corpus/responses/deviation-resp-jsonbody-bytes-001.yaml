@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-resp-jsonbody-bytes-001
+behaviors:
+  - B-DEV-DEVIATION-38
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-STUB-RESPONSE
+# n/a because the two servers answer these requests with different bytes on
+# purpose, which is deviation #38: mockulus serves a `jsonBody` as the text it
+# was registered with, and WireMock re-serialises the document before sending
+# it. Every payload below decodes to the same value on both sides, so there is
+# nothing for the differential to disagree about — §5.6 compares the decoded
+# documents, and by that measure the two servers agree here exactly.
+#
+# The text is what is worth pinning, because handing a client the payload its
+# author wrote is most of what a mock is for. A stub body is very often a
+# response captured from the system being stood in for, and the person who
+# captured it chose neither the exponent notation nor the escaping nor the
+# encoding — the upstream did, and the client under test may well be asserting
+# on those bytes rather than on the decoded value. Re-rendering the document
+# substitutes the mock's spelling for the upstream's, quietly, in the one place
+# nobody thinks to look.
+#
+# Every expectation below reads the response body as bytes rather than as a
+# document, and that is the point of the case: a `body_json` assertion is
+# satisfied by a re-serialised payload just as readily as by a verbatim one, so
+# it would pin none of this and the case would keep passing through a rewrite
+# that lost every byte it claims to protect.
+wm: n/a
+steps:
+  # Exponent notation is the first thing a round trip through a decoder loses.
+  # `1e2`, `1.5e-3` and `2.5E+10` are ordinary JSON numbers, and a decoder that
+  # reduces them to IEEE doubles has no memory of how they were spelled: what
+  # comes back out is whatever the encoder's shortest form happens to be, which
+  # for the first two is plain decimal and for none of them is the author's
+  # text. The capital `E` and the explicit `+` are the author's spelling too,
+  # and only verbatim bytes keep them.
+  #
+  # `plain` is in the same document as the control: a number written without an
+  # exponent must not acquire one, so this is "the text is kept" rather than
+  # "the text is rewritten in a different direction".
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000038-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-resp-jsonbody-bytes-001/exponents"},
+         "response": {"status": 200,
+                      "jsonBody": {"exp": 1e2, "small": 1.5e-3,
+                                   "upper": 2.5E+10, "plain": 100}}}
+    expect: {status: 201}
+
+  # Byte for byte, in the order the members were written. The insignificant
+  # whitespace of the registering document is not part of what is preserved —
+  # the members come back separated by nothing — so the claim this pins is the
+  # narrow and useful one: every JSON token keeps the text it was given.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-jsonbody-bytes-001/exponents}
+    expect:
+      status: 200
+      body: '{"exp":1e2,"small":1.5e-3,"upper":2.5E+10,"plain":100}'
+
+  # The escaping half of the same rule, and the harder half, because here the
+  # two spellings are both correct JSON for the same string. `\u00e9` and
+  # `\u2615` are escaped spellings of characters the grammar does not
+  # require escaped; `\/` is an escaped solidus, which the grammar allows
+  # and never demands; and `café ☕ 日本` is that same class of character written
+  # raw. A server that decodes the document and writes it out again has to pick
+  # one spelling for all of them, and whichever it picks it has changed some
+  # author's bytes — a fixture that must contain a literal `é` for a byte-length
+  # assertion, or one that must not, depending on which way it picked.
+  #
+  # The control characters are the sharp end. `\u001F` has to be escaped
+  # whatever a server prefers, so the only choice left is which case to write
+  # the hex digits in, and the two spellings sit side by side in one document
+  # here: the upper-case pair comes back upper-case and the lower-case pair
+  # comes back lower-case. Nothing is normalised in either direction, which is
+  # what "the bytes it was registered with" means when the value is a string.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000038-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-resp-jsonbody-bytes-001/escapes"},
+         "response": {"status": 200,
+                      "jsonBody": {"escaped": "caf\u00e9 \u2615",
+                                   "raw": "café ☕ 日本",
+                                   "solidus": "a\/b",
+                                   "upper": "a\u001Fb",
+                                   "lower": "a\u001fb"}}}
+    expect: {status: 201}
+
+  # `escaped` and `raw` are the same two characters written the two ways, in one
+  # response, and they come back the two ways they went in. That pairing is the
+  # whole assertion: either member alone is consistent with a server that
+  # normalises everything to the other spelling, and together they are not.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-jsonbody-bytes-001/escapes}
+    expect:
+      status: 200
+      body: '{"escaped":"caf\u00e9 \u2615","raw":"café ☕ 日本","solidus":"a\/b","upper":"a\u001Fb","lower":"a\u001fb"}'

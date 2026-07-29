@@ -1,0 +1,163 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-enc-casefold-astral-001
+behaviors: [B-DEV-DEVIATION-43, B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+# Deviation #43, the half where mockulus folds more than WireMock does. Unicode
+# assigns case pairs above U+FFFF — Deseret, Adlam, Warang Citi and others — and
+# simple case folding knows about them, so `caseInsensitive` here folds them
+# like any other letter. Java's `equalsIgnoreCase` walks UTF-16 code units, and
+# a supplementary character reaches it as two surrogates that have no case of
+# their own, so WireMock compares the halves and finds them different. The
+# disagreement is therefore not a matter of which case table is loaded: it is
+# the unit of comparison, and it makes mockulus the more permissive server here
+# and the stricter one on the Turkish dotted and dotless I that
+# `deviation-enc-casefold-turkish-001` pins.
+#
+# `wm: n/a`, because both answers are internally consistent and there is nothing
+# to diff. The case is here so that a rewrite of the comparison — a byte-wise
+# fold, a UTF-16 detour, a per-code-unit loop copied from the Java side — stops
+# folding these pairs and is caught saying so.
+#
+# Every request declares `charset=UTF-8` so the case pins folding and not the
+# charset defaulting a body matcher applies before it (SPEC §5.2). Non-ASCII
+# characters are written as escapes throughout — as surrogate pairs inside the
+# mapping JSON, which is what JSON has, and as single code points in the YAML
+# request bodies, which is what YAML has — so the case says which code points it
+# means rather than trusting a font and an editor to agree.
+wm: n/a
+steps:
+  # U+10400 and U+10428 are the capital and small Deseret long I; U+10401 and
+  # U+10429 are the long E. Deseret is the canonical bicameral supplementary
+  # script and the cheapest place to see the disagreement.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0003-4000-8000-000000000001",
+         "name": "caseInsensitive over a supplementary-plane case pair",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-astral-001/deseret",
+                     "bodyPatterns": [{"equalTo": "\ud801\udc00\ud801\udc01",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "deseret",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The operand as written matches itself. This step would pass on either
+  # server and is the baseline the next two are read against.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/deseret
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\U00010400\U00010401"
+    expect: {status: 200, body: "deseret"}
+
+  # The deviation. Both letters lowered, and mockulus folds both: U+10428 folds
+  # to U+10400 and U+10429 to U+10401. WireMock sees D801 DC00 against D801 DC28
+  # and refuses, because neither surrogate has a case mapping to try.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/deseret
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\U00010428\U00010429"
+    expect: {status: 200, body: "deseret"}
+
+  # And mixed, which separates folding per character from a whole-string
+  # normalisation that happened to agree on the fully-lowered spelling.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/deseret
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\U00010400\U00010429"
+    expect: {status: 200, body: "deseret"}
+
+  # A second script, so the behaviour reads as "supplementary case pairs fold"
+  # rather than as a Deseret-shaped special case. U+1E900 and U+1E922 are the
+  # capital and small Adlam alif, U+1E901 and U+1E923 the daali.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0003-4000-8000-000000000002",
+         "name": "caseInsensitive over a second supplementary script",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-astral-001/adlam",
+                     "bodyPatterns": [{"equalTo": "\ud83a\udd00\ud83a\udd01",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "adlam",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/adlam
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\U0001E922\U0001E923"
+    expect: {status: 200, body: "adlam"}
+
+  # Both halves of deviation #43 inside one comparison, which is the shape a
+  # real stub would meet them in: the supplementary pair folds and the dotted
+  # capital I does not, so mockulus matches this and WireMock matches neither
+  # the first character nor, on the step after, the second.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0003-4000-8000-000000000003",
+         "name": "caseInsensitive over both halves of the disagreement at once",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-astral-001/mixed",
+                     "bodyPatterns": [{"equalTo": "\ud801\udc00-\u0130-A",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "mixed",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/mixed
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\U00010428-\u0130-a"
+    expect: {status: 200, body: "mixed"}
+
+  # Replace the dotted capital I with the ASCII letter it looks like and the
+  # criterion fails, while the supplementary character in front of it is still
+  # folded. One string, both directions of the deviation, opposite answers.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/mixed
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\U00010428-i-a"
+    expect: {status: 404}
+
+  # The control. U+1F600 has no case pair on any definition, so the two servers
+  # agree about it and about the ASCII beside it. Folding supplementary
+  # characters must not mean altering the ones that have nothing to fold.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0003-4000-8000-000000000004",
+         "name": "caseInsensitive leaves a caseless supplementary character alone",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-astral-001/caseless",
+                     "bodyPatterns": [{"equalTo": "\ud83d\ude00ok",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "caseless",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/caseless
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\U0001F600OK"
+    expect: {status: 200, body: "caseless"}
+
+  # Dropping the caseless character is not a case difference, so the criterion
+  # still refuses: the fold relaxes case and nothing else.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-astral-001/caseless
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "OK"
+    expect: {status: 404}

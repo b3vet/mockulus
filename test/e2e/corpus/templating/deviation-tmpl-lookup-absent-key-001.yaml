@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-tmpl-lookup-absent-key-001
+behaviors: [B-DEV-DEVIATION-39]
+# n/a, and deliberately so: `lookup` with a key its subject does not carry
+# renders the empty string here, where WireMock renders the whole subject's
+# `toString` — `{tier=gold}` for a map, `[red, green, blue]` for a list. That is
+# a Java collection's debug rendering leaking into a response body, and a body
+# an HTTP client has to parse is the last place it belongs. There is nothing to
+# diff against, so what is pinned below is mockulus (SPEC §5.5 row 39, §10.3).
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000039-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-tmpl-lookup-absent-key-001/profile"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Plan": "[{{lookup request.query 'plan'}}]"},
+                      "body": "mapabsent=[{{lookup request.query 'plan'}}] mappresent=[{{lookup request.query 'tier'}}] listabsent=[{{lookup (split 'red,green,blue' ',') '9'}}] listpresent=[{{lookup (split 'red,green,blue' ',') '1'}}]",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Both subject shapes are asserted, because they are two different wrong
+  # answers rather than one. A map that renders its `toString` spills every
+  # other key in it — `tier=gold` is here precisely so a leak would carry a
+  # value the template never asked for — and a list that renders its `toString`
+  # spills every element plus the brackets and separators Java chose to print
+  # them with. The empty string is the only answer that says "not found" without
+  # inventing content.
+  #
+  # Each absent lookup is paired with a present one over the same subject, so
+  # this cannot be satisfied by a build where `lookup` renders nothing at all:
+  # `mappresent` and `listpresent` fail the moment the helper stops finding what
+  # is there. `listpresent` reads index 1 rather than 0 so a helper returning the
+  # first element regardless of the key is caught too.
+  #
+  # The header carries the same absent lookup as the body. A renderer that fell
+  # back to the subject only on one of the two templated surfaces (§10.1) would
+  # pass the body assertion and fail this one.
+  - request:
+      method: GET
+      path: /e2e/deviation-tmpl-lookup-absent-key-001/profile?tier=gold
+    expect:
+      status: 200
+      headers: {X-Plan: "[]"}
+      body: "mapabsent=[] mappresent=[gold] listabsent=[] listpresent=[green]"

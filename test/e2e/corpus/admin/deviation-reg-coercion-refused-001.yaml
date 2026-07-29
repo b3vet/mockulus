@@ -1,0 +1,260 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-reg-coercion-refused-001
+behaviors:
+  - B-DEV-DEVIATION-36
+  - B-ERR-10
+  - B-RESP-STATUS
+  - B-RESP-BODY-JSONBODY-BASE64BODY-BODYFILENAME
+  - B-RESP-FIXEDDELAYMILLISECONDS
+# Deviation #36. A response field whose written value is not of the shape the
+# field is defined to carry is refused at registration here, where WireMock
+# normalises it and then serves the normalised value: a negative delay becomes
+# no delay, a fractional one is truncated, `"200"` becomes 200, `7` becomes "7".
+# Every one of those coercions serves something the author did not write, which
+# is the outcome P3 exists to prevent — so the document is refused and the
+# author is told which field and why, once, at the moment the mistake is
+# cheapest to fix.
+#
+# `wm: n/a` because there is nothing to diff. The oracle answers 201 to each of
+# these documents and then serves a response mockulus never produces, so the
+# comparison is between an error and a body rather than between two answers to
+# the same question. What the case pins is the refusal and the pointer that
+# names the offending field, and with them the cost the deviation admits to in
+# so many words: a mappings file written in these spellings registers there and
+# not here.
+wm: n/a
+steps:
+  # A negative duration is not a duration the server can honour, so there is no
+  # normalisation that preserves it — WireMock clamps to zero and serves at
+  # once, which is a stub the author did not write and cannot tell apart from
+  # one they did. The pointer is most of the value of refusing: an author
+  # reading "fixedDelayMilliseconds must not be negative" against `/response/…`
+  # needs no second run to find the typo.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/slow"},
+         "response": {"status": 200, "body": "delayed", "fixedDelayMilliseconds": -5}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/fixedDelayMilliseconds"}
+            title: "Malformed request"
+      body_regex: 'fixedDelayMilliseconds must not be negative'
+
+  # A fractional delay is refused under a different message, because the two are
+  # different mistakes: `-5` is a value the field cannot take, and `10.5` is a
+  # value the field cannot hold. Truncating to 10 is the coercion, and a build
+  # that did it would answer 201 here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/fractional"},
+         "response": {"status": 200, "body": "delayed", "fixedDelayMilliseconds": 10.5}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/fixedDelayMilliseconds"}
+            title: "Malformed request"
+      body_regex: 'fixedDelayMilliseconds must be an integer'
+
+  # The sharpest form of that rule, and the one that says what "integer" means
+  # here: `10.0` is a whole number and it is still refused, because the test is
+  # on the number as written rather than on the value it happens to denote. That
+  # is the same reading of a document mockulus applies everywhere else it
+  # declines to rewrite what an author typed, and a build that had started
+  # ranging over decoded float64 values instead of the JSON token would register
+  # this one and lose the distinction.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/whole-fraction"},
+         "response": {"status": 200, "body": "delayed", "fixedDelayMilliseconds": 10.0}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/fixedDelayMilliseconds"}
+            title: "Malformed request"
+      body_regex: 'fixedDelayMilliseconds must be an integer'
+
+  # A status quoted as a string is the likeliest member of this family to reach
+  # a real mappings file, because every shell and JavaScript generator that
+  # interpolates a code produces it. WireMock parses the string and serves 200.
+  # Here it is a fact about the document worth reporting, since the generator
+  # that quoted this code quoted every other one in the file too.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/code"},
+         "response": {"status": "200", "body": "quoted"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/status"}
+            title: "Malformed request"
+      body_regex: 'status must be an integer'
+
+  # A body given as a number is the coercion running the other way: WireMock
+  # renders the JSON scalar back to text and serves `7`, byte for byte what a
+  # correctly spelled stub would have served. The bytes agreeing is exactly why
+  # the refusal has to be pinned rather than assumed — nothing on the wire would
+  # ever show the difference, so only a case aimed at registration can hold it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/scalar"},
+         "response": {"status": 200, "body": 7}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/body"}
+            title: "Malformed request"
+      body_regex: 'body must be a string'
+
+  # `base64Body` is named in the same row and carries the same rule, so it is
+  # here for the same reason: the field holds encoded text, and a number is not
+  # encoded text however plausibly it could be turned into some.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000006",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/encoded"},
+         "response": {"status": 200, "base64Body": 7}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/base64Body"}
+            title: "Malformed request"
+      body_regex: 'base64Body must be a string'
+
+  # Three of the response's fields wrong at once, which is the shape a generator
+  # produces rather than the shape a hand-written slip takes. The refusal
+  # collects them (Appendix B: collect, do not fail fast) and reports them in
+  # the order the response definition is read, so one round trip is enough to
+  # fix the file — a validator that stopped at `status` would send the author
+  # back three times for a document with three problems.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000007",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/generated"},
+         "response": {"status": "200", "body": 7, "fixedDelayMilliseconds": -5}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/response/status"}
+            title: "Malformed request"
+          - code: 10
+            source: {pointer: "/response/body"}
+            title: "Malformed request"
+          - code: 10
+            source: {pointer: "/response/fixedDelayMilliseconds"}
+            title: "Malformed request"
+
+  # None of the seven ids names anything, which is what makes the 422 a decision
+  # rather than a remark. A validator that wrote the document first and reported
+  # afterwards would answer these reads with a stub, and the coercion it refused
+  # in the message would be live on the serving path.
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000002}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000003}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000004}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000005}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000006}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000007}
+    expect: {status: 404}
+
+  # And the half a caller can observe: nothing the refused documents described
+  # is being served.
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-coercion-refused-001/slow}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-coercion-refused-001/code}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-coercion-refused-001/scalar}
+    expect: {status: 404}
+
+  # The control the seven refusals need, and without which the case would pass
+  # on a build that refused every registration it was shown. The same three
+  # fields, in the spellings the response definition is defined to take — an
+  # integer status, a string body, a non-negative whole delay — register, and
+  # the echo reads back the values that were written.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000008",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/well-spelled"},
+         "response": {"status": 201, "body": "7", "fixedDelayMilliseconds": 25}}
+    expect:
+      status: 201
+      body_json_subset:
+        id: "d0000036-0000-4000-8000-000000000008"
+        response: {status: 201, body: "7", fixedDelayMilliseconds: 25}
+
+  # Served as written, which is the whole point of the family: the status is the
+  # code the author typed and the body is the string they typed, not a rendering
+  # of some other value that happens to print the same way.
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-coercion-refused-001/well-spelled}
+    expect: {status: 201, body: "7"}
+
+  # `base64Body` needs a stub of its own because the body forms are mutually
+  # exclusive, and it earns one: the payload the refused document tried to write
+  # as a number registers as encoded text and decodes to the byte it always
+  # meant.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000009",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-coercion-refused-001/well-encoded"},
+         "response": {"status": 200, "base64Body": "Nw=="}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-coercion-refused-001/well-encoded}
+    expect: {status: 200, body: "7"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/d0000036-0000-4000-8000-000000000008}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/d0000036-0000-4000-8000-000000000009}
+    expect: {status: 200}

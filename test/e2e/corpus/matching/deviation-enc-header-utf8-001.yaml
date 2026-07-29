@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-enc-header-utf8-001
+behaviors: [B-DEV-DEVIATION-37, B-MATCH-EQUALTO-CASEINSENSITIVE, B-MATCH-MATCHES-DOESNOTMATCH, B-REQ-HEADERS, B-RESP-HEADERS]
+# Deviation #37. A header field value is a run of bytes and nothing on the wire
+# says how to read them: a header has no charset parameter the way a body does
+# (SPEC §5.2, `Content-Type`). mockulus reads and writes those bytes as UTF-8,
+# which is the reading a Go-native server gives them; Jetty renders them as
+# ISO-8859-1, which is the reading the older HTTP specification gave them.
+# Neither is wrong, and the consequence is a clean mirror: a criterion whose
+# operand carries a character outside US-ASCII matches here exactly the field
+# value WireMock refuses, and refuses exactly the one WireMock matches. The same
+# split runs the other way on a response header.
+#
+# `wm: n/a`, because there is no oracle to diff a disagreement-by-design
+# against. What the case is for is drift: it fails if mockulus ever starts
+# transcoding a header value, in either direction.
+#
+# Only one half of the mirror is pinned below, and the limit is the runner's
+# rather than mockulus's. A step's `headers` map is YAML, so its values are
+# text, and every value a case file can carry is by construction valid UTF-8.
+# The ISO-8859-1 half needs a field value that is the single byte 0xE9 — not a
+# UTF-8 string, not writable in YAML at all — so the step that would send it
+# cannot be spelled. Pinning it would need a step schema carrying raw bytes, and
+# inventing one to assert a 404 is not worth the surface. What is expressible is
+# here: the UTF-8 request the two servers answer oppositely, and the UTF-8 bytes
+# mockulus puts on the wire on the way out.
+#
+# Non-ASCII characters are written as escapes throughout, so the case says which
+# code points it means rather than trusting a font and an editor to agree:
+# U+00E9 is the accented e of "cafe" and U+20AC is the euro sign.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0001-4000-8000-000000000001",
+         "name": "a header criterion whose operand is not US-ASCII",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-enc-header-utf8-001/order",
+                     "headers": {"X-Caf": {"equalTo": "caf\u00e9"}}},
+         "response": {"status": 200, "body": "order",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Caf": "caf\u00e9",
+                                  "X-Caf-Price": "20\u20ac"}}}
+    expect: {status: 201}
+
+  # The operand is decoded from the mapping document as UTF-8 on both servers,
+  # because JSON says so; the disagreement is entirely about the field value it
+  # is compared against. This request carries U+00E9 as its UTF-8 encoding, the
+  # bytes C3 A9, and mockulus reads those two bytes back as the one character
+  # the operand holds, so the criterion is satisfied. Jetty reads them as two
+  # ISO-8859-1 characters and answers 404 to this same request.
+  - request:
+      method: GET
+      path: /e2e/deviation-enc-header-utf8-001/order
+      headers: {X-Caf: "caf\u00e9"}
+    expect:
+      status: 200
+      body: "order"
+      # And the response side of the same choice. `X-Caf` goes back out as the
+      # bytes 63 61 66 C3 A9; WireMock writes 63 61 66 E9 for the identical
+      # registered value. Go's client hands a field value over as the bytes it
+      # read, so this assertion is a byte comparison wearing a string: a build
+      # that transcoded the header to ISO-8859-1 on the way out would put one
+      # byte here where the case wants two, and fail.
+      headers:
+        X-Caf: "caf\u00e9"
+        # The euro sign sharpens the outgoing half past "different bytes for the
+        # same character". U+20AC has no ISO-8859-1 encoding at all, so this is
+        # a header value mockulus can put on the wire and Jetty cannot — the
+        # cost of adopting WireMock's encoding would be losing the ability to
+        # express it, which is the argument the deviation rests on.
+        X-Caf-Price: "20\u20ac"
+
+  # Reading a field value as UTF-8 is not the same as being lenient about it.
+  # The ASCII transliteration is a different string and stays one, which is what
+  # separates this deviation from an accent-folding comparison.
+  - request:
+      method: GET
+      path: /e2e/deviation-enc-header-utf8-001/order
+      headers: {X-Caf: "cafe"}
+    expect: {status: 404}
+
+  # The deviation is a property of the field value, not of one matcher, so a
+  # second header-valued criterion with a non-ASCII operand says the decoding
+  # happens once for the header rather than inside `equalTo`. A regex is the
+  # right second witness because it is the matcher most likely to grow a
+  # decoding step of its own.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0001-4000-8000-000000000002",
+         "name": "a header regex whose pattern is not US-ASCII",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-enc-header-utf8-001/receipt",
+                     "headers": {"X-Caf": {"matches": "caf\u00e9-[0-9]+"}}},
+         "response": {"status": 200, "body": "receipt",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-enc-header-utf8-001/receipt
+      headers: {X-Caf: "caf\u00e9-12"}
+    expect: {status: 200, body: "receipt"}
+
+  # The pattern's one non-ASCII character still has to be there. A field value
+  # satisfying every other part of the pattern is refused on that character
+  # alone, so this step fails if the comparison ever started matching the
+  # character loosely rather than matching its bytes.
+  - request:
+      method: GET
+      path: /e2e/deviation-enc-header-utf8-001/receipt
+      headers: {X-Caf: "cafe-12"}
+    expect: {status: 404}
