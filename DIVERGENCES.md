@@ -35,10 +35,11 @@ and what the recommended option costs. S is under a day, M a few days, L a week
 or more.
 
 **32 fix · 21 accept · 1 unverifiable**, of which **24 block v1**.
-**Ten are resolved** — T1, T8, J8, M1, M6, R8, R9 and R14 fixed; Q1 and R15
-numbered as deviations #29 and #30. Seven of the ten were in the blocking set,
-which leaves **17 blocking items**: 8 under a day, 5 a few days, 3 a week or
-more.
+
+**48 of the 54 are resolved, and every blocking item is closed** — 25 fixed in
+code, 23 numbered as SPEC §5.5 deviations #29–#47. What is left is six
+non-blocking entries: A1, M5, R2, T13 and T14, each carrying its verdict below,
+and J10, which has no oracle because WireMock itself throws.
 
 The test that decided most of these is not "does WireMock differ" — it is
 whether **this spec already commits to an answer**. A dialect gap where §6.7
@@ -181,6 +182,8 @@ raw on both and already agrees.
 
 **Triage: FIX** · **v1-blocking** — the registry is already consulted at compile time and P2/§16.3 keep lookups off the render path.
 
+**Resolved 2026-07-29.** Fixed — a no-argument helper is bound at compile time.
+
 ```
 stub body  rv=[{{randomValue}}] now=[{{now}}]
 WireMock   rv=[kehljm1bcx3af0wfzyzocoi51m1ql5id2m7e] now=[2026-07-28T11:57:36Z]
@@ -195,6 +198,8 @@ nothing — no 422 at registration, no error at serve time.
 ### T3 [S1] — `../` parent-scope navigation renders empty, and 500s when nested
 
 **Triage: FIX** · **v1-blocking** · cost S — B produces a plausible wrong answer in the one case `../` exists to express.
+
+**Resolved 2026-07-29.** Fixed — `../` is a real path segment and walks outward.
 
 ```
 body     parent=[{{#each (jsonPath request.body '$.xs')}}{{../request.method}}{{/each}}]
@@ -211,6 +216,8 @@ way to write a repeated block.
 
 **Triage: FIX** · **v1-blocking** · cost S/M — the values are already in the model and only their shape hides them; B changes three pinned behaviours to fix one.
 
+**Resolved 2026-07-29.** Fixed — a multi-value entry has a list nature, so `#each` walks it.
+
 ```
 request  ?tag=red&tag=blue, X-Multi: m0 and X-Multi: m1
 body     each-q=[{{#each request.query.tag}}{{this}};{{/each}}]
@@ -226,12 +233,16 @@ walk. Indexed access `.[0]` / `.[1]` works and agrees; only iteration is lost.
 
 **Triage: FIX** · **v1-blocking** · cost S — one interface answers `each`, `size` and `join` together.
 
+**Resolved 2026-07-29.** Fixed — `size` counts values.
+
 `{{size request.query.tier}}` over `?tier=go-ld` gives WireMock `1` (the number
 of values) and mockulus `5` (the length of the string). Same root cause as T4.
 
 ### T6 [S1] — `jsonPath` selecting a non-scalar node renders Go's `fmt` output
 
 **Triage: FIX** · **v1-blocking** · cost S — it removes the Go internals and reaches parity on the array case, which is the one stubs actually hit; the residual is object whitespace and can take a one-line §5.5….
+
+**Resolved 2026-07-29.** Fixed — a selected array renders as JSON (objects recorded, not matched).
 
 ```
 request body {"xs":[10,20,30],"who":{"name":"ada","city":"london"}}
@@ -245,6 +256,8 @@ and wildcard-with-`#each` all agree.
 ### T7 [S2] — `now` offsets in months and years use fixed 30- and 365-day arithmetic
 
 **Triage: FIX** · **v1-blocking** · cost S/M — the wrongness is invisible (a valid-looking date) and B makes it permanent.
+
+**Resolved 2026-07-29.** Fixed — month and year offsets use calendar arithmetic.
 
 On 2026-07-28, `offset='1 months'` gives WireMock `2026-08-28` and mockulus
 `2026-08-27`; `offset='2 years'` gives `2028-07-28` against `2028-07-27`. Cause:
@@ -264,6 +277,8 @@ special-cases UTC and the Go layout `-07:00` cannot. Non-zero offsets agree.
 
 **Triage: ACCEPT** · cost S — nothing fails silently here — the answer is visibly a number — and B adopts an astonishing rounding rule permanently.
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #45.
+
 ```
 {{math 1 '/' 3}}   WireMock 0      mockulus 0.3333333333333333
 {{math 10 '/' 4}}  WireMock 3      mockulus 2.5
@@ -277,6 +292,8 @@ WireMock rounds half-up rather than truncating. `{{math 5 '%' 2.5}}` renders
 
 **Triage: ACCEPT** — `base64Body`'s purpose is opaque bytes, WireMock's behaviour is the safer default for the literal-`{{` hazard, and it costs a spec sentence instead of a permanent….
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #46.
+
 A `base64Body` decoding to `tier={{request.query.tier}}` renders `tier=gold`
 here and stays literal there. mockulus is following its own SPEC §10.1 ("after
 file/base64 resolution"), so this is spec-versus-oracle rather than a slip — but
@@ -286,12 +303,16 @@ file/base64 resolution"), so this is spec-versus-oracle rather than a slip — b
 
 **Triage: ACCEPT** · cost S — reproducing another runtime's `toString` is not compatibility, and §10.3's "standard Handlebars" already says which answer we chose.
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #39.
+
 WireMock renders the whole map's `toString` (`lk={tier=gold}`); mockulus renders
 nothing. mockulus is arguably the better answer.
 
 ### T12 [S3] — `{{substring request.body 0 4}}` on an empty body
 
 **Triage: ACCEPT** · cost S — WireMock's own `size` disagrees with its own `substring` on the same request, which is a defect rather than a semantic.
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #39.
 
 WireMock renders `0`, mockulus renders the empty string.
 
@@ -318,6 +339,8 @@ UUID. An extension, and undiffable either way.
 
 **Triage: FIX** · **v1-blocking** · cost S — it is the only option that both produces a well-framed message and makes the client-observable body identical to WireMock's (3 bytes), which is what lets the….
 
+**Resolved 2026-07-29.** Fixed — the declared Content-Length no longer truncates the body.
+
 ```
 stub     response {"status":200,"body":"abcdefgh","headers":{"Content-Length":"3"}}
 WireMock Content-Length: 3, then all eight bytes
@@ -339,12 +362,16 @@ WireMock (one header, neither value verbatim) and
 
 **Triage: ACCEPT** · cost S — there is no correct answer on the wire, Go's choice is the one a Go-native server makes, and B would make mockulus *unable* to express a header WireMock also cannot….
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #37.
+
 `"X-Caf":"café"` is sent as ISO-8859-1 (`caf` + `0xE9`) by WireMock and as UTF-8
 (`caf` + `0xC3 0xA9`) here. Same root cause as M2 below, on the response side.
 
 ### R4 [S2] — a negative `fixedDelayMilliseconds`
 
 **Triage: ACCEPT** · cost S — a negative duration is a bug in the caller and this is the cheap place to say so, and one shared entry covers R4+R5 for the price of one.
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #36.
 
 `-5` is accepted by WireMock and refused here 422 code 10
 (`fixedDelayMilliseconds must not be negative`). Fail-loud, and defensible, but
@@ -354,17 +381,23 @@ undocumented.
 
 **Triage: ACCEPT** · cost none beyond R4 — A, and the WM-rewrites-the-document finding is the argument that makes R5 stronger than R4: refusing here is consistent with #22/#24, not merely conservative.
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #36.
+
 `10.5` is accepted there and refused here. Same shape as R4.
 
 ### R6 [S2] — a non-string `body`
 
 **Triage: FIX** · cost S — the coercion is total and information-preserving — after it, the two servers agree byte for byte — so refusing costs D2 and buys nothing P3 was written to protect.
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #36.
+
 `"body":7` is coerced to `7` by WireMock and refused here 422.
 
 ### R7 [S2] — a `status` given as a string
 
 **Triage: FIX** · cost S — this is the single most likely of the family to appear in a real mappings file (any JS/shell generator that stringifies a code produces it), the coercion is….
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #36.
 
 `"status":"200"` is coerced there and refused here 422.
 
@@ -390,12 +423,16 @@ accepted here 201, serving no such header.
 
 **Triage: ACCEPT** · cost S — it costs less than the deviation does — it is a display-only change with no behavioural content, and it removes a permanent trap for anyone authoring a `wm: verified`….
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #44.
+
 `{"X-One":["solo"]}` is echoed as `{"X-One":"solo"}` there and kept as an array
 here. Serving agrees.
 
 ### R11 [S3] — two case-variant spellings of one header name are folded by the echo
 
 **Triage: FIX** · **v1-blocking** · cost S/M — the value-order reversal is a genuine wrong answer and the token-stream parse is the fix for both halves at once; it is ~20 lines and removes the map from the one….
+
+**Resolved 2026-07-29.** Fixed — case-variant header spellings fold in the document.
 
 `{"X-DUP":"first","x-dup":"second"}` is echoed as `{"X-DUP":["first","second"]}`
 there and verbatim here. Both emit two header lines in the same order, so
@@ -405,6 +442,8 @@ serving agrees.
 
 **Triage: ACCEPT** · cost S — verbatim is the better answer for a mock (a client asserting on a payload gets the bytes the stub author wrote) and B would break two green `wm: verified` cases to….
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #38.
+
 WireMock rewrites exponent notation in plain decimal (`1e2` becomes `100`,
 `1.5e-3` becomes `0.0015`); mockulus emits the submitted text verbatim. Both
 preserve `1.0`, a 20-digit integer and an over-precise decimal byte for byte.
@@ -413,6 +452,8 @@ Structurally equal, so §5.6's comparison passes it.
 ### R13 [S3] — non-ASCII inside `jsonBody`
 
 **Triage: ACCEPT** · cost none beyond R1 — B trades a green verified case for a red one.
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #38.
 
 WireMock emits raw UTF-8 (`café ☕`); mockulus emits the `\u00e9` and `\u2615`
 escapes instead, and spells a control character `\u001f` where WireMock spells it `\u001F`. Structurally equal, so the diff passes it.
@@ -474,6 +515,8 @@ right, but not recorded next to deviation #23.
 
 **Triage: ACCEPT** · cost S — nothing on the wire declares which reading is meant, both are defensible, and B trades a divergence against a legacy client population for a divergence against the….
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #37.
+
 The two servers are exact mirror images. With an operand of `café`:
 
 ```
@@ -492,6 +535,8 @@ outside US-ASCII, on any header-valued matcher.
 
 **Triage: FIX** · **v1-blocking** · cost S/M — ISO-8859-1 is the only legacy charset that shows up in practice and it decodes in three lines, which makes the fix cheaper than the deviation.
 
+**Resolved 2026-07-29.** Fixed — a declared body charset is honoured.
+
 With `Content-Type: text/plain; charset=ISO-8859-1` and an operand of `café`,
 the two servers are again mirror images: WireMock decodes the body using the
 declared charset before applying the matcher, mockulus compares the raw bytes as
@@ -501,6 +546,8 @@ parameter being read by one side and not the other.
 ### M4 [S2] — `caseInsensitive` disagrees on the Turkish dotted and dotless I
 
 **Triage: ACCEPT** — B if the supplementary-plane over-match confirms against the container (one probe), A otherwise — because A alone means numbering a deviation that says "we match….
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #43.
 
 An operand of `İstanbul` (U+0130) with `caseInsensitive` matches `istanbul` and
 `ISTANBUL` on WireMock and neither here; the mirror holds for `ırmak` (U+0131).
@@ -535,6 +582,8 @@ embedded whitespace is refused by both.
 
 **Triage: FIX** · **v1-blocking** · cost M — it is the only option that makes the code say what §5.2 already says, and I checked it keeps all three delivered number cases green….
 
+**Resolved 2026-07-29.** Fixed — JSON numbers compare by decimal value, not float64.
+
 ```
 stub     bodyPatterns [{"equalToJson":"{\"id\":9007199254740993}"}]
 request  body {"id":9007199254740992}
@@ -551,6 +600,8 @@ neighbour.
 
 **Triage: ACCEPT** · cost S — reading a prefix of a body and calling it the body is a worse product than a visible non-match, and the leniency is Jackson's default leaking through rather than….
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #35.
+
 Body `{"a":1} tail` matches on WireMock and not here, consistent with Jackson
 stopping at the first complete value while Go rejects trailing bytes. Trailing
 *whitespace* agrees.
@@ -558,6 +609,8 @@ stopping at the first complete value while Go rejects trailing bytes. Trailing
 ### J3 [S2] — single-quoted member names in the request body
 
 **Triage: ACCEPT** · cost S — the accepted set is an accident of Jackson's defaults rather than a WireMock contract, and the corpus already pins two cells where mockulus's strictness *is*….
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #35.
 
 Body `{'a':1}` matches on WireMock and not here. Scoped: the unquoted form
 `{a:1}` is refused by both, so the leniency is single quotes specifically
@@ -571,6 +624,8 @@ Body `{'a':1}` matches on WireMock and not here. Scoped: the unquoted form
 
 **Triage: FIX** · **v1-blocking** · cost S — §6.7 names `length()` in the dialect, so B satisfies P3 while still failing the sentence that lists the feature.
 
+**Resolved 2026-07-29.** Fixed — `length()` no longer compiles to a member name.
+
 `$.xs.length()` is accepted 201 by both servers; over body `{"xs":[1,2]}`
 WireMock matches and mockulus does not, because `readName` reads `length()` as a
 bare member name. This is the failure mode SPEC §6.7 explicitly forbids —
@@ -581,6 +636,8 @@ both a missing feature and a fail-quiet.
 
 **Triage: FIX** · **v1-blocking** · cost S/M — the spec commits to unions and B pays most of the parser cost while leaving a documented dialect member missing.
 
+**Resolved 2026-07-29.** Fixed — index unions work, in both the numeric and quoted spellings.
+
 `$.items[0,2]` is accepted there and 422 here; `parseBracket` in
 `internal/jsonpath/jsonpath.go` has no union branch. SPEC §6.7 lists unions in
 the committed dialect.
@@ -588,6 +645,8 @@ the committed dialect.
 ### J6 [S1] — decimals lose their fraction on the way to the inner matcher
 
 **Triage: FIX** · **v1-blocking** · cost M — §6.7 spells out `5.0` becomes `"5.0"`, so anything less means amending the spec rather than recording a deviation, and B splits the routes.
+
+**Resolved 2026-07-29.** Fixed — a selected number keeps its text.
 
 `{"matchesJsonPath":{"expression":"$.total","equalTo":"5.0"}}` over body
 `{"total":5.0}` matches there and not here, because mockulus decodes to float64
@@ -598,6 +657,8 @@ becomes "5.0")". Integers agree.
 ### J7 [S2] — a definite path selecting an array node quantifies differently
 
 **Triage: ACCEPT** · cost S — the definite/indefinite model is §6.7's stated design and B trades the coherence of the whole dialect for one spelling — though this is the closest call in the section.
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #42.
 
 `{"expression":"$.tags","equalTo":"red"}` over `{"tags":["red"]}` matches there
 and not here. WireMock cannot distinguish "definite path selecting an array"
@@ -618,6 +679,8 @@ emptiness rule the bare form uses.
 ### J9 [S2] — WireMock's parser accepts input `encoding/json` rejects
 
 **Triage: ACCEPT** · cost S — reproducing two Java parsers' leniency means shipping a second JSON grammar for a class of body no correct client sends.
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #35.
 
 A bare `plain text` body under `$` parses there as a JSON string and matches;
 `{"a":1} junk` under `$.a` matches there. Both 404 here. Same permissive-parser
@@ -640,6 +703,8 @@ too, so it is not specific to `equalTo`. mockulus answers 404, which is what
 
 **Triage: FIX** · **v1-blocking** · cost S — mockulus already treats the marker as "no query" everywhere else it is pinned, so keeping it only in `url`/`urlPattern` is an inconsistency inside mockulus, not a….
 
+**Resolved 2026-07-29.** Fixed — an empty query string leaves the match subject.
+
 ```
 target             WireMock          mockulus
 GET /probe/u?      200 (url:/probe/u) 404
@@ -657,6 +722,8 @@ carries one, and a criterion written with one is dead there and live here.
 ### U2 [S2] — two URL criteria on one stub
 
 **Triage: ACCEPT** · cost S — refusing a document whose two criteria cannot both be honoured is the established house rule, and the fix costs one paragraph.
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #47.
 
 mockulus refuses 422 ("only one URL criterion may be given"); WireMock's
 `UrlPattern.fromOneOf` silently keeps the first and discards the rest.
@@ -683,6 +750,8 @@ but it is a real difference on the wire. The header analogue reproduces it.
 
 **Triage: FIX** · **v1-blocking** · cost S — the WM-correct splitter is already in the tree, and one helper removes the data loss, the false `absent` match and the internal disagreement at once.
 
+**Resolved 2026-07-29.** Fixed — a semicolon no longer drops the parameter.
+
 `?a=1;b=2` against `{"a":{"equalTo":"1;b=2"}}` is 200 on WireMock and 404 here.
 WireMock splits on `&` only, so the semicolon is an ordinary character in the
 value; Go's `url.ParseQuery` has rejected semicolons since 1.17 and **drops the
@@ -708,6 +777,8 @@ different case, and the two answer it with different status classes.
 
 **Triage: FIX** · **v1-blocking** · cost S — it makes one rule decide what an id is on both the write and the read path, and it is the same helper A1 needs.
 
+**Resolved 2026-07-29.** Fixed — the path id is parsed, not compared as text.
+
 A stub registered as `a1000008-00ff-…` is found by
 `GET /__admin/mappings/A1000008-00FF-…` on WireMock and 404s here, for GET, PUT
 and DELETE alike. SPEC §5.2 says the id is parsed case-insensitively and
@@ -717,6 +788,8 @@ the path segment as text.
 ### A3 [S2] — precedence inside one import payload is reversed
 
 **Triage: FIX** · **v1-blocking** · cost M — the intra-batch order is unspecified rather than deliberate, and an unspecified difference that silently changes which stub answers is precisely what the….
+
+**Resolved 2026-07-29.** Fixed — an import payload applies back to front.
 
 Two equal-priority stubs competing for one path, in one `import` payload: the
 **first** element wins on WireMock and the **last** wins here, because WireMock
@@ -730,6 +803,8 @@ the same batch — which is what a fixture file of overlapping stubs looks like.
 
 **Triage: ACCEPT** · cost S — mockulus's answer is the one the spec states and the one a reader of the payload expects, and the behaviour being copied is an uninitialised field.
 
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #40.
+
 Resolves as IGNORE on WireMock (a null policy is not OVERWRITE) and as the
 documented default OVERWRITE here. When the whole `importOptions` object is
 omitted both agree on OVERWRITE. Distinct from deviation #21, which records the
@@ -738,6 +813,8 @@ mirror case.
 ### A5 [S3] — a stub registered with no `response` key
 
 **Triage: ACCEPT** · cost S — §7.2 already commits to verbatim round-trip, and B would have to unwind that plus every document stored under it.
+
+**Resolved 2026-07-29.** Accepted — numbered SPEC §5.5 deviation #41.
 
 WireMock fills in `"response":{"status":200}` in its echo and read-back;
 mockulus omits the member entirely. Serving agrees (both answer 200 with an
