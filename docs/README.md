@@ -27,7 +27,7 @@ three in the morning.
 | **[Compatibility matrix](compatibility.md)** | Every catalogued behavior: supported or not, and which test proves it. Generated from the behavior catalog and the corpus, so it cannot claim what the gate does not enforce. |
 | **[Deviations](deviations.md)** | The places mockulus deliberately answers differently, grouped by what you would be doing when you hit one. |
 | **[Configuration](configuration.md)** | Every key, where it can come from, and which ones you actually touch. |
-| **[Operations](operations.md)** | Deployment shapes, Couchbase, probes, graceful drain, degraded modes, and the metrics worth alerting on. |
+| **[Operations](operations.md)** | Deployment shapes, Couchbase, probes, graceful drain, degraded modes, tracing, and the metrics worth alerting on. |
 
 ## Deeper
 

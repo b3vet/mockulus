@@ -51,6 +51,28 @@ helm install mockulus deploy/chart \
   --set adminAuth.existingSecret=mockulus-admin-token
 ```
 
+## Tracing
+
+Off by default (SPEC §14.3), and off it costs a served request one atomic load,
+so the performance targets are the ones measured without it. Point it at a
+collector to turn it on:
+
+```sh
+helm upgrade --install mockulus deploy/chart \
+  --set tracing.enabled=true \
+  --set tracing.endpoint=otel-collector.observability.svc:4318
+```
+
+The endpoint is `host:port` with no scheme — `tracing.insecure` decides that,
+and defaults to cleartext for the in-cluster collector that is the usual case.
+Enabling tracing without an endpoint fails at render rather than at rollout.
+
+A hosted backend's ingestion token goes in `tracing.headers` and is a
+credential, so it is delivered by Secret and `secretKeyRef` rather than as a
+literal in the pod spec. Prefer `tracing.existingSecret`: a token passed as a
+value is a token in the release history, the same objection the section above
+raises about `adminAuth.token`.
+
 ## Isolation between teams
 
 One deployment is one namespace for stubs, scenarios and the journal. Teams

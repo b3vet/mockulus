@@ -135,15 +135,15 @@ what makes the Evidence column worth reading.
 | WireMock surface — supported with a documented deviation | 7 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 9 |
 | Deliberate deviations from WireMock | 48 |
-| Catalogued behaviors in total | 213 |
+| Catalogued behaviors in total | 220 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 3 |
 | E2E corpus cases | 537 |
 | … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 353 |
 | … `wm: n/a` — expectations from the spec | 184 |
-| Go-native cases (raw socket, process lifecycle) | 16 |
+| Go-native cases (raw socket, process lifecycle) | 25 |
 
-Milestone cursor `M6`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
+Milestone cursor `M7`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
 verified cases as a v1.0 release criterion.
 
 Every catalogued behavior is bound by at least one case. The E2E gate fails when that stops being true (SPEC §19.2).
@@ -549,7 +549,7 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 
 ### Configuration keys
 
-[SPEC §13](../SPEC.md#13-configuration-reference) · 37 behaviors
+[SPEC §13](../SPEC.md#13-configuration-reference) · 43 behaviors
 
 Precedence is env var > YAML file > default; the env spelling is `MOCKULUS_` plus the key in upper snake case.
 
@@ -592,6 +592,12 @@ Precedence is env var > YAML file > default; the env spelling is `MOCKULUS_` plu
 | `log.requests` | `false` | 1 · n/a | `B-CFG-LOG-REQUESTS` | Per-request access logs (hot path — keep off under load) |
 | `log.request_sample_n` | `100` | 1 · n/a | `B-CFG-LOG-REQUEST-SAMPLE-N` | With `log.requests`, log every Nth request |
 | `metrics_enabled` | `true` | 2 · n/a | `B-CFG-METRICS-ENABLED` | — |
+| `tracing.enabled` | `false` | 2 · n/a (2 Go-native) | `B-CFG-TRACING-ENABLED` | Export OpenTelemetry traces (off by default; §14.3) |
+| `tracing.endpoint` | — | 3 · n/a (3 Go-native) | `B-CFG-TRACING-ENDPOINT` | OTLP/HTTP collector as `host:port` (e.g. `otel-collector:4318`); required when enabled |
+| `tracing.insecure` | `false` | 2 · n/a (2 Go-native) | `B-CFG-TRACING-INSECURE` | Send over plain HTTP rather than HTTPS |
+| `tracing.headers` | — | 1 · n/a (1 Go-native) | `B-CFG-TRACING-HEADERS` | Exporter headers as `k=v,k=v` (e.g. an ingestion token) |
+| `tracing.sample_ratio` | `0.1` | 2 · n/a (2 Go-native) | `B-CFG-TRACING-SAMPLE-RATIO` | Sampling ratio for traces this pod starts itself (0–1); a caller's decision always wins |
+| `tracing.service_name` | `mockulus` | 1 · n/a (1 Go-native) | `B-CFG-TRACING-SERVICE-NAME` | `service.name` reported on exported spans |
 
 Rows marked ○ have no distinct observable of their own — a tuning knob whose
 effect is asserted through the behavior it protects. The exemption is reviewed, not
@@ -603,7 +609,7 @@ automatic:
 
 ### Metrics
 
-[SPEC §14.1](../SPEC.md#141-metrics-prometheus-metrics-on-admin-port) · 21 behaviors
+[SPEC §14.1](../SPEC.md#141-metrics-prometheus-metrics-on-admin-port) · 22 behaviors
 
 Prometheus exposition on the admin port's `/metrics`. Low-cardinality by design: no per-stub labels, so a 10k-stub deployment does not mint 10k series. The Type column reproduces what the spec's collector block states, and that block names a type only where it declares one collector per line — `/metrics` itself carries a `# TYPE` line for every series either way.
 
@@ -630,6 +636,7 @@ Prometheus exposition on the admin port's `/metrics`. Low-cardinality by design:
 | `mockulus_template_render_errors_total` | — | — | 9 · n/a (1 Go-native) | `B-METRIC-TEMPLATE-RENDER-ERRORS-TOTAL` |
 | `mockulus_regex_timeouts_total` | — | — | 1 · n/a | `B-METRIC-REGEX-TIMEOUTS-TOTAL` |
 | `mockulus_match_candidates` | — | `histogram` | 1 · n/a | `B-METRIC-MATCH-CANDIDATES` |
+| `mockulus_trace_export_failures_total` | — | `counter` | 1 · n/a (1 Go-native) | `B-METRIC-TRACE-EXPORT-FAILURES-TOTAL` |
 
 ## Behaviors stated in prose
 

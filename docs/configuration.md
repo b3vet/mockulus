@@ -134,13 +134,14 @@ be that deployment.
 
 ## Secrets
 
-Two keys hold secrets: `admin_auth_token` and `couchbase.password`. Both accept a
-`_FILE` variant of their environment variable, whose value is a **path** whose
-contents are the value:
+Three keys hold secrets: `admin_auth_token`, `couchbase.password` and
+`tracing.headers`. All three accept a `_FILE` variant of their environment
+variable, whose value is a **path** whose contents are the value:
 
 ```sh
 MOCKULUS_ADMIN_AUTH_TOKEN_FILE=/var/run/secrets/mockulus/token
 MOCKULUS_COUCHBASE_PASSWORD_FILE=/var/run/secrets/couchbase/password
+MOCKULUS_TRACING_HEADERS_FILE=/var/run/secrets/otel/headers
 ```
 
 This is for secrets that arrive as a mounted file — a Secret volume, a CSI
@@ -149,7 +150,7 @@ trailing newline is stripped, so a file written by `echo` works. The `_FILE`
 form is consulted only when the plain variable is unset; setting both is not an
 error; the plain one wins.
 
-`_FILE` exists **only** for those two keys. `MOCKULUS_COUCHBASE_USERNAME_FILE`
+`_FILE` exists **only** for those three keys. `MOCKULUS_COUCHBASE_USERNAME_FILE`
 is not a thing, and setting it does nothing at all — it is not a key, so nothing
 reads it and nothing complains.
 
@@ -219,11 +220,11 @@ What validation covers:
   `log.level`, `log.format` — must name one of their values, and the message
   lists the values.
 - **Coherence** — `store: couchbase` requires `couchbase.connstr`; `store: file`
-  requires `file.root`.
-- **Bounds** — `sync_interval` has a 100 ms floor; durations and counts that
-  must be positive are checked to be; sizes that may be zero-to-disable
-  (`max_body_bytes`, `ephemeral_stub_ttl`, `journal_max_body`) are checked only
-  for negativity.
+  requires `file.root`; `tracing.enabled` requires `tracing.endpoint`.
+- **Bounds** — `sync_interval` has a 100 ms floor; `tracing.sample_ratio` must
+  be between 0 and 1; durations and counts that must be positive are checked to
+  be; sizes that may be zero-to-disable (`max_body_bytes`, `ephemeral_stub_ttl`,
+  `journal_max_body`) are checked only for negativity.
 - **The TLS key pair**, which is loaded from disk here rather than at the first
   handshake.
 
@@ -717,6 +718,219 @@ $ curl -s -w '\n%{http_code}\n' localhost:9090/metrics
 
 There is rarely a reason to turn it off. The metric names are listed in
 [SPEC §14.1](../SPEC.md#141-metrics-prometheus-metrics-on-admin-port).
+
+---
+
+## Tracing
+
+`tracing.enabled` defaults to **`false`**, and that default is doing more than an
+ordinary off switch does. Off, a served request loads one atomic pointer, finds
+it nil, and takes the path it took before this feature existed: no span is
+started, no request context is replaced, and nothing in the OpenTelemetry SDK is
+constructed at all. It is the same shape the journal uses for the same reason,
+and it is why the SLOs of
+[§16.1](../SPEC.md#161-slos-release-criteria-for-v10-measured-on-the-reference-rig)
+are stated for the default configuration. A deployment that turns tracing on is
+choosing a different trade, on purpose.
+
+Turn it on when the question you have is where the mock sits inside something
+larger: which stub answered a call three services deep, whether anything matched
+at all, how much of a slow request was the mock and how much was everything
+around it. Leave it off for load tests, and for any deployment whose mock traffic
+nobody is going to look at afterwards.
+
+```yaml
+tracing:
+  enabled: true
+  endpoint: otel-collector:4318
+  insecure: true           # an in-cluster collector on a cleartext port
+  sample_ratio: 0.1
+  service_name: mockulus
+```
+
+The contract behind these keys is [§14.3](../SPEC.md#143-profiling--tracing);
+what follows is what each one buys.
+
+**`tracing.endpoint`** names the collector as `host:port`, and it is required
+whenever tracing is on. It is deliberately not a URL. The transport is OTLP over
+HTTP and the request path is fixed, so the only thing a URL would add is the
+scheme — and `tracing.insecure` already decides that. An endpoint carrying one
+anyway is a startup failure rather than a value quietly reinterpreted, because
+two ways of saying the same thing are two things that can disagree:
+
+```console
+$ MOCKULUS_TRACING_ENABLED=true MOCKULUS_TRACING_ENDPOINT=http://otel-collector:4318 mockulus
+mockulus: invalid configuration:
+  - tracing.endpoint: "http://otel-collector:4318" must be host:port without a scheme; use tracing.insecure to choose http over https
+```
+
+Turning tracing on without naming a collector fails the same way, and the message
+names the key you left out:
+
+```console
+$ MOCKULUS_TRACING_ENABLED=true mockulus
+mockulus: invalid configuration:
+  - tracing.endpoint: required when tracing.enabled is set
+```
+
+**`tracing.insecure`** (`false`) sends over plain HTTP instead of HTTPS. The
+default is the safe one because that is the one you should have to opt out of —
+but an OpenTelemetry Collector sitting in the same cluster, listening on `4318`,
+is almost always cleartext, so `true` is the ordinary in-cluster value. Leave it
+`false` for a collector outside the cluster, or one reached over any hop you do
+not control end to end.
+
+**`tracing.headers`** carries whatever the collector wants alongside the export
+— typically an ingestion token for a hosted backend — as comma-separated pairs:
+
+```sh
+MOCKULUS_TRACING_HEADERS='x-api-key=abc123,x-tenant=payments'
+```
+
+The spelling is the one `OTEL_EXPORTER_OTLP_HEADERS` uses, so a value copied out
+of another deployment's environment means the same thing here. It is a secret
+key in the sense of the section above: it accepts the
+`MOCKULUS_TRACING_HEADERS_FILE` form for a mounted secret, and it prints as
+`[redacted]` in the startup dump.
+
+```console
+time=2026-07-29T18:02:38.107+03:00 level=DEBUG msg=config setting="tracing.endpoint=otel-collector:4318"
+time=2026-07-29T18:02:38.107+03:00 level=DEBUG msg=config setting="tracing.insecure=true"
+time=2026-07-29T18:02:38.107+03:00 level=DEBUG msg=config setting="tracing.headers=[redacted]"
+time=2026-07-29T18:02:38.107+03:00 level=DEBUG msg=config setting="tracing.sample_ratio=0.1"
+```
+
+That redaction is the reason `tracing.headers` is one string rather than a
+mapping: it is a single value the dump can hide whole, and an ingestion token is
+the one thing in this group worth stealing. A value that is not a `k=v` pair is
+refused at startup rather than silently dropped, which is what stops a header
+typo from presenting as a collector that mysteriously rejects everything:
+
+```console
+$ MOCKULUS_TRACING_ENABLED=true MOCKULUS_TRACING_ENDPOINT=otel-collector:4318 \
+    MOCKULUS_TRACING_HEADERS=oops mockulus
+mockulus: invalid configuration:
+  - tracing.headers: "oops" is not a key=value pair
+```
+
+**`tracing.sample_ratio`** (`0.1`) is the key worth understanding before you set
+it, because it governs less than its name suggests. Sampling is **parent-based**:
+a request arriving with a W3C `traceparent` follows the decision its caller
+already made, whatever the ratio says. A test whose own trace is being sampled
+therefore always gets the mock spans it caused, sitting inside its trace where
+they belong; a caller that decided against sampling never makes mockulus pay for
+spans nobody will read. The ratio applies only to the traces mockulus roots
+itself — requests that arrive with no trace context at all.
+
+That is what makes `0.1` a default rather than a compromise. The traffic you care
+about is traced because your caller said so, and the anonymous traffic — a health
+checker, a load generator, a client that does not propagate — contributes a tenth
+of itself instead of turning "we switched tracing on" into an export storm on a
+deployment serving tens of thousands of requests a second.
+
+```console
+$ # tracing on, sample_ratio: 0
+$ curl -s -o /dev/null localhost:8080/hello
+$ curl -s -o /dev/null \
+    -H 'traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' \
+    localhost:8080/hello
+```
+
+The collector receives exactly one span for those two requests: the second one,
+with trace id `4bf92f3577b34da6a3ce929d0e0e4736` and the caller's span as its
+parent. `0` is a legal and genuinely useful setting — it means "trace what my
+callers ask you to trace, and nothing else". `1` traces everything, which is the
+right value on a laptop and the wrong one under load.
+
+**`tracing.service_name`** (`mockulus`) is the `service.name` every exported span
+carries, and therefore the name your trace backend lists mockulus under. Change
+it when one cluster runs several mockulus deployments and you need them apart —
+`mockulus-payments`, `mockulus-checkout`. Two companion resource attributes are
+not configurable: `service.version` is the build's version string, and
+`service.instance.id` is the pod's name (`POD_NAME` when the environment sets it,
+the hostname otherwise, which in Kubernetes is the same thing). Between them a
+trace tells you not only that mockulus answered but which replica did.
+
+### What a span carries
+
+One server span per request, on both surfaces. Mock requests produce
+`mock <METHOD>`; admin requests produce `admin <endpoint group>` — `admin
+mappings`, `admin scenarios`, `admin mappings/reset`, the same grouping the
+`mockulus_admin_requests_total` labels use.
+
+The vocabulary is fixed on purpose, and for the same reason the metric labels of
+[SPEC §14.1](../SPEC.md#141-metrics-prometheus-metrics-on-admin-port) are: span
+names are what a trace backend groups by, so a name built from the request path
+would let a 10k-stub deployment mint 10k span names the way a per-stub label
+would mint 10k series. A method mockulus does not recognise is reported as
+`_OTHER`, with the original carried as an attribute rather than promoted into the
+name:
+
+```console
+$ curl -s -o /dev/null -X FROBNICATE localhost:8080/hello
+$ # exported as: mock _OTHER, http.request.method=_OTHER, http.request.method_original=FROBNICATE
+```
+
+The attributes on a mock span:
+
+| Attribute | Meaning |
+|---|---|
+| `http.request.method` | The method, or `_OTHER` for one outside the standard set |
+| `http.request.method_original` | The method as sent — only present when the above is `_OTHER` |
+| `url.path` | The request path |
+| `http.response.status_code` | The status served |
+| `mockulus.matched` | Whether a stub matched at all |
+| `mockulus.stub.id` | The serving stub's id — absent when nothing matched |
+| `mockulus.stub.name` | The serving stub's `name`, when it has one |
+| `mockulus.snapshot.epoch` | The snapshot this pod served from |
+
+`mockulus.matched` plus `mockulus.snapshot.epoch` is the pair that answers the
+question this feature exists for: a 404 nobody can account for is either a stub
+that was never registered or a pod that has not converged yet, and the epoch on
+the span says which.
+
+Admin spans carry `http.request.method`, `url.path`,
+`mockulus.admin.endpoint_group` and `http.response.status_code`. The span wraps
+authentication rather than sitting inside it, so a 401 is a span rather than a
+gap — an operator investigating a locked-down deployment wants to find exactly
+those requests, and a span that started after the refusal would never exist.
+
+A 5xx marks the span as an error; a 4xx does not. An unmatched request answering
+404 is mockulus working as specified, and a trace view that painted every one of
+them red would be useless in the suites that produce them by the hundred.
+
+No span name and no attribute carries a stub body or a header. That is the same
+line the logs hold ([§14.2](../SPEC.md#142-logs)) and for the same reason: teams
+put real credentials in their mocks, and a trace backend is a wider audience than
+a bucket.
+
+`/__admin` served on the mock port never produces a mock span — it is excluded
+there exactly as it is from the mock-port metrics, so `mockulus.matched` counts
+stub traffic and nothing else. It still produces its admin span.
+
+### Propagation, and the variables that are not read
+
+Mockulus propagates W3C `tracecontext` only. Baggage is deliberately not
+propagated: nothing here reads it, and a propagator that parses a header no code
+consumes is surface without a purpose.
+
+The standard `OTEL_*` environment variables — `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_TRACES_SAMPLER` and the rest — are **not read**. This will surprise anyone
+who has configured other OpenTelemetry services, so it is worth saying why: the
+`tracing.*` keys are what the generated [§13](../SPEC.md#13-configuration-reference)
+table documents, what startup validation checks, what the config dump prints and
+redacts, and what the `_FILE` form covers. A second channel into the same
+exporter would bypass all four, and a pod exporting somewhere its own
+configuration dump does not mention is a bad afternoon. One mechanism owns every
+knob.
+
+Nothing about the export is on the request path. Spans go to a batching processor
+and leave on a background exporter, so a slow or absent collector costs served
+requests nothing but the spans it dropped. Dropped batches increment
+`mockulus_trace_export_failures_total` and log their reason at most once a
+minute; [`operations.md`](operations.md) has what to do about a non-zero one. At
+shutdown the pending spans are flushed after the listeners have drained, so the
+last requests a pod served are exported rather than discarded.
 
 ---
 
