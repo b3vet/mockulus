@@ -25,10 +25,8 @@ covdata/
 /runner
 /mockulus
 
-# Internal working documents. The decision log and the differential findings are
-# deliberation rather than product: they name unreleased reasoning, half-settled
-# positions and the reproduction of every place this server disagrees with the
-# one it mirrors. SPEC.md deliberately stays tracked — the E2E gate parses it to
-# derive the behavior catalog's universe (§19.2), so a checkout without it
-# cannot run the gate at all.
+# Internal working documents: the decision log and the differential findings.
+# Deliberation rather than product — half-settled positions and the reasoning
+# behind calls that were made and unmade. Anything in them a user needs is in
+# SPEC.md or the deviation list.
 /internalDocs/
