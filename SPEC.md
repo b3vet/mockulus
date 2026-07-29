@@ -83,7 +83,7 @@ Decisions made 2026-07-22 with the project owner. Format: decision → rationale
 
 | # | Decision | Rationale | Rejected |
 |---|---|---|---|
-| D1 | **Go** (≥1.24), single static binary | Operational profile fits HPA scale-out: ~15 MB image, <100 ms cold start, ~40 MB RSS. Workload is protocol plumbing + a matching engine — Java's library advantage barely applies. Team ramp-up acceptable at this codebase size (~10–15k LOC). | GraalVM native Java (loses JIT peak throughput, reflection-config tax, Quarkus is its own learning curve); JVM Java (cold start/memory fights autoscaling); Rust (team cost, overkill) |
+| D1 | **Go** (≥1.25), single static binary | Operational profile fits HPA scale-out: a ~35 MB image, <100 ms cold start, ~40 MB RSS. Workload is protocol plumbing + a matching engine — Java's library advantage barely applies. Team ramp-up acceptable at this codebase size (~10–15k LOC). | GraalVM native Java (loses JIT peak throughput, reflection-config tax, Quarkus is its own learning curve); JVM Java (cold start/memory fights autoscaling); Rust (team cost, overkill) |
 | D2 | **Strict WireMock-subset wire compatibility**; 422 on unsupported fields; own additions (if ever) under a separate namespace | Existing suites + WireMock client libraries work unchanged; fail-loud makes the supported subset self-documenting | Own cleaner API (forces migration, loses client libs); dual API in v1 (two surfaces to maintain) |
 | D3 | **Journal opt-in, Couchbase-backed** (async batched writes, TTL); verification reads from CB so results are correct across replicas | Always-on journaling at 50k RPS = 50k writes/s — recreates WireMock's collapse. Per-pod buffers give wrong `verify()` answers behind a load balancer | Always-on per-pod ring buffer; dropping verification |
 | D4 | **Epoch polling** for stub propagation: version counter doc in CB, 1 KV get per pod per interval (default 1 s) | No extra infra, trivially robust, bounded staleness fine for test-setup semantics. DCP is a drop-in v2 upgrade behind the same interface | Couchbase DCP in v1 (heavier moving part); NATS/Redis bus (new infra dependency); no sync |
@@ -837,7 +837,7 @@ mockulus_match_candidates                                        histogram # can
 
 ### 15.1 Image
 
-Multi-stage build: `golang:1.24` builder → `gcr.io/distroless/static-debian12:nonroot`. `CGO_ENABLED=0`, `-trimpath`, version stamped via `-ldflags -X`. Runs as nonroot, read-only root FS, no shell. Target < 25 MB. Multi-arch (amd64, arm64) via buildx. `HEALTHCHECK` runs `mockulus -healthcheck`, which probes `/healthz` on the configured admin port — the base has no shell and no curl, so the binary is the only thing in the image that can make a request, and aiming a check at the mock port would read an unmatched-request 404 (§5.4) as an unhealthy pod. Kubernetes uses the probes of §15.2 instead; this is for teams running the image directly.
+Multi-stage build: `golang:1.25-bookworm` builder → `gcr.io/distroless/static-debian12:nonroot`. `CGO_ENABLED=0`, `-trimpath`, version stamped via `-ldflags -X`. Runs as nonroot, read-only root FS, no shell. Target < 40 MB — measured at 35.2 MB on arm64 with the shipping flags. The earlier 25 MB was an estimate made before the binary existed and the distroless base was chosen; it was never met and is not worth meeting by trading away either. Multi-arch (amd64, arm64) via buildx. `HEALTHCHECK` runs `mockulus -healthcheck`, which probes `/healthz` on the configured admin port — the base has no shell and no curl, so the binary is the only thing in the image that can make a request, and aiming a check at the mock port would read an unmatched-request 404 (§5.4) as an unhealthy pod. Kubernetes uses the probes of §15.2 instead; this is for teams running the image directly.
 
 ### 15.2 Probes
 
@@ -908,7 +908,7 @@ S5/S9 **timing** is asserted only here, on the reference rig; the E2E gate cover
 ## 18. Code organization
 
 ```
-module: github.com/ORG/mockulus        # org deliberately deferred until pre-release (§22.5); binary: mockulus
+module: github.com/b3vet/mockulus      # settled 2026-07-29 (§22.5); binary: mockulus
 
 cmd/mockulus/                 main: config load, wiring, lifecycle (small — all logic in internal/)
 internal/config/          typed config, env/yaml binding, docs generation
@@ -1087,7 +1087,7 @@ mockulus is an open-source project under the **Apache License 2.0** from the fir
 ### 22.2 Trademark & positioning
 
 - "WireMock" is a trademark of its owners. mockulus is **not affiliated with, endorsed by, or sponsored by** the WireMock project or WireMock Inc.; the name is used nominatively, solely to describe API compatibility. This disclaimer is mandatory in the README, any docs site, and release notes.
-- The project's own name and marks (Mockulus, mockulus) are ours; images publish under our namespace (e.g. `ghcr.io/ORG/mockulus`).
+- The project's own name and marks (Mockulus, mockulus) are ours; images publish under our namespace (`ghcr.io/b3vet/mockulus`).
 
 ### 22.3 Contribution & governance
 
@@ -1100,7 +1100,7 @@ mockulus is an open-source project under the **Apache License 2.0** from the fir
 ### 22.4 Public CI security
 
 - The PR pipeline — including the full E2E gate — needs **no secrets** and therefore runs for fork PRs on hosted runners.
-- Third-party images the gate pulls (WireMock, Couchbase, testcontainers' Ryuk reaper) are mirrored to our public registry namespace (`ghcr.io/ORG/mirror/*`) and consumed from there (testcontainers hub-prefix override) — anonymous Docker Hub pulls from shared runner IPs hit the 100-pulls/6 h limit and would 429 fork-PR CI.
+- Third-party images the gate pulls (WireMock, Couchbase, testcontainers' Ryuk reaper) are mirrored to our public registry namespace (`ghcr.io/b3vet/mirror/*`) and consumed from there (testcontainers hub-prefix override) — anonymous Docker Hub pulls from shared runner IPs hit the 100-pulls/6 h limit and would 429 fork-PR CI.
 - Self-hosted perf runners (§16.2) execute only push-to-main/nightly/maintainer-labeled runs — never fork-PR code (`pull_request_target` footguns explicitly avoided).
 - Release credentials (registry, signing) live in a protected environment, OIDC-federated, tag-triggered only.
 
@@ -1108,7 +1108,7 @@ mockulus is an open-source project under the **Apache License 2.0** from the fir
 
 - **SemVer**: `v0.<milestone>.x` during M0–M5 (the milestone-in-minor scheme is a labeling convenience — 0.x releases carry **no** compatibility promise and may change anything); `v1.0.0` at M6 exit. Post-1.0: behavior of the WM-compat surface changes only in majors; 422→supported transitions are minors (the ROADMAP promise). A future v2 would also move the Go module path to `…/v2` per Go modules semantics — an explicit cost noted now.
 - Artifacts per release: multi-arch container images (ghcr), Helm chart (OCI registry), static binaries (goreleaser), all cosign-signed, with SBOM (syft) and build provenance; `CHANGELOG.md` in Keep-a-Changelog form.
-- The Go module path (`github.com/ORG/mockulus`, §18) stays a placeholder during development (decision 2026-07-24: org/path is finalized only when the project is ready to publish) and must be settled before the first public tag — an import path is public API. The eventual rename is mechanical (find-replace + `go.mod` edit) and safe pre-publication.
+- The Go module path is `github.com/b3vet/mockulus` (§18), settled 2026-07-29 before the first public tag, because an import path is public API and renaming one after publication is not a rename but a fork. It had been left a placeholder deliberately while the project was unpublished (decision 2026-07-24).
 
 ---
 
@@ -1207,4 +1207,32 @@ Tracked as issues labeled `compat-dh`; resolved answers get edited into the body
 | Stub `id` format | Must be a canonical UUID; case-insensitive, canonicalised to lower case | §5.2 |
 | Create over an existing id | Rejected 422 code 109, not an upsert | §5.1, Appendix B |
 
-**Still open**, each owned by the milestone that implements it: journal-disabled error shape & code (M5) · `ServeEvent` JSON shape (M5) · scenarios listing shape & PUT-state validation (M4) · templating activation matrix (global default, per-stub disable — resolve at M3 **start**, gates §10.1 `wm-compat`) & `request.path` alias set & path-template variable binding (M3) · `now`/`randomValue` output formats (M3) · render-error-in-body behavior (M3) · near-miss distance weighting (M5).
+**Nothing is still open.** Every item this appendix tracked has been probed
+against the pinned oracle and folded into the section that owns it, and the
+catalog carries no `pending-dh` entry — which is the machine-checked half of
+that claim, since a `pending-dh` surviving its milestone fails completeness gate
+(c).
+
+The items that closed after the table above, and where each landed:
+
+| Item | Answer | Now in |
+|---|---|---|
+| Journal-disabled error shape & code | 500 with code 1010 and the WM envelope | §11.1, Appendix B |
+| `ServeEvent` JSON shape | Recorded from the oracle and pinned by the journal corpus | §11.2 |
+| Scenarios listing shape | Ours omits the member `mappings` WireMock embeds | §5.1, deviation #32 |
+| Scenarios PUT-state validation | 400 with code 1031, and `Started` always settable | §5.1, deviations #33 and #34 |
+| Templating activation matrix | Per-stub `transformers`, plus the global default of §13; `disableBodyTemplating` is ours | §10.1, deviation #31 |
+| `request.path` alias set & path-template binding | Pinned by the templating corpus | §10.2 |
+| `now` / `randomValue` output formats | Java's patterns, `XXX` included; formats pinned differentially | §10.3 |
+| Render-error-in-body behavior | Render errors are refused at registration, not written into a body | §10.4 |
+| Near-miss distance weighting | No ordering is claimed; WM's ranking is not reproduced | §6.8, deviation #28 |
+
+Two of them settled decisions rather than probes, and both were closed on terms
+the decision itself had set: the reason phrase sent when a stub asks for none
+(deviation #30) and an explicitly empty `statusMessage`, which WireMock honours
+and mockulus now honours too.
+
+What the differential corpus turned up while closing these is not tracked here.
+A behaviour where the two servers disagree is either a defect, and is fixed, or
+it is deliberate, and is numbered in §5.5 — this appendix exists for questions
+the spec could not answer without asking the oracle, and there are none left.
