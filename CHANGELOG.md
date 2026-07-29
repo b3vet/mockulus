@@ -10,6 +10,32 @@ supported feature is a minor.
 
 ## [Unreleased]
 
+### Added
+
+- Optional OpenTelemetry tracing (SPEC §14.3), configured by the `tracing.*`
+  keys and **off by default**. Turned off it costs one atomic load and a branch
+  per request — no span is started and no request context is replaced — so the
+  SLOs and the allocation budget of §16 are the same numbers they were. Turned
+  on, every mock request becomes one server span carrying the match outcome, the
+  serving stub and the snapshot epoch, and every admin request becomes one named
+  by endpoint group.
+- Traces join the caller's. Sampling is parent-based, so a request arriving with
+  W3C trace context follows the decision the caller already made and a mock's
+  spans appear inside the trace of the test that drove it; `tracing.sample_ratio`
+  governs only the traces a pod starts itself.
+- `mockulus_trace_export_failures_total`, because a collector that refuses every
+  batch would otherwise be indistinguishable from a quiet one. The reason is
+  logged at most once a minute behind it, and export is bounded rather than
+  retried for a minute — a collector that has not recovered in fifteen seconds is
+  an outage, not a queue.
+
+Tracing is configured only by mockulus' own keys; the standard `OTEL_*`
+environment variables are deliberately not read, so one mechanism owns the
+generated §13 table, validation, and the redaction that keeps an ingestion token
+out of the startup dump. Tracing that is enabled with no collector to export to,
+or with an endpoint carrying a scheme `tracing.insecure` already answers, is
+refused at startup rather than run.
+
 ## [1.0.0] - 2026-07-29
 
 The first release. The compatibility surface is complete, the engine is
