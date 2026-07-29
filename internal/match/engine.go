@@ -163,7 +163,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	candidates := 0
-	cs := snap.Match(pr, gate, &candidates)
+	cs := snap.Match(r.Context(), pr, gate, &candidates)
 
 	if err := pr.ScenarioError(); err != nil {
 		// A gated stub whose state could not be read is not a stub that failed
