@@ -1,0 +1,250 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-enc-casefold-turkish-001
+behaviors: [B-DEV-DEVIATION-43, B-MATCH-EQUALTO-CASEINSENSITIVE, B-REQ-BODYPATTERNS]
+# Deviation #43, the half where WireMock folds more than mockulus does.
+# `caseInsensitive` here is Unicode simple case folding, under which the Turkish
+# dotted capital I (U+0130) and dotless small i (U+0131) each fold only to
+# themselves: neither has a simple fold into the ASCII letters they look like.
+# Java's `equalsIgnoreCase` does not fold at all — it upper-cases and then
+# lower-cases one UTF-16 code unit at a time — and Java's per-character mapping
+# does send U+0130 down to `i` and U+0131 up to `I`, so WireMock matches the
+# pairs below and mockulus does not. Neither is more correct; they are two
+# definitions of "same letter, different case", one of which happens to bake in
+# a language's convention.
+#
+# `wm: n/a`, because both servers are self-consistent and the answers differ by
+# design. The case earns its place by failing if mockulus ever reaches for a
+# per-character upper/lower comparison instead of a fold, which is the accident
+# that would silently import Java's answer.
+#
+# The two controls at the end are the counterweight: the deviation is narrow,
+# and a change that broke ordinary folding to fix this corner would be caught
+# there rather than celebrated.
+#
+# Every request declares `charset=UTF-8` so the case pins folding and not the
+# charset defaulting a body matcher applies before it (SPEC §5.2). Non-ASCII
+# characters are written as escapes throughout, so the case says which code
+# points it means rather than trusting a font and an editor to agree.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0002-4000-8000-000000000001",
+         "name": "caseInsensitive with the dotted capital I in the operand",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-turkish-001/dotted",
+                     "bodyPatterns": [{"equalTo": "\u0130stanbul",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "dotted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0002-4000-8000-000000000002",
+         "name": "caseInsensitive with the dotless small i in the operand",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-turkish-001/dotless",
+                     "bodyPatterns": [{"equalTo": "\u0131rmak",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "dotless",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The operand as written matches itself, which is the baseline the refusals
+  # below are read against: they are about one character and not about the
+  # criterion being broken.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotted
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\u0130stanbul"
+    expect: {status: 200, body: "dotted"}
+
+  # And the seven ASCII letters after it still fold, so the deviation is scoped
+  # to the one character rather than to the string carrying it.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotted
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\u0130STANBUL"
+    expect: {status: 200, body: "dotted"}
+
+  # The deviation. U+0130 has no simple fold to U+0069, so the ordinary Latin
+  # spelling is a different string here and WireMock accepts it.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotted
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "istanbul"
+    expect: {status: 404}
+
+  # Same refusal against the upper-cased Latin spelling. Both are here because
+  # Java reaches this match by two different routes — lower-casing U+0130 to `i`
+  # for one, upper-casing `i` to `I` and comparing against a U+0130 it also
+  # upper-cases to itself for the other — and a partial import of that behaviour
+  # would show up on one step and not the other.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotted
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "ISTANBUL"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotless
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\u0131rmak"
+    expect: {status: 200, body: "dotless"}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotless
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\u0131RMAK"
+    expect: {status: 200, body: "dotless"}
+
+  # The mirror of the dotted case: U+0131 folds only to itself, so neither Latin
+  # spelling of the word reaches the operand. WireMock matches both.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotless
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "irmak"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/dotless
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "IRMAK"
+    expect: {status: 404}
+
+  # The same disagreement seen from the stub author's other side. Above, the
+  # Turkish letter was in the operand and the ASCII letter arrived on the wire;
+  # here it is the operand that is plain ASCII, which is the far more likely way
+  # to meet this in practice — a stub nobody thought was about Unicode, and a
+  # request from a Turkish locale.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0002-4000-8000-000000000003",
+         "name": "caseInsensitive with an ASCII operand and a Turkish request",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-turkish-001/ascii-lower",
+                     "bodyPatterns": [{"equalTo": "istanbul",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "ascii-lower",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0002-4000-8000-000000000004",
+         "name": "caseInsensitive with an upper-case ASCII operand",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-turkish-001/ascii-upper",
+                     "bodyPatterns": [{"equalTo": "IRMAK",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "ascii-upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/ascii-lower
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "ISTANBUL"
+    expect: {status: 200, body: "ascii-lower"}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/ascii-lower
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\u0130stanbul"
+    expect: {status: 404}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/ascii-upper
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "irmak"
+    expect: {status: 200, body: "ascii-upper"}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/ascii-upper
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "\u0131rmak"
+    expect: {status: 404}
+
+  # The controls. Ordinary ASCII folding, and a Latin letter with an accent —
+  # U+00E9 against U+00C9 — are the cases the two servers agree on, and they are
+  # the overwhelming majority of what `caseInsensitive` is used for. A build
+  # that "fixed" the Turkish corner by lower-casing per character would still
+  # pass these; a build that broke folding outright would not, and the failure
+  # would read as a regression rather than as this deviation.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0002-4000-8000-000000000005",
+         "name": "caseInsensitive over ASCII, where the two servers agree",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-turkish-001/ascii",
+                     "bodyPatterns": [{"equalTo": "SeCrEt",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "ascii",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000037-0002-4000-8000-000000000006",
+         "name": "caseInsensitive over accented Latin, where the two servers agree",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/deviation-enc-casefold-turkish-001/latin",
+                     "bodyPatterns": [{"equalTo": "caf\u00e9",
+                                       "caseInsensitive": true}]},
+         "response": {"status": 200, "body": "latin",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/ascii
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "secret"
+    expect: {status: 200, body: "ascii"}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/ascii
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "SECRET"
+    expect: {status: 200, body: "ascii"}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/latin
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "CAF\u00c9"
+    expect: {status: 200, body: "latin"}
+
+  # Folding case is still not stripping accents, on either server.
+  - request:
+      method: POST
+      path: /e2e/deviation-enc-casefold-turkish-001/latin
+      headers: {Content-Type: "text/plain; charset=UTF-8"}
+      body: "CAFE"
+    expect: {status: 404}

@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-tmpl-math-divide-fraction-001
+behaviors: [B-DEV-DEVIATION-45, B-TPL-MATH-NUMBER]
+# n/a: `math` with `/` returns the quotient a division actually has, fraction
+# included. WireMock rounds half-up to an integer whenever both operands are
+# integral, so `{{math 10 '/' 4}}` renders 3 there and 2.5 here, and
+# `{{math 1 '/' 3}}` renders 0. Silently discarding the fraction of a division
+# the template asked for is a surprising default, and anyone who wants the
+# rounded value is one more `{{math}}` away from it. Nothing to diff against;
+# this pins mockulus (SPEC §5.5 row 45, §10.3).
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000039-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-tmpl-math-divide-fraction-001/split"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-Share": "{{math 10 '/' 4}}"},
+                      "body": "half={{math 10 '/' 4}} third={{math 1 '/' 3}} strings={{math '7' '/' '5'}} exact={{math 8 '/' 2}} exactfrac={{math 9 '/' 2}} fromquery={{math request.query.n '/' 4}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `half` is the row's own example and the clearest failure: 2.5 rounds to 3
+  # under WireMock's rule, so a build that adopted the rounding renders a
+  # quotient larger than the true one. `third` is the direction that hurts more,
+  # because rounding 0.333… half-up yields 0 — a division whose result vanishes
+  # entirely rather than merely shifting.
+  #
+  # `strings` gives both operands as quoted numerals. WireMock's rule keys off
+  # whether the operands are integral, not off how they were spelled, so this is
+  # the same deviation reached through the coercion path, and an implementation
+  # that rounded only when it saw bare integer literals would still be caught.
+  #
+  # `exact` is the control the row calls for: 8/2 is 4 on both servers, and it is
+  # asserted as "4" rather than "4.0" because a quotient with nothing after the
+  # point must not grow a decimal tail — that would be a second, quieter
+  # deviation hiding inside the agreement. `exactfrac` is its neighbour, an
+  # odd numerator over the same divisor, so the two together show the fraction
+  # being kept exactly when there is one and not manufactured when there is not.
+  #
+  # `fromquery` runs the same division over a value that arrived on the request
+  # rather than one baked into the template, which is where a real stub gets its
+  # operands, and `X-Share` repeats the example in a header so the rounding
+  # cannot be scoped to bodies.
+  - request:
+      method: GET
+      path: /e2e/deviation-tmpl-math-divide-fraction-001/split?n=10
+    expect:
+      status: 200
+      headers: {X-Share: "2.5"}
+      body: "half=2.5 third=0.3333333333333333 strings=1.4 exact=4 exactfrac=4.5 fromquery=2.5"

@@ -1,0 +1,206 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-json-lenient-body-001
+behaviors: [B-DEV-DEVIATION-35, B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS, B-MATCH-MATCHESJSONPATH]
+# Deviation #35, the request-body half. WireMock reads a body with Jackson's
+# defaults, which accept several dialects that are not JSON: content after a
+# complete document, single quotes around member names and around values, and
+# `/* */` and `//` comments. mockulus parses with `encoding/json` and accepts
+# none of them, so a body in any of those spellings matches there and is a plain
+# non-match here — for `equalToJson` and for `matchesJsonPath` alike, because
+# both reach the document through the same parse.
+#
+# `wm: n/a` because the disagreement is the point and there is no answer to diff
+# against. Strictness is the deliberate half of it: a body that is not JSON is a
+# fact about the request worth reporting, not a shape to guess at, and guessing
+# would mean shipping a second grammar for a class of body no correct client
+# sends. A build that grew that leniency answers 200 below where this case
+# demands 404.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-lenient-body-001/equal",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}"}]},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The same documents through the other JSON-reading matcher. A parser swapped
+  # in one place and not the other would pass half of what follows, so every
+  # body below is sent to both stubs.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-lenient-body-001/path",
+                     "bodyPatterns": [{"matchesJsonPath": "$.a"}]},
+         "response": {"status": 200, "body": "path",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The baseline both stubs are calibrated on: the well-formed document each
+  # criterion is written for. Everything below is this document with one
+  # non-JSON spelling applied to it, so a 404 further down is about the spelling
+  # and not about the criterion.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: '{"a":1}'
+    expect: {status: 200, body: "equal"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: '{"a":1}'
+    expect: {status: 200, body: "path"}
+
+  # Trailing content after a complete document. Jackson stops at the first
+  # complete value and never looks at what follows, which is how a truncated or
+  # concatenated payload gets read as its own prefix; `encoding/json` requires
+  # the document to be the whole input. Reading a prefix of a body and calling
+  # it the body is a worse answer than a visible non-match.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: '{"a":1} tail'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: '{"a":1} tail'
+    expect: {status: 404}
+
+  # Trailing WHITESPACE is the agreeing control, and it is what makes the rule
+  # above legible as "trailing content" rather than "anything after the closing
+  # brace". Both servers accept it, so a client whose serializer emits a final
+  # newline is not affected by any of this.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: '{"a":1}   '
+    expect: {status: 200, body: "equal"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: "{\"a\":1}\n"
+    expect: {status: 200, body: "path"}
+
+  # Single-quoted member names. Jackson's ALLOW_SINGLE_QUOTES is on by default,
+  # so this is a Java default leaking through rather than a WireMock contract.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: "{'a':1}"
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: "{'a':1}"
+    expect: {status: 404}
+
+  # An UNQUOTED member name is the other agreeing control, and it scopes the
+  # previous pair precisely: ALLOW_UNQUOTED_FIELD_NAMES is off, so `{a:1}` is
+  # refused on both servers. The leniency is single quotes specifically, not
+  # "member names may be spelled loosely".
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: "{a:1}"
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: "{a:1}"
+    expect: {status: 404}
+
+  # `/* */` and `//` comments, in both the positions a body can carry them: one
+  # ahead of the document, one after it, one between members. Jackson's comment
+  # support is off by default for a plain ObjectMapper but on in the mapper
+  # WireMock configures, so all three are read there as the document without
+  # them.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: '/* leading */ {"a":1}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: '/* leading */ {"a":1}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: '{"a":1} // trailing'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: '{"a":1} // trailing'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/equal
+      body: '{"a":1 /* inner */}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/path
+      body: '{"a":1 /* inner */}'
+    expect: {status: 404}
+
+  # Single-quoted VALUES, which need their own stub because the operand has to
+  # be a string for the question to arise at all. A parser that only special-
+  # cased quoted names would pass the pair above and fail here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-lenient-body-001/value",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":\"x\"}"}]},
+         "response": {"status": 200, "body": "value",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/value
+      body: '{"a":"x"}'
+    expect: {status: 200, body: "value"}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/value
+      body: "{\"a\":'x'}"
+    expect: {status: 404}
+
+  # Both halves of the dialect at once, which is the shape a hand-written
+  # fixture usually arrives in.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-body-001/value
+      body: "{'a':'x'}"
+    expect: {status: 404}

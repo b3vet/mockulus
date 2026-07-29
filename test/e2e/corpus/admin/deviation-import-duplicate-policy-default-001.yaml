@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-import-duplicate-policy-default-001
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-DEV-DEVIATION-40
+# n/a: this is deviation #40, so there is no oracle to diff against. An
+# `importOptions` object that names no `duplicatePolicy` takes the default
+# SPEC §5.1 documents, OVERWRITE. WireMock reads the same payload off an
+# uninitialised field, sees a null policy, decides it is not OVERWRITE and
+# keeps the stub it already had — so the one payload below produces two
+# different deployments. What is pinned here is mockulus' answer.
+#
+# The shape of the object matters and is not incidental. `deleteAllNotInImport`
+# is spelled out on every import that carries an `importOptions` at all,
+# because an object missing it is a different disagreement entirely (deviation
+# #21) and would make this case measure that one instead. Omitting the whole
+# object is the control at the end: there the two servers agree on OVERWRITE,
+# which is what scopes #40 to the partially-filled object rather than to the
+# default itself.
+wm: n/a
+steps:
+  # A stub registered through the singular endpoint, so the import below meets
+  # an id that is genuinely already in the deployment rather than one it put
+  # there itself.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000040-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-default-001/tier"},
+         "response": {"status": 200, "body": "registered directly"}}
+    expect: {status: 201}
+
+  # A second stub that no import in this case ever mentions. It is what makes
+  # the `deleteAllNotInImport: false` below observable: a reader that took the
+  # partially-filled object as a licence to guess at both members could just as
+  # easily default that one to true and empty the deployment.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000040-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-default-001/bystander"},
+         "response": {"status": 200, "body": "never mentioned in an import"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-default-001/tier}
+    expect: {status: 200, body: "registered directly"}
+
+  # The payload the deviation is about: `importOptions` is present, it names
+  # `deleteAllNotInImport`, and it says nothing about `duplicatePolicy`. The
+  # batch carries a colliding id and an unused one, which is what a hand-edited
+  # export looks like after one stub in it was changed.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "d0000040-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-default-001/tier"},
+            "response": {"status": 200, "body": "imported over it"}},
+           {"id": "d0000040-0000-4000-8000-000000000003",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-default-001/fresh"},
+            "response": {"status": 200, "body": "fresh id"}}
+         ],
+         "importOptions": {"deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  # The absent policy defaulted to OVERWRITE: the incoming document is what
+  # serves. An implementation that copied WireMock's reading would answer
+  # "registered directly" here and leave the author's edit on the floor with a
+  # 200 to say it had been applied.
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-default-001/tier}
+    expect: {status: 200, body: "imported over it"}
+
+  # ...and the store agrees with the serving path, so the replacement is the
+  # document under the id and not a shadow copy ahead of it in the order.
+  - admin: {method: GET, path: /__admin/mappings/d0000040-0000-4000-8000-000000000001}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "d0000040-0000-4000-8000-000000000001"
+        response: {body: "imported over it"}
+
+  # The batch-mate with an unused id was imported the same way it would have
+  # been under any policy, which is what confines the disagreement to the
+  # collision: a default read the other way costs you the changed stubs in an
+  # export and none of the new ones.
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-default-001/fresh}
+    expect: {status: 200, body: "fresh id"}
+
+  # The stub the payload never named is still there, so the object really was
+  # read as written rather than defaulted wholesale.
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-default-001/bystander}
+    expect: {status: 200, body: "never mentioned in an import"}
+
+  # The same payload with the member spelled out as IGNORE does drop the
+  # colliding document. Without this step the assertions above would be equally
+  # satisfied by a server that had no duplicate handling at all and simply
+  # wrote whatever it was sent.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "d0000040-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-default-001/tier"},
+            "response": {"status": 200, "body": "dropped by IGNORE"}}
+         ],
+         "importOptions": {"duplicatePolicy": "IGNORE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-default-001/tier}
+    expect: {status: 200, body: "imported over it"}
+
+  # The control, and the boundary of the deviation: with no `importOptions` at
+  # all the two servers agree, and both overwrite. So what the payloads differ
+  # in is the presence of the object, not the presence of the default — the
+  # divergence needs an object that was written and left half filled in.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "d0000040-0000-4000-8000-000000000001",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-default-001/tier"},
+            "response": {"status": 200, "body": "imported with no importOptions"}}
+         ]}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-default-001/tier}
+    expect: {status: 200, body: "imported with no importOptions"}

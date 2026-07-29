@@ -1,0 +1,228 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-reg-url-criteria-001
+behaviors:
+  - B-DEV-DEVIATION-47
+  - B-ERR-10
+  - B-REQ-URL
+  - B-REQ-URLPATTERN
+  - B-REQ-URLPATH
+  - B-REQ-URLPATHPATTERN
+  - B-REQ-URLPATHTEMPLATE-PATHPARAMETERS
+# Deviation #47. A request pattern carrying two URL criteria is refused 422,
+# because the two cannot both be honoured and nothing in the document says which
+# one the author meant. WireMock answers the same question with a fixed field
+# precedence — `url`, `urlPattern`, `urlPath`, `urlPathPattern`,
+# `urlPathTemplate` — keeps the first of those that is present, and discards the
+# rest without a word. Its echo of the stub then shows only the survivor, so an
+# author reading their own registration back sees a document they did not write
+# and no sign that anything was dropped. Refusing is the house rule for a
+# document whose parts contradict each other, and it costs one message against a
+# stub that would otherwise match on a field its author never intended.
+#
+# `wm: n/a` because the oracle answers 201 and then matches on whichever
+# criterion won, so the two servers are not answering the same question: there
+# is no response to diff, only a refusal set against a silently rewritten stub.
+wm: n/a
+steps:
+  # The pairing that shows the most. `url` and `urlPath` are the two spellings a
+  # generator is likeliest to emit together, and they are also the two whose
+  # conflict WireMock resolves in favour of `url`. The pointer names the request
+  # pattern rather than either field, because neither field is wrong on its own
+  # — their coexistence is, and an error hung on one of them would read as an
+  # invitation to fix that one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000010",
+         "request": {"method": "GET",
+                     "url": "/e2e/deviation-reg-url-criteria-001/dropped?page=2",
+                     "urlPath": "/e2e/deviation-reg-url-criteria-001/kept"},
+         "response": {"status": 200, "body": "ambiguous"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request"}
+            title: "Malformed request"
+      body_regex: 'only one URL criterion may be given, found url, urlPath'
+
+  # Neither criterion survives, which is what separates a refusal from a
+  # precedence rule. WireMock keeps `url` and serves the first of these two
+  # requests; a build here that had adopted a precedence instead of refusing
+  # would answer one of them 200 and would still have passed the step above.
+  - request: {port: mock, method: GET, path: "/e2e/deviation-reg-url-criteria-001/dropped?page=2"}
+    expect: {status: 404}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-url-criteria-001/kept}
+    expect: {status: 404}
+
+  # A second pairing, written with the lower-precedence field first, because the
+  # order the members appear in is exactly what does not matter. WireMock's
+  # precedence ranges over field names and ignores the document, so reordering
+  # the members changes nothing there — and nothing here either: the message
+  # names the pair in the same fixed order whichever way round it was typed,
+  # which is what lets an author recognise their own document in it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000011",
+         "request": {"method": "GET",
+                     "urlPathTemplate": "/e2e/deviation-reg-url-criteria-001/refused/{id}",
+                     "urlPath": "/e2e/deviation-reg-url-criteria-001/refused/7"},
+         "response": {"status": 200, "body": "ambiguous"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request"}
+            title: "Malformed request"
+      body_regex: 'only one URL criterion may be given, found urlPath, urlPathTemplate'
+
+  # A third pairing, between two criteria that are both patterns and differ only
+  # in whether the query string is part of what they see. That is the pair whose
+  # intent is least recoverable — a reader cannot tell whether the author meant
+  # the query to be matched or ignored — and it is refused on the same rule as
+  # the two above rather than on a case written for it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000012",
+         "request": {"method": "GET",
+                     "urlPattern": "/e2e/deviation-reg-url-criteria-001/rx/[0-9]+",
+                     "urlPathPattern": "/e2e/deviation-reg-url-criteria-001/rx/[0-9]+"},
+         "response": {"status": 200, "body": "ambiguous"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request"}
+            title: "Malformed request"
+      body_regex: 'only one URL criterion may be given, found urlPattern, urlPathPattern'
+
+  # All five at once, where the gap is widest: WireMock keeps `url` and discards
+  # four criteria in silence. The message lists every criterion it found rather
+  # than the two it needed in order to refuse, so a document this confused still
+  # takes one round trip to fix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000013",
+         "request": {"method": "GET",
+                     "url": "/e2e/deviation-reg-url-criteria-001/all",
+                     "urlPattern": "/e2e/deviation-reg-url-criteria-001/all",
+                     "urlPath": "/e2e/deviation-reg-url-criteria-001/all",
+                     "urlPathPattern": "/e2e/deviation-reg-url-criteria-001/all",
+                     "urlPathTemplate": "/e2e/deviation-reg-url-criteria-001/all"},
+         "response": {"status": 200, "body": "ambiguous"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request"}
+            title: "Malformed request"
+      body_regex: 'only one URL criterion may be given, found url, urlPath, urlPattern, urlPathPattern, urlPathTemplate'
+
+  # None of the four ids names anything, so each refusal was a decision taken
+  # before the document was written rather than a message sent after it.
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000010}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000011}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000012}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000036-0000-4000-8000-000000000013}
+    expect: {status: 404}
+
+  # The controls, one per criterion, and the reason the case cannot pass on a
+  # build that refuses every request pattern it is shown. Each is one of the
+  # refusals above with the second criterion removed, and each serves a body
+  # naming the criterion it was registered under — so a control answered by the
+  # wrong stub reads as a wrong body rather than as a pass.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000014",
+         "request": {"method": "GET", "url": "/e2e/deviation-reg-url-criteria-001/ledger?page=2"},
+         "response": {"status": 200, "body": "url"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000015",
+         "request": {"method": "GET", "urlPattern": "/e2e/deviation-reg-url-criteria-001/journal\\?page=[0-9]+"},
+         "response": {"status": 200, "body": "urlPattern"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000016",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-reg-url-criteria-001/invoice"},
+         "response": {"status": 200, "body": "urlPath"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000017",
+         "request": {"method": "GET", "urlPathPattern": "/e2e/deviation-reg-url-criteria-001/order/[0-9]+"},
+         "response": {"status": 200, "body": "urlPathPattern"}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000036-0000-4000-8000-000000000018",
+         "request": {"method": "GET", "urlPathTemplate": "/e2e/deviation-reg-url-criteria-001/receipt/{id}"},
+         "response": {"status": 200, "body": "urlPathTemplate"}}
+    expect: {status: 201}
+
+  # The whole-URL criteria see the query string and the path criteria do not,
+  # which is the distinction the refused pairs left unanswerable and which each
+  # of these five stubs settles on its own.
+  - request: {port: mock, method: GET, path: "/e2e/deviation-reg-url-criteria-001/ledger?page=2"}
+    expect: {status: 200, body: "url"}
+
+  - request: {port: mock, method: GET, path: "/e2e/deviation-reg-url-criteria-001/journal?page=7"}
+    expect: {status: 200, body: "urlPattern"}
+
+  - request: {port: mock, method: GET, path: "/e2e/deviation-reg-url-criteria-001/invoice?anything=here"}
+    expect: {status: 200, body: "urlPath"}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-url-criteria-001/order/42}
+    expect: {status: 200, body: "urlPathPattern"}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-reg-url-criteria-001/receipt/42}
+    expect: {status: 200, body: "urlPathTemplate"}
+
+  - admin: {method: DELETE, path: /__admin/mappings/d0000036-0000-4000-8000-000000000014}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/d0000036-0000-4000-8000-000000000015}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/d0000036-0000-4000-8000-000000000016}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/d0000036-0000-4000-8000-000000000017}
+    expect: {status: 200}
+
+  - admin: {method: DELETE, path: /__admin/mappings/d0000036-0000-4000-8000-000000000018}
+    expect: {status: 200}

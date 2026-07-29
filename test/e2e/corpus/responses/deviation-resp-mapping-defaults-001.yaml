@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-resp-mapping-defaults-001
+behaviors:
+  - B-DEV-DEVIATION-41
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-ADMIN-MAPPINGS-ID-DELETE
+  - B-STUB-REQUEST
+  - B-STUB-RESPONSE
+# n/a because the disagreement is in the document rather than in the serving,
+# which is deviation #41. WireMock fills in the members an author left out on
+# the way back out — an absent `response` becomes `{"status": 200}`, a
+# `response` without a `status` gains one, and an absent `request` becomes
+# `{"method": "ANY"}` — and mockulus echoes the document it was handed. Both
+# servers then answer the same request the same way, so nothing on the mock
+# port distinguishes them; only the admin document does, and under §5.6's
+# subset rule WireMock's added members are required of ours, so a diff over any
+# such stub fails on members mockulus never wrote.
+#
+# The three shapes are one deviation and are exercised together on purpose:
+# they come from one rule — read back what was written — and an implementation
+# that acquired a default would acquire it in exactly one of the three, so a
+# case covering a single shape would keep passing while the rule was half gone.
+#
+# What the round trip is worth is the reason for the rule. The document a
+# client reads back is the one it diffs against the file on disk that produced
+# it, and a member the server invented is a diff the author cannot resolve:
+# deleting it from the file changes nothing, writing it into the file records a
+# decision nobody made. §7.2 commits to the verbatim round trip for that
+# reason, and this case is where the commitment is observable.
+#
+# exclusive, and not by preference. The third shape is a stub with no `request`
+# object at all, which matches every request on the deployment for as long as
+# it is registered — including the deliberate 404s other cases assert, and no
+# priority setting makes that safe. Running alone is what makes registering it
+# possible at all, and the delete at the end is what keeps it from outliving
+# the case.
+wm: n/a
+requires: [exclusive]
+steps:
+  # A stub with no `response` member. The document comes back with the two
+  # members it was written with and the server-assigned `uuid` beside the `id`,
+  # and nothing else: `body_json` compares the whole document, so the absence of
+  # a `response` member is asserted here rather than merely not asserted.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000038-0000-4000-8000-000000000011",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-resp-mapping-defaults-001/no-response"}}
+    expect:
+      status: 201
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000011"
+        uuid: "d0000038-0000-4000-8000-000000000011"
+        request: {method: "GET", urlPath: "/e2e/deviation-resp-mapping-defaults-001/no-response"}
+
+  # Read back by id, because the echo and the stored document are two different
+  # claims: a server can return the posted bytes from the request it is already
+  # holding and still normalise on the way into the store. This is the read a
+  # client makes when it wants to know what is registered.
+  - admin: {method: GET, path: /__admin/mappings/d0000038-0000-4000-8000-000000000011}
+    expect:
+      status: 200
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000011"
+        uuid: "d0000038-0000-4000-8000-000000000011"
+        request: {method: "GET", urlPath: "/e2e/deviation-resp-mapping-defaults-001/no-response"}
+
+  # And the serving half, which is where the deviation stops: a stub that says
+  # nothing about its response answers 200 with an empty body. Recording no
+  # `response` member is not the same as declining to serve, and this step is
+  # what says so — the deviation is confined to the document.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-mapping-defaults-001/no-response}
+    expect:
+      status: 200
+      body: ""
+
+  # The second shape: a `response` object that is present and says nothing about
+  # its status. The tempting repair is to write the default into the object as
+  # it is decoded, which costs one line and is invisible until someone diffs the
+  # read-back against the file that produced it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000038-0000-4000-8000-000000000012",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-resp-mapping-defaults-001/no-status"},
+         "response": {"body": "status was never written"}}
+    expect:
+      status: 201
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000012"
+        uuid: "d0000038-0000-4000-8000-000000000012"
+        request: {method: "GET", urlPath: "/e2e/deviation-resp-mapping-defaults-001/no-status"}
+        response: {body: "status was never written"}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000038-0000-4000-8000-000000000012}
+    expect:
+      status: 200
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000012"
+        uuid: "d0000038-0000-4000-8000-000000000012"
+        request: {method: "GET", urlPath: "/e2e/deviation-resp-mapping-defaults-001/no-status"}
+        response: {body: "status was never written"}
+
+  # 200 is served without being stored, which is the distinction the whole case
+  # is about: the default lives where the response is built, not in the document
+  # the author gets back.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-mapping-defaults-001/no-status}
+    expect:
+      status: 200
+      body: "status was never written"
+
+  # The third shape, and the reason this case runs alone: a stub with no
+  # `request` object. It is registered, read back and deleted inside these four
+  # steps and no other case is running while it exists.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000038-0000-4000-8000-000000000013",
+         "response": {"status": 200, "body": "no request criteria were written"}}
+    expect:
+      status: 201
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000013"
+        uuid: "d0000038-0000-4000-8000-000000000013"
+        response: {status: 200, body: "no request criteria were written"}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000038-0000-4000-8000-000000000013}
+    expect:
+      status: 200
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000013"
+        uuid: "d0000038-0000-4000-8000-000000000013"
+        response: {status: 200, body: "no request criteria were written"}
+
+  # Serving agrees here too, and this is what it means for a stub that names no
+  # criteria: it answers whatever arrives. The path below has never been
+  # registered by anything, so only the criteria-less stub can be answering it.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-mapping-defaults-001/any-path-at-all}
+    expect:
+      status: 200
+      body: "no request criteria were written"
+
+  # Removed as soon as it has been observed. A stub that answers everything is
+  # not something to leave behind in a shared deployment, and the delete is part
+  # of the case rather than a courtesy: without it the next case to assert a 404
+  # would fail on this one's behalf.
+  - admin: {method: DELETE, path: /__admin/mappings/d0000038-0000-4000-8000-000000000013}
+    expect: {status: 200}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000038-0000-4000-8000-000000000013}
+    expect: {status: 404}
+
+  # And the deployment is back to answering nothing on a path nobody registered,
+  # which is the assertion that the cleanup worked rather than merely ran.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-mapping-defaults-001/any-path-at-all}
+    expect: {status: 404}

@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-json-lenient-operand-001
+behaviors: [B-DEV-DEVIATION-35, B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS, B-ERR-10]
+# Deviation #35, the registration half. The same lenient parse WireMock applies
+# to a request body it also applies to the `equalToJson` OPERAND, so a mappings
+# file whose operand carries trailing content, single quotes or a comment
+# registers there and is refused 422 here. This is the direction that costs a
+# user something real, and stating it is the point of the row: a file that loads
+# against WireMock can fail to load here, at registration, naming the pattern
+# index and the offending character rather than serving a stub whose operand
+# means something other than what was written.
+#
+# `wm: n/a` because 201 and 422 are the disagreement itself. What the case holds
+# is that mockulus refuses, refuses *all* of the spellings rather than a lucky
+# subset, and refuses the whole document instead of half-registering it.
+wm: n/a
+steps:
+  # Six operands, one per spelling the lenient parser accepts, in one mapping —
+  # and one answer naming all six. Failing on the first would make a mappings
+  # file ported from WireMock take six round trips to correct, which is what the
+  # collect-don't-fail-fast rule of Appendix B exists to prevent. The pointers
+  # reach the matcher key rather than stopping at the pattern, so an author with
+  # several matchers in one bodyPattern still learns which one to fix.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000011",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-lenient-operand-001/refused",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1} tail"},
+                                      {"equalToJson": "{'a':1}"},
+                                      {"equalToJson": "{\"a\":'x'}"},
+                                      {"equalToJson": "/* leading */ {\"a\":1}"},
+                                      {"equalToJson": "{\"a\":1} // trailing"},
+                                      {"equalToJson": "{a:1}"}]},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/request/bodyPatterns/0/equalToJson"}
+            detail: "equalToJson operand is not valid JSON: invalid character 't' after top-level value"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/1/equalToJson"}
+            detail: "equalToJson operand is not valid JSON: invalid character '\\'' looking for beginning of object key string"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/2/equalToJson"}
+            detail: "equalToJson operand is not valid JSON: invalid character '\\'' looking for beginning of value"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/3/equalToJson"}
+            detail: "equalToJson operand is not valid JSON: invalid character '/' looking for beginning of value"
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/4/equalToJson"}
+            detail: "equalToJson operand is not valid JSON: invalid character '/' after top-level value"
+          # The last one is the agreeing control in operand position: an
+          # unquoted member name is refused by WireMock's parser too, so this
+          # row is not part of the deviation at all. It is here because it makes
+          # the five above readable as a list of specific lenient spellings
+          # rather than as "operands are validated".
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/5/equalToJson"}
+            detail: "equalToJson operand is not valid JSON: invalid character 'a' looking for beginning of object key string"
+
+  # Refusal is all-or-nothing: six problems, zero writes. A partial registration
+  # would be the worse failure of the two, since the stub that survived would
+  # answer requests nobody registered it for.
+  - admin: {method: GET, path: /__admin/mappings/d0000035-0000-4000-8000-000000000011}
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-operand-001/refused
+      body: '{"a":1}'
+    expect: {status: 404}
+
+  # Trailing whitespace in the operand is the agreeing control on this side too,
+  # and it is what keeps the refusals above from reading as "the operand must be
+  # canonical". A pretty-printed operand ending in a newline is ordinary and is
+  # accepted; the stub registers and matches for real, which is also what proves
+  # the refusals are about the parse rather than about the endpoint refusing
+  # everything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000012",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-lenient-operand-001/accepted",
+                     "bodyPatterns": [{"equalToJson": "{\"a\":1}   "}]},
+         "response": {"status": 200, "body": "accepted",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-operand-001/accepted
+      body: '{"a":1}'
+    expect: {status: 200, body: "accepted"}
+
+  # …and it is a load-bearing criterion rather than an operand that degraded
+  # into matching anything on its way through the parser.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-lenient-operand-001/accepted
+      body: '{"a":2}'
+    expect: {status: 404}

@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-resp-header-array-001
+behaviors:
+  - B-DEV-DEVIATION-44
+  - B-RESP-HEADERS
+  - B-ADMIN-MAPPINGS-ID-GET
+  - B-STUB-RESPONSE
+# n/a because the two servers put the same bytes on the wire and describe them
+# differently, which is deviation #44. A response header written as a
+# one-element array is collapsed to a bare string by WireMock's echo and kept as
+# an array here; both send one header line, so nothing a client of the mock port
+# can see tells them apart and there is no serving answer to diff.
+#
+# The document is the whole of it, and the two halves below are why the case has
+# to assert both. The echo says the array survived; the served response says the
+# array was not a request for anything on the wire. Either half on its own is
+# consistent with a different bug — an echo assertion alone would pass on a
+# server that also emitted a header line per element, and a serving assertion
+# alone would pass on a server that collapsed the document — and only the pair
+# says the deviation is confined to the document.
+#
+# Keeping the array is the same rule as §7.2's verbatim round trip rather than a
+# preference about headers: a generator that writes every header's values as a
+# list writes `["solo"]` for the header that happens to have one value, and the
+# author who diffs the read-back against the file that produced it should find
+# no difference to explain.
+wm: n/a
+steps:
+  # The one-element array, registered alongside a bare string in the same
+  # response so that the two spellings can be compared without anything else
+  # differing between them.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000038-0000-4000-8000-000000000021",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-resp-header-array-001/array"},
+         "response": {"status": 200, "body": "served",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-One": ["solo"], "X-Bare": "bare"}}}
+    expect:
+      status: 201
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000021"
+        uuid: "d0000038-0000-4000-8000-000000000021"
+        request: {method: "GET", urlPath: "/e2e/deviation-resp-header-array-001/array"}
+        response:
+          status: 200
+          body: "served"
+          headers:
+            Content-Type: "text/plain"
+            X-One: ["solo"]
+            X-Bare: "bare"
+
+  # Read back by id rather than trusting the echo, because an echo can be
+  # answered from the bytes the request arrived with while the store holds a
+  # normalised copy. `X-One` is written as a one-element list here, and the
+  # comparison distinguishes a list from a string: a collapsed `"solo"` fails
+  # this step, which is the drift the case exists to catch.
+  - admin: {method: GET, path: /__admin/mappings/d0000038-0000-4000-8000-000000000021}
+    expect:
+      status: 200
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000021"
+        uuid: "d0000038-0000-4000-8000-000000000021"
+        request: {method: "GET", urlPath: "/e2e/deviation-resp-header-array-001/array"}
+        response:
+          status: 200
+          body: "served"
+          headers:
+            Content-Type: "text/plain"
+            X-One: ["solo"]
+            X-Bare: "bare"
+
+  # And on the wire the array is a header with one value, indistinguishable from
+  # the bare string beside it. This is the half that makes the deviation
+  # document-only: what the author wrote is remembered, and what the client
+  # receives is what one value means.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-header-array-001/array}
+    expect:
+      status: 200
+      body: "served"
+      headers: {Content-Type: "text/plain", X-One: "solo", X-Bare: "bare"}
+
+  # The twin, spelled the other way. Its document keeps the bare string, so the
+  # rule is "the shape written is the shape stored" rather than "headers are
+  # always arrays" — a server that normalised in that direction would round-trip
+  # the case above and fail this one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000038-0000-4000-8000-000000000022",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-resp-header-array-001/bare"},
+         "response": {"status": 200, "body": "served",
+                      "headers": {"Content-Type": "text/plain",
+                                  "X-One": "solo", "X-Bare": "bare"}}}
+    expect:
+      status: 201
+      body_json:
+        id: "d0000038-0000-4000-8000-000000000022"
+        uuid: "d0000038-0000-4000-8000-000000000022"
+        request: {method: "GET", urlPath: "/e2e/deviation-resp-header-array-001/bare"}
+        response:
+          status: 200
+          body: "served"
+          headers:
+            Content-Type: "text/plain"
+            X-One: "solo"
+            X-Bare: "bare"
+
+  # The response the twin serves is the response the array serves, header for
+  # header. Read the two `request` steps together and they are the measurement
+  # the deviation rests on: the wire is identical, the documents are not.
+  - request: {port: mock, method: GET, path: /e2e/deviation-resp-header-array-001/bare}
+    expect:
+      status: 200
+      body: "served"
+      headers: {Content-Type: "text/plain", X-One: "solo", X-Bare: "bare"}

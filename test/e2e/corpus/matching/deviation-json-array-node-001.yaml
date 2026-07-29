@@ -1,0 +1,240 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-json-array-node-001
+behaviors: [B-DEV-DEVIATION-42, B-MATCH-MATCHESJSONPATH]
+# Deviation #42. A `matchesJsonPath` in its nested form evaluates the inner
+# matcher against what the expression SELECTS, and a definite expression ending
+# at an array selects the array node — not its elements. So
+# `{"expression": "$.tags", "equalTo": "red"}` does not match `{"tags":["red"]}`
+# here; the value handed to `equalTo` is the node rendered exactly, `["red"]`.
+# WireMock answers 200, because its evaluator cannot tell a definite path that
+# happens to select an array from a list of hits and applies the inner matcher
+# element-wise over both.
+#
+# `wm: n/a` because the definite/indefinite distinction is §6.7's stated design
+# and conflating the two to agree here would change every other nested answer
+# with it. The trade is visible rather than hidden: an author who wants the
+# element-wise question writes an expression that asks it, and the last stub
+# below is that expression.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000021",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-array-node-001/nested",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.tags", "equalTo": "red"}}]},
+         "response": {"status": 200, "body": "nested",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The deviation, in the three array shapes that could each be answered
+  # differently by a wrong implementation. One element is where element-wise
+  # evaluation is most tempting and where WireMock disagrees; several elements
+  # is where an implementation that unwrapped only singletons would still be
+  # caught; and none is the boundary where both servers refuse anyway, since
+  # element-wise evaluation over zero elements has nothing to accept.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/nested
+      body: '{"tags":["red"]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/nested
+      body: '{"tags":["red","blue"]}'
+    expect: {status: 404}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/nested
+      body: '{"tags":[]}'
+    expect: {status: 404}
+
+  # The same criterion over a scalar, which is the step that keeps the three
+  # above from being read as "the nested form is broken". The path, the inner
+  # matcher and the operand are unchanged; only the node's type differs, and the
+  # stub matches.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/nested
+      body: '{"tags":"red"}'
+    expect: {status: 200, body: "nested"}
+
+  # The BARE form is the control the row names: it asks whether the path selects
+  # a present, non-empty result, which an array of tags is, so it agrees with
+  # WireMock over the very documents the nested form refuses above. The
+  # conflation shows in the nested form only.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000022",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-array-node-001/bare",
+                     "bodyPatterns": [{"matchesJsonPath": "$.tags"}]},
+         "response": {"status": 200, "body": "bare",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/bare
+      body: '{"tags":["red"]}'
+    expect: {status: 200, body: "bare"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/bare
+      body: '{"tags":["red","blue"]}'
+    expect: {status: 200, body: "bare"}
+
+  # The bare form's emptiness rule applies to collections, so an empty array is
+  # the one document where it says no — and the nested stubs below show that the
+  # nested form has no such rule, which is the second thing this case pins.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/bare
+      body: '{"tags":[]}'
+    expect: {status: 404}
+
+  # Three stubs whose operand is the array's own rendering. They are the
+  # positive evidence for "matches the node": if the elements were being handed
+  # to the inner matcher one at a time, none of these could match anything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000023",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-array-node-001/one",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.tags", "equalTo": "[\"red\"]"}}]},
+         "response": {"status": 200, "body": "one",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000024",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-array-node-001/many",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.tags", "equalTo": "[\"red\",\"blue\"]"}}]},
+         "response": {"status": 200, "body": "many",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000025",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-array-node-001/empty",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.tags", "equalTo": "[]"}}]},
+         "response": {"status": 200, "body": "empty",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/one
+      body: '{"tags":["red"]}'
+    expect: {status: 200, body: "one"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/many
+      body: '{"tags":["red","blue"]}'
+    expect: {status: 200, body: "many"}
+
+  # The empty array reaches the inner matcher as `[]` and matches an operand
+  # spelled that way, even though the bare form calls the same document absent.
+  # The two rules are different questions and this pair is where that is
+  # visible: an implementation that pushed the bare form's emptiness test down
+  # into the nested form would answer 404 here.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/empty
+      body: '{"tags":[]}'
+    expect: {status: 200, body: "empty"}
+
+  # The rendering is the document's, not a normalised or re-sorted one: element
+  # order is preserved, so the same two tags in the other order do not match.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/many
+      body: '{"tags":["blue","red"]}'
+    expect: {status: 404}
+
+  # A regex over the same selection, which pins the brackets themselves rather
+  # than one whole operand: every array shape carries them and the scalar does
+  # not. This is the assertion that fails first if a build ever starts unwrapping
+  # a one-element array into its element.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000026",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-array-node-001/brackets",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.tags", "matches": "\\[.*\\]"}}]},
+         "response": {"status": 200, "body": "brackets",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/brackets
+      body: '{"tags":["red"]}'
+    expect: {status: 200, body: "brackets"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/brackets
+      body: '{"tags":[]}'
+    expect: {status: 200, body: "brackets"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/brackets
+      body: '{"tags":"red"}'
+    expect: {status: 404}
+
+  # And the element-wise question, spelled as an expression that asks it. A
+  # wildcard step is indefinite, so the path returns a list of hits and the
+  # nested form's any-of runs over the elements — which is WireMock's answer for
+  # `$.tags`, available here under a name that says so. The deviation costs an
+  # author this one character.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000035-0000-4000-8000-000000000027",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-json-array-node-001/elements",
+                     "bodyPatterns": [{"matchesJsonPath": {"expression": "$.tags[*]", "equalTo": "red"}}]},
+         "response": {"status": 200, "body": "elements",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/elements
+      body: '{"tags":["red"]}'
+    expect: {status: 200, body: "elements"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/elements
+      body: '{"tags":["blue","red"]}'
+    expect: {status: 200, body: "elements"}
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-json-array-node-001/elements
+      body: '{"tags":[]}'
+    expect: {status: 404}

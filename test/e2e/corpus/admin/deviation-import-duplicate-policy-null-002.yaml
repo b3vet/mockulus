@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-import-duplicate-policy-null-002
+behaviors:
+  - B-ADMIN-MAPPINGS-IMPORT-POST
+  - B-DEV-DEVIATION-40
+  - B-ERR-10
+# n/a: deviation #40 again, from the other side. The sibling case
+# (deviation-import-duplicate-policy-default-001) leaves the member out of the
+# `importOptions` object; this one writes it and gives it JSON's null, which is
+# the same absence said out loud and the exact value WireMock's uninitialised
+# field carries when it decides to keep the existing stub. Both spellings take
+# the documented OVERWRITE default here, so there is nothing to diff.
+#
+# The second half is what keeps the first half honest. A server that never
+# looked at `duplicatePolicy` at all would satisfy every OVERWRITE assertion in
+# both cases by accident, so the member is also given a value it cannot have:
+# the refusal proves the field is parsed, and the default above is a decision
+# rather than an omission. Every payload spells `deleteAllNotInImport` out, for
+# the reason the sibling case records.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d0000040-0000-4000-8000-000000000011",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-null-002/quote"},
+         "response": {"status": 200, "body": "before the import"}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-null-002/quote}
+    expect: {status: 200, body: "before the import"}
+
+  # An explicit null is read as "the author said nothing", which is the only
+  # reading that keeps this payload and the member-absent one meaning the same
+  # thing. Treating null as a third policy would give a document round-tripped
+  # through a serializer that writes empty members a different outcome from the
+  # document it was made from.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "d0000040-0000-4000-8000-000000000011",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-null-002/quote"},
+            "response": {"status": 200, "body": "after the import"}}
+         ],
+         "importOptions": {"duplicatePolicy": null, "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-null-002/quote}
+    expect: {status: 200, body: "after the import"}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000040-0000-4000-8000-000000000011}
+    expect:
+      status: 200
+      body_json_subset:
+        id: "d0000040-0000-4000-8000-000000000011"
+        response: {body: "after the import"}
+
+  # A value that is neither policy is refused with the pointer at the member,
+  # not silently defaulted the way an absent one is. The distinction is the
+  # whole of the deviation: absence is an instruction to use the default, a
+  # misspelling is a mistake, and a server that folded the second into the
+  # first would apply OVERWRITE to a file whose author had typed IGNORE badly.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "d0000040-0000-4000-8000-000000000011",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-null-002/quote"},
+            "response": {"status": 200, "body": "refused"}},
+           {"id": "d0000040-0000-4000-8000-000000000012",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-null-002/never"},
+            "response": {"status": 200, "body": "refused too"}}
+         ],
+         "importOptions": {"duplicatePolicy": "MERGE", "deleteAllNotInImport": false}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            title: "Malformed request"
+            source: {pointer: "/importOptions/duplicatePolicy"}
+            detail: 'unknown duplicatePolicy "MERGE", want OVERWRITE or IGNORE'
+
+  # The refusal took the batch with it: the collision was not overwritten and
+  # the batch-mate was not created. A rejected envelope that had already half
+  # applied itself is the failure mode a whole-batch validation exists to
+  # prevent, and it is invisible in the status code alone.
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-null-002/quote}
+    expect: {status: 200, body: "after the import"}
+
+  - admin: {method: GET, path: /__admin/mappings/d0000040-0000-4000-8000-000000000012}
+    expect: {status: 404}
+
+  # And the member does decide the outcome when it is spelled correctly, so the
+  # null above was defaulted rather than ignored along with the rest of the
+  # object.
+  - admin:
+      method: POST
+      path: /__admin/mappings/import
+      body: |
+        {"mappings": [
+           {"id": "d0000040-0000-4000-8000-000000000011",
+            "request": {"method": "GET", "urlPath": "/e2e/deviation-import-duplicate-policy-null-002/quote"},
+            "response": {"status": 200, "body": "kept out by IGNORE"}}
+         ],
+         "importOptions": {"duplicatePolicy": "IGNORE", "deleteAllNotInImport": false}}
+    expect: {status: 200}
+
+  - request: {port: mock, method: GET, path: /e2e/deviation-import-duplicate-policy-null-002/quote}
+    expect: {status: 200, body: "after the import"}
