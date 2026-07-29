@@ -28,10 +28,10 @@ You need Go 1.25.4 or newer — the version pinned in `go.mod`.
 
 ```console
 $ make build
-go build  -trimpath -ldflags '-s -w -X main.version=3079136' -o bin/mockulus ./cmd/mockulus
+go build  -trimpath -ldflags '-s -w -X main.version=v1.0.0' -o bin/mockulus ./cmd/mockulus
 
 $ ./bin/mockulus -version
-mockulus 3079136 (go1.25.4)
+mockulus v1.0.0 (go1.25.4)
 ```
 
 The version string is stamped from `git describe --tags --always --dirty` at build time, so an
@@ -53,17 +53,21 @@ Usage of ./bin/mockulus:
 
 ### Container image
 
-Tagged releases publish multi-arch (amd64, arm64) images to `ghcr.io/b3vet/mockulus`. Until the
-first tag exists, build the image yourself — it is the same Dockerfile the release pipeline uses,
-a distroless static base running as nonroot with no shell. `make image` tags the result with the
-same version string the binary reports, so on the checkout above that is `:3079136`:
+Tagged releases publish multi-arch (amd64, arm64) images to `ghcr.io/b3vet/mockulus`. The image
+is a distroless static base running as nonroot with no shell:
 
 ```console
-$ make image
-$ docker run -d --name mockulus -p 8080:8080 -p 9090:9090 ghcr.io/b3vet/mockulus:3079136
+$ docker run -d --name mockulus -p 8080:8080 -p 9090:9090 ghcr.io/b3vet/mockulus:v1.0.0
 $ docker logs mockulus
-{"time":"2026-07-29T07:32:39.436373856Z","level":"INFO","msg":"mockulus started","version":"3079136","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
+{"time":"2026-07-29T14:26:35.550029882Z","level":"INFO","msg":"mockulus started","version":"v1.0.0","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
 ```
+
+The tag carries the `v` — `:v1.0.0`, not `:1.0.0` — because it is the git tag the release was cut
+from. `:latest` follows the most recent release. Static binaries for linux, macOS and Windows are
+attached to each [GitHub release](https://github.com/b3vet/mockulus/releases) with a checksum file.
+
+To build the image instead, `make image` uses the same Dockerfile the release pipeline does and
+tags the result with the version string the binary reports.
 
 The image carries a `HEALTHCHECK` that runs `mockulus -healthcheck`, which probes `/healthz` on the
 configured admin port. The base image has no shell and no `curl`, so the binary is the only thing in
@@ -76,7 +80,7 @@ it that can make an HTTP request. Kubernetes should use the probes in
 
 ```console
 $ ./bin/mockulus
-{"time":"2026-07-29T10:30:46.552091+03:00","level":"INFO","msg":"mockulus started","version":"3079136","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
+{"time":"2026-07-29T10:30:46.552091+03:00","level":"INFO","msg":"mockulus started","version":"v1.0.0","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
 ```
 
 That single line is the whole startup summary, and it tells you what you got:
@@ -424,7 +428,7 @@ $ curl -s http://localhost:9090/__admin/health | jq .
   "stubs": 1,
   "timestamp": "2026-07-29T07:30:50.813711Z",
   "uptimeInSeconds": 4,
-  "version": "3079136"
+  "version": "v1.0.0"
 }
 ```
 
@@ -435,7 +439,7 @@ $ curl -s http://localhost:9090/__admin/version | jq .
 {
   "goVersion": "go1.25.4",
   "guessedWireMockVersion": "3.x-subset",
-  "version": "3079136"
+  "version": "v1.0.0"
 }
 ```
 
@@ -446,7 +450,7 @@ that missed, the interesting few read:
 ```console
 $ curl -s http://localhost:9090/metrics \
     | grep -E '^mockulus_(build_info|http_requests_total|snapshot_epoch|snapshot_stubs)'
-mockulus_build_info{go_version="go1.25.4",version="3079136"} 1
+mockulus_build_info{go_version="go1.25.4",version="v1.0.0"} 1
 mockulus_http_requests_total{code="200",matched="true"} 1
 mockulus_http_requests_total{code="404",matched="false"} 1
 mockulus_snapshot_epoch 1
@@ -476,7 +480,7 @@ and nothing else changes; the run below has one mapping in `mappings/orders.json
 
 ```console
 $ MOCKULUS_STORE=file MOCKULUS_FILE_ROOT=/path/to/wiremock-project ./bin/mockulus
-{"time":"2026-07-29T10:28:31.455269+03:00","level":"INFO","msg":"mockulus started","version":"3079136","store":"file","stubs":1,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
+{"time":"2026-07-29T10:28:31.455269+03:00","level":"INFO","msg":"mockulus started","version":"v1.0.0","store":"file","stubs":1,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
 
 $ curl -i http://localhost:8080/api/orders/42
 HTTP/1.1 200 OK
