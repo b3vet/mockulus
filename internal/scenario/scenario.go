@@ -144,33 +144,17 @@ func (c *Client) Transition(ctx context.Context, name, requiredState, newState s
 	return nil
 }
 
-// isRetryable reports whether a write failed because another writer won, as
-// opposed to the store being broken.
+// isRetryable reports whether a write failed because it lost its
+// compare-and-swap race, which is the one failure worth trying again.
 //
-// The check is on the error text rather than a typed error because the sentinel
-// belongs to the driver and this package is written against the interface. The
-// memory driver and the Couchbase driver both report a lost race this way.
+// The test is the store's own sentinel rather than the driver's error text.
+// Text was the earlier shape and it was unsound: driver errors embed the
+// document key, scenario names are free-form, and a stub naming its scenario
+// "document exists" made every write failure on it read as a lost race — so a
+// store outage was retried three times and then abandoned silently, counted
+// as contention and returned as nil.
 func isRetryable(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return contains(msg, "cas mismatch") ||
-		contains(msg, "already exists") ||
-		contains(msg, "document exists")
-}
-
-func contains(haystack, needle string) bool {
-	return len(needle) <= len(haystack) && indexOf(haystack, needle) >= 0
-}
-
-func indexOf(haystack, needle string) int {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return i
-		}
-	}
-	return -1
+	return errors.Is(err, store.ErrCASConflict)
 }
 
 // ResetAll clears every stored state, so every scenario reads as Started.

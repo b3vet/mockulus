@@ -5,6 +5,7 @@ package scenario
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strconv"
@@ -17,10 +18,12 @@ import (
 	"github.com/b3vet/mockulus/internal/store/memory"
 )
 
-// errLostRace is worded the way both drivers word it: the memory driver returns
-// "cas mismatch" from a stale Replace, and gocb's ErrCasMismatch carries the
-// same text out of Couchbase.
-var errLostRace = errors.New(`scenario "checkout": cas mismatch`)
+// errLostRace is what a driver returns when a compare-and-swap loses: the
+// store's sentinel, wrapped with whatever context the driver adds. Both drivers
+// produce this shape — the memory one from a stale Replace, the Couchbase one by
+// mapping gocb's ErrCasMismatch and ErrDocumentExists onto it — and the sentinel
+// rather than the wording is what the retry decision is allowed to read.
+var errLostRace = fmt.Errorf(`scenario "checkout": %w`, store.ErrCASConflict)
 
 // failFirst builds a write hook that fails the first n writes with err and lets
 // everything after through.
@@ -614,18 +617,19 @@ func TestOnlyALostRaceIsTreatedAsRetryable(t *testing.T) {
 		want bool
 	}{
 		{name: "no error at all", err: nil},
-		{name: "the memory driver's stale replace", err: errors.New(`scenario "checkout": cas mismatch`), want: true},
-		{name: "the memory driver's losing insert", err: errors.New(`scenario "checkout" already exists`), want: true},
-		{name: "gocb's ErrCasMismatch", err: errors.New("cas mismatch"), want: true},
-		{name: "gocb's ErrDocumentExists", err: errors.New("document exists"), want: true},
-		{name: "a wrapped lost race", err: errors.Join(errors.New("replace scenario"), errors.New("cas mismatch")), want: true},
+		{name: "the store's lost-race sentinel", err: store.ErrCASConflict, want: true},
+		{name: "a driver wrapping it with context", err: fmt.Errorf(`scenario "checkout": %w`, store.ErrCASConflict), want: true},
+		{name: "wrapped twice", err: fmt.Errorf("replace scenario: %w", fmt.Errorf(`scenario "checkout": %w`, store.ErrCASConflict)), want: true},
 		{name: "the store is unreachable", err: store.ErrUnavailable},
 		{name: "the document was deleted under us", err: store.ErrNotFound},
 		{name: "the write timed out", err: context.DeadlineExceeded},
-		{name: "gocb's ErrDocumentNotFound", err: errors.New("document not found")},
 		{name: "an empty message", err: errors.New("")},
-		{name: "a prefix of the sentinel", err: errors.New("cas mismat")},
 		{name: "an unrelated failure", err: errors.New("durability requirement not met")},
+		// The reason the sentinel exists. A scenario name reaches the driver's
+		// error text through the document key, so these once read as lost races
+		// and had a store outage retried and then swallowed.
+		{name: "a scenario named after the old text match", err: errors.New(`scenario "document exists": durability requirement not met`)},
+		{name: "the other spelling of it", err: errors.New(`scenario "cas mismatch": temporary failure`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := isRetryable(tc.err); got != tc.want {

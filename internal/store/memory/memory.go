@@ -289,7 +289,7 @@ func (s *Store) InsertScenario(_ context.Context, name string, state store.Scena
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.scenarios[name]; exists {
-		return fmt.Errorf("scenario %q already exists", name)
+		return fmt.Errorf("scenario %q: %w", name, store.ErrCASConflict)
 	}
 	s.casSeq++
 	s.scenarios[name] = scenarioEntry{state: state, cas: store.CAS(s.casSeq)}
@@ -305,7 +305,7 @@ func (s *Store) ReplaceScenario(_ context.Context, name string, state store.Scen
 		return store.ErrNotFound
 	}
 	if e.cas != cas {
-		return fmt.Errorf("scenario %q: cas mismatch", name)
+		return fmt.Errorf("scenario %q: %w", name, store.ErrCASConflict)
 	}
 	s.casSeq++
 	s.scenarios[name] = scenarioEntry{state: state, cas: store.CAS(s.casSeq)}

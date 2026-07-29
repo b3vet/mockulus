@@ -1472,6 +1472,13 @@ func wrap(err error) error {
 		return nil
 	case errors.Is(err, gocb.ErrDocumentNotFound):
 		return store.ErrNotFound
+	// A lost compare-and-swap is a sentinel rather than a message, so a caller
+	// deciding whether to retry never has to read driver text. gocb reports the
+	// two shapes separately: a stale CAS on a replace, and a document already
+	// there on an insert.
+	case errors.Is(err, gocb.ErrCasMismatch),
+		errors.Is(err, gocb.ErrDocumentExists):
+		return fmt.Errorf("%w: %w", store.ErrCASConflict, err)
 	case errors.Is(err, gocb.ErrTimeout),
 		errors.Is(err, gocb.ErrUnambiguousTimeout),
 		errors.Is(err, gocb.ErrAmbiguousTimeout),

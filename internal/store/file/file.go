@@ -68,7 +68,7 @@ var idNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://github.com/b3v
 // which driver is underneath.
 var errReadOnly = fmt.Errorf(
 	"%w: the file store serves a WireMock project directory read-only; edit the mappings and restart or wait for the reload",
-	store.ErrUnavailable)
+	store.ErrReadOnly)
 
 // Store is the read-only view of a WireMock project directory.
 type Store struct {
