@@ -48,6 +48,7 @@ type Metrics struct {
 	TemplateRenderErrors    prometheus.Counter
 	RegexTimeouts           prometheus.Counter
 	MatchCandidates         prometheus.Histogram
+	TraceExportFailures     prometheus.Counter
 }
 
 // requestDurationBuckets span 100µs to 10s log-spaced, per SPEC §14.1 — wide
@@ -161,6 +162,13 @@ func New(version, goVersion string, enabled bool) *Metrics {
 			Help:    "Candidate stubs evaluated per mock request.",
 			Buckets: []float64{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024},
 		}),
+		// A deployment whose collector is unreachable must not read as a
+		// deployment with nothing to report: the spans are dropped either way,
+		// and this is the difference between knowing that and not (SPEC §14.3).
+		TraceExportFailures: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "mockulus_trace_export_failures_total",
+			Help: "Trace export batches the collector did not accept.",
+		}),
 	}
 
 	m.BuildInfo.WithLabelValues(version, goVersion).Set(1)
@@ -190,6 +198,7 @@ func New(version, goVersion string, enabled bool) *Metrics {
 			m.TemplateRenderErrors,
 			m.RegexTimeouts,
 			m.MatchCandidates,
+			m.TraceExportFailures,
 		)
 	}
 	return m

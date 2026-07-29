@@ -180,6 +180,13 @@ func setField(dst reflect.Value, raw string) error {
 		}
 		dst.SetInt(n)
 		return nil
+	case reflect.Float64:
+		f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if err != nil {
+			return fmt.Errorf("invalid number %q", raw)
+		}
+		dst.SetFloat(f)
+		return nil
 	default:
 		return fmt.Errorf("unsupported configuration field kind %s", dst.Kind())
 	}
@@ -210,6 +217,10 @@ func renderValue(v reflect.Value) string {
 		return strconv.FormatBool(tv)
 	case int:
 		return strconv.Itoa(tv)
+	case float64:
+		// 'g' with -1 precision renders the shortest form that parses back to
+		// the same value, so a dumped line can be fed straight back in.
+		return strconv.FormatFloat(tv, 'g', -1, 64)
 	case string:
 		return tv
 	default:

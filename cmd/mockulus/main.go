@@ -38,10 +38,24 @@ import (
 	"github.com/b3vet/mockulus/internal/store/memory"
 	"github.com/b3vet/mockulus/internal/stub"
 	"github.com/b3vet/mockulus/internal/template"
+	"github.com/b3vet/mockulus/internal/tracing"
 )
 
 // version is stamped at build time with -ldflags "-X main.version=...".
 var version = "dev"
+
+// maxTraceFlush caps how long shutdown waits for the last spans to be exported.
+// See the call site for why this is not shutdown_timeout.
+const maxTraceFlush = 5 * time.Second
+
+// traceFlushBudget keeps the flush inside a deployment's own shutdown budget: a
+// pod configured to stop quickly must not be held open by telemetry.
+func traceFlushBudget(cfg config.Config) time.Duration {
+	if d := cfg.ShutdownTimeout.D(); d < maxTraceFlush {
+		return d
+	}
+	return maxTraceFlush
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -81,6 +95,40 @@ func run() error {
 
 	m := metrics.New(version, runtime.Version(), cfg.MetricsEnabled)
 
+	// Tracing is off unless a collector was configured. When it is off nothing
+	// below is constructed and no component is handed a tracer, so serving takes
+	// the same path it always has (SPEC §14.3).
+	var tracer *tracing.Tracer
+	var traceProvider *tracing.Provider
+	if cfg.Tracing.Enabled {
+		headers, headerErr := cfg.Tracing.ParsedHeaders()
+		if headerErr != nil {
+			// Validation has already rejected this; the check is here so the
+			// error cannot become a silent empty header set if it ever moves.
+			return fmt.Errorf("tracing.headers: %w", headerErr)
+		}
+		// Background rather than the signal context: the exporter outlives the
+		// signal that begins the drain, because the last spans are flushed
+		// after the listeners have closed (SPEC §4.5).
+		traceProvider, err = tracing.New(context.Background(), tracing.Options{
+			Endpoint:    cfg.Tracing.Endpoint,
+			Insecure:    cfg.Tracing.Insecure,
+			Headers:     headers,
+			SampleRatio: cfg.Tracing.SampleRatio,
+			ServiceName: cfg.Tracing.ServiceName,
+			Version:     version,
+			InstanceID:  podName(),
+		}, log, m.TraceExportFailures.Inc)
+		if err != nil {
+			return err
+		}
+		tracer = traceProvider.Tracer()
+		log.Info("tracing enabled",
+			"endpoint", cfg.Tracing.Endpoint,
+			"sample_ratio", cfg.Tracing.SampleRatio,
+			"service_name", cfg.Tracing.ServiceName)
+	}
+
 	// Templating: `wm-compat` mirrors the pinned WireMock, which requires the
 	// per-stub transformer declaration — verified directly, a stub without it
 	// serves {{request.path}} literally. So wm-compat and off differ only in
@@ -94,6 +142,9 @@ func run() error {
 	}
 
 	engine := match.NewEngine(cfg, m, log, renderer)
+	if tracer != nil {
+		engine.SetTracer(tracer)
+	}
 
 	srvCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -198,6 +249,7 @@ func run() error {
 		Scenarios:   scenarios,
 		Journal:     journalStore,
 		StubOptions: stubOpts,
+		Tracer:      tracer,
 		Shutdown: func() {
 			select {
 			case adminShutdown <- struct{}{}:
@@ -260,6 +312,30 @@ func run() error {
 		// Flush before closing the store: a verification made just before
 		// SIGTERM should still find its entry (SPEC §4.5).
 		journalWriter.Stop()
+	}
+	if traceProvider != nil {
+		// After the listeners have drained, so the spans of the last requests
+		// served are exported rather than dropped on the way out.
+		//
+		// The budget is deliberately its own small number rather than another
+		// shutdown_timeout. A collector that has gone away would otherwise hold
+		// the drain for a second full timeout, pushing the worst case past the
+		// default terminationGracePeriodSeconds — and what waits past the grace
+		// period is not a slower shutdown but a SIGKILL, which cuts off
+		// in-flight responses and leaves the journal batch unflushed. A
+		// telemetry backend must not be able to turn a rolling restart into a
+		// mock-server incident, so the last spans get a few seconds and no more.
+		//
+		// A failure here is logged rather than returned. Exiting non-zero
+		// because the last spans could not be delivered would report a pod that
+		// drained cleanly as a pod that crashed — on every replica of a rolling
+		// restart, for the whole of a collector outage. Losing telemetry is not
+		// the process failing at its job.
+		flushCtx, cancel := context.WithTimeout(shutdownCtx, traceFlushBudget(cfg))
+		if err := traceProvider.Shutdown(flushCtx); err != nil {
+			log.Warn("the last spans could not be exported", "error", err)
+		}
+		cancel()
 	}
 	if err := st.Close(shutdownCtx); err != nil {
 		errs = append(errs, fmt.Errorf("close store: %w", err))

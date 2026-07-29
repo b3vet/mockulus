@@ -23,12 +23,16 @@ import (
 	"github.com/b3vet/mockulus/internal/scenario"
 	"github.com/b3vet/mockulus/internal/store"
 	"github.com/b3vet/mockulus/internal/stub"
+	"github.com/b3vet/mockulus/internal/tracing"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
 // guessedWireMockVersion is reported alongside our own version so WireMock
 // clients that probe for a version see a value they can reason about.
 const guessedWireMockVersion = "3.x-subset"
+
+// spanAdmin prefixes the span name of an admin request.
+const spanAdmin = "admin"
 
 // Options carries the collaborators the admin API needs.
 type Options struct {
@@ -53,6 +57,9 @@ type Options struct {
 	// POST /__admin/shutdown, which is registered only when the operator has
 	// enabled it.
 	Shutdown func()
+	// Tracer is nil unless tracing is configured, in which case admin requests
+	// are not wrapped at all.
+	Tracer *tracing.Tracer
 }
 
 // Handler serves the admin API.
@@ -69,6 +76,7 @@ type Handler struct {
 	journal   store.JournalStore
 	stubOpts  stub.Options
 	shutdown  func()
+	tracer    *tracing.Tracer
 	// started backs the uptime the health endpoint reports.
 	started time.Time
 
@@ -89,6 +97,7 @@ func New(opts Options) *Handler {
 		journal:   opts.Journal,
 		stubOpts:  opts.StubOptions,
 		shutdown:  opts.Shutdown,
+		tracer:    opts.Tracer,
 		started:   time.Now(),
 	}
 
@@ -162,7 +171,7 @@ func New(opts Options) *Handler {
 	// token is being guessed otherwise looks idle: the requests never reach the
 	// counter, and the one signal an operator has that someone is knocking is
 	// the one the middleware order throws away.
-	h.mux = h.withMetrics(h.withAuth(mux))
+	h.mux = h.withTracing(h.withMetrics(h.withAuth(mux)))
 	return h
 }
 
@@ -185,6 +194,35 @@ func (h *Handler) withAuth(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// withTracing wraps admin requests in a span when tracing is on.
+//
+// It is the outermost wrapper, so the span covers authentication too: a 401 is
+// exactly the request an operator investigating a locked-down deployment wants
+// to find, and a span that started after the refusal would never exist. When
+// tracing is off the mux is returned untouched, so nothing is wrapped at all —
+// the shape the h2c and admin-token wrappers already use for the same reason.
+//
+// The span is named after the endpoint group rather than the path, for the
+// cardinality reason the metric labels have (SPEC §14.1): span names are what a
+// trace backend groups by, and a per-stub path would mint one name per stub.
+func (h *Handler) withTracing(next http.Handler) http.Handler {
+	if h.tracer == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		group := endpointGroup(r.URL.Path)
+		ctx, span := h.tracer.StartServer(r, spanAdmin+" "+group,
+			append(tracing.MethodAttrs(r.Method),
+				tracing.URLPath(r.URL.Path),
+				tracing.String("mockulus.admin.endpoint_group", group))...)
+		defer span.End()
+
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r.WithContext(ctx))
+		span.SetHTTPStatus(rec.status)
 	})
 }
 
