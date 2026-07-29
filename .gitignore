@@ -3,6 +3,15 @@
 /dist/
 *.exe
 
+# Release artifacts the publish job writes into the working directory before
+# goreleaser runs: `helm package` drops the chart tarball in the current
+# directory, and the SBOM action writes its document beside it. goreleaser
+# refuses to build from a dirty tree — rightly, since it cannot tell a stray
+# artifact from an uncommitted source edit — and it honours .gitignore, so
+# naming them here is what keeps that check meaningful rather than disabling it.
+/mockulus-*.tgz
+/*.spdx.json
+
 # Test & coverage artifacts
 /test/e2e/.artifacts/
 /test/load/.results/
