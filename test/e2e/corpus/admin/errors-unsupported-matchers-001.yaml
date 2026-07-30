@@ -2,7 +2,7 @@
 id: errors-unsupported-matchers-001
 behaviors:
   - B-ERR-1000
-  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTEDTO-ETC
+  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
   - B-MATCH-MATCHESJSONSCHEMA
   - B-MATCH-EQUALTOXML-MATCHESXPATH
   - B-DEV-DEVIATION-14
@@ -11,9 +11,11 @@ behaviors:
 wm: n/a
 steps:
   # The three date-time matchers are refused individually, so the 422 says which
-  # of them a stub is waiting on. `truncateExpectedTo` rides along as a modifier
+  # of them a stub is waiting on. `truncateExpected` rides along as a modifier
   # and must not be reported as a matcher in its own right — one problem per
-  # deferred matcher, not one per key.
+  # deferred matcher, not one per key. The name is the one WireMock 3.13.2
+  # actually accepts, established by round trip: it drops an unrecognised key
+  # silently, so a modifier spelled wrongly here would test nothing.
   - admin:
       method: POST
       path: /__admin/mappings
@@ -23,7 +25,7 @@ steps:
                      "bodyPatterns": [{"before": "2030-01-01T00:00:00Z"},
                                       {"after": "2020-01-01T00:00:00Z"},
                                       {"equalToDateTime": "2021-06-01T00:00:00Z",
-                                       "truncateExpectedTo": "first day of month"}]},
+                                       "truncateExpected": "first day of month"}]},
          "response": {"status": 200}}
     expect:
       status: 422
