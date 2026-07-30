@@ -17,8 +17,8 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 - **Depends on**: differential corpus expansion for XML cases. **Size**: M.
 
 ### 1.2 Date/time matchers (`before`, `after`, `equalToDateTime`)
-- **What**: WM 3 temporal matchers with `truncateExpectedTo`/`truncateActualTo`, `expectedOffset`.
-- **Sketch**: compile expected instant/offset at registration; parse actual per WM's accepted formats. Pure matcher addition.
+- **What**: WM 3 temporal matchers with their real modifier set — `truncateExpected`, `truncateActual`, `applyTruncationLast`, `actualFormat`. There is no offset *parameter*: an offset is written into the expected value itself (`now +3 days`). Earlier revisions of this entry named `truncateExpectedTo`, `truncateActualTo` and `expectedOffset`, none of which WireMock 3.13.2 has — corrected once the oracle was probed rather than remembered.
+- **Sketch**: compile the expected instant (or its now-relative form) at registration; parse the actual per WM's accepted formats. The comparison mode is selected by the *expected* value's type — zoned compares instants, zoneless compares wall-clock fields — so that dispatch is the core of it. Pure matcher addition.
 - **Depends on**: nothing. **Size**: S.
 
 ### 1.3 `equalToJson` placeholders (json-unit) — shipped in v1

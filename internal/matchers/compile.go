@@ -126,13 +126,25 @@ var deferredMatchers = map[string]string{
 
 // modifierKeys are recognised alongside a matcher rather than being matchers
 // themselves, so their presence must not look like an unknown field.
+//
+// The date-time entries were verified against pinned WireMock 3.13.2 by round
+// trip, which is the only reliable test: WireMock silently drops a key it does
+// not recognise, answering 201 with the key absent from the stored mapping, so
+// a successful registration says nothing about whether the name exists. Three
+// names that were here before — `truncateExpectedTo`, `truncateActualTo` and
+// `expectedOffset` — are not WireMock parameters at all, and their presence had
+// the effect exactly backwards: every real modifier was reported as an unknown
+// matcher, and the three invented ones passed without comment. There is no
+// offset parameter; an offset is written into the expected value itself
+// ("now +3 days").
 var modifierKeys = map[string]bool{
 	"caseInsensitive":     true,
 	"ignoreArrayOrder":    true,
 	"ignoreExtraElements": true,
-	"truncateExpectedTo":  true,
-	"truncateActualTo":    true,
-	"expectedOffset":      true,
+	"truncateExpected":    true,
+	"truncateActual":      true,
+	"applyTruncationLast": true,
+	"actualFormat":        true,
 }
 
 // Compile builds a matcher from one matcher document.
