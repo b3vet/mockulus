@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-placement-headers-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-HEADERS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# the client never sent (deviation #41). Every served response is still diffed
+# in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# The matcher works on `headers`, where the value under comparison is one header
+# line rather than the request body — and it works with the same semantics
+# rather than merely being accepted there. A position that compiled the schema
+# but then compared the header some other way, or that treated any present
+# header as a match, passes an accepted-here test and fails these.
+#
+# The header carries a JSON document as its value, which is what a client sending
+# structured metadata out of band does. Everything asserted is object-shaped: the
+# JSON scalars are where the two servers genuinely disagree (§5.5), and that
+# divergence belongs to its own deviation case rather than to this one.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e000c-0001-4000-8000-000000000001",
+         "name": "a schema over a header value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-jsonschema-placement-headers-001/meta",
+                     "headers": {"X-Meta": {"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["tenant", "version"],
+                        "properties": {"tenant": {"type": "string", "minLength": 2},
+                                       "version": {"type": "integer", "minimum": 1}}}}}},
+         "response": {"status": 200, "body": "meta",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          urlPath: /e2e/wmv-jsonschema-placement-headers-001/meta
+
+  # Conforming.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonschema-placement-headers-001/meta
+      headers: {X-Meta: '{"tenant":"ada","version":2}'}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "meta"}
+
+  # Non-conforming by type, by constraint, and by a missing required property —
+  # the same three claims the baseline makes about a body, made about a header.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonschema-placement-headers-001/meta
+      headers: {X-Meta: '{"tenant":"ada","version":"2"}'}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonschema-placement-headers-001/meta
+      headers: {X-Meta: '{"tenant":"a","version":2}'}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonschema-placement-headers-001/meta
+      headers: {X-Meta: '{"tenant":"ada"}'}
+    expect: {status: 404}
+
+  # A header whose value is not JSON is a non-match. Both servers agree here
+  # because the schema demands an object: WireMock reads the raw text as a JSON
+  # string node and that node fails `"type": "object"`, mockulus refuses the
+  # value outright, and the two readings cannot disagree under an object schema.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonschema-placement-headers-001/meta
+      headers: {X-Meta: "ada"}
+    expect: {status: 404}
+
+  # And the header absent entirely: there is no value to validate, so the
+  # criterion cannot hold.
+  - request:
+      method: GET
+      path: /e2e/wmv-jsonschema-placement-headers-001/meta
+    expect: {status: 404}

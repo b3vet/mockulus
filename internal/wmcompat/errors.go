@@ -28,6 +28,12 @@ const (
 	CodeUnknownTransformer = 1004
 	// CodeUnknownSetting marks an unrecognised key in a settings write.
 	CodeUnknownSetting = 1005
+	// CodeInvalidSchema marks a JSON Schema that does not compile.
+	//
+	// Its own code rather than the malformed-request one, because the document
+	// parses perfectly well as JSON and is only unusable as a schema — the same
+	// distinction CodeRegex draws for a pattern that does not compile.
+	CodeInvalidSchema = 1006
 	// CodeJournalDisabled marks a journal-dependent call while the journal is off.
 	CodeJournalDisabled = 1010
 	// CodeStoreUnavailable marks an admin write attempted during a store outage.
@@ -61,6 +67,7 @@ var catalog = map[int]struct {
 	CodeRegex:               {http.StatusUnprocessableEntity, "Invalid regular expression"},
 	CodeUnknownTransformer:  {http.StatusUnprocessableEntity, "Unknown transformer"},
 	CodeUnknownSetting:      {http.StatusUnprocessableEntity, "Unknown setting"},
+	CodeInvalidSchema:       {http.StatusUnprocessableEntity, "Invalid JSON Schema"},
 	CodeJournalDisabled:     {http.StatusInternalServerError, "Journal disabled"},
 	CodeStoreUnavailable:    {http.StatusServiceUnavailable, "Store unavailable"},
 	CodeScenarioUnavailable: {http.StatusInternalServerError, "Scenario state unavailable"},

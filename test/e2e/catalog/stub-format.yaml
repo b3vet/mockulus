@@ -307,13 +307,13 @@ behaviors:
     status: "ok"
   - id: "B-MATCH-MATCHESJSONSCHEMA"
     spec_row: "spec:5.2:content-matchers|matchesJsonSchema"
-    spec_hash: "cee2fbf1882b758d"
+    spec_hash: "d7831d8576aa22e1"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
-    impl_milestone: "M1"
+    impl_milestone: "M7"
     summary: "matchesJsonSchema"
-    evidence: "422 code 1000 pointing at matchesJsonSchema"
-    evidence_tokens: ["1000", "matchesJsonSchema"]
+    evidence: "the subject is validated against the schema, under the draft schemaVersion names or the document's own $schema"
+    evidence_tokens: ["matchesJsonSchema", "schemaVersion"]
     status: "ok"
   - id: "B-MATCH-EQUALTOXML-MATCHESXPATH"
     spec_row: "spec:5.2:content-matchers|equalToXml, matchesXPath"

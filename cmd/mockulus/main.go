@@ -25,6 +25,7 @@ import (
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/journal"
 	"github.com/b3vet/mockulus/internal/jsonpath"
+	"github.com/b3vet/mockulus/internal/jsonschemax"
 	"github.com/b3vet/mockulus/internal/match"
 	"github.com/b3vet/mockulus/internal/matchers"
 	"github.com/b3vet/mockulus/internal/metrics"
@@ -185,6 +186,12 @@ func run() error {
 		// must not be able to disagree with itself about what a path selects.
 		CompileJSONPath: func(expr string) (matchers.JSONPathEvaluator, error) {
 			return jsonpath.NewEvaluator(expr)
+		},
+		// One schema policy for the whole process, for the reason the regex and
+		// JSONPath policies are single: which draft a schema is read under and
+		// what a `$ref` may reach must not depend on which path compiled it.
+		CompileSchema: func(schema, version string) (matchers.SchemaValidator, error) {
+			return jsonschemax.Compile(schema, version)
 		},
 		GlobalTemplating: cfg.TemplatingEnabled == config.TemplatingOn,
 	}

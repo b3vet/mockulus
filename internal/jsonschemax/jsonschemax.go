@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -31,6 +30,11 @@ type Validator interface {
 	// Source is the schema as registered, for diagnostics.
 	Source() string
 }
+
+// rootURL is the in-memory location a schema is registered under. Nothing
+// resolves against it — see refusingLoader — and cleanError keeps it out of the
+// messages a stub author reads.
+const rootURL = "mem://schema"
 
 // DefaultVersion is the draft a schema is read under when it names none.
 //
@@ -119,7 +123,6 @@ func Compile(source, version string) (Validator, error) {
 	// Nothing outside the document is reachable. See refusingLoader.
 	compiler.UseLoader(refusingLoader{})
 
-	const rootURL = "mem://schema"
 	if addErr := compiler.AddResource(rootURL, doc); addErr != nil {
 		return nil, fmt.Errorf("the schema could not be read: %w", addErr)
 	}
@@ -195,28 +198,64 @@ func (v *validator) Valid(doc any) bool { return v.schema.Validate(doc) == nil }
 func (v *validator) Source() string     { return v.source }
 
 // versionList renders the accepted schemaVersion set for an error message.
-func versionList() string {
-	names := make([]string, 0, len(versions))
-	for name := range versions {
-		names = append(names, name)
+// versionOrder and schemaURIOrder list the accepted spellings oldest draft
+// first, for the two errors that enumerate them.
+//
+// Sorting the map keys instead answers `V201909, V202012, V4, V6, V7`, which
+// asks the reader to work out that the list is alphabetical before they can see
+// it is complete. The order a stub author already has in mind is the order the
+// drafts were published in. TestListsCoverEveryDraft holds each list to its map.
+var (
+	versionOrder   = []string{"V4", "V6", "V7", "V201909", "V202012"}
+	schemaURIOrder = []string{
+		"http://json-schema.org/draft-04/schema",
+		"http://json-schema.org/draft-06/schema",
+		"http://json-schema.org/draft-07/schema",
+		"https://json-schema.org/draft/2019-09/schema",
+		"https://json-schema.org/draft/2020-12/schema",
 	}
-	sort.Strings(names)
-	return strings.Join(names, ", ")
-}
+)
 
-func schemaURIList() string {
-	uris := make([]string, 0, len(schemaURIs))
-	for uri := range schemaURIs {
-		uris = append(uris, uri)
-	}
-	sort.Strings(uris)
-	return strings.Join(uris, ", ")
-}
+func versionList() string { return strings.Join(versionOrder, ", ") }
 
-// cleanError trims the library's multi-line compilation report to its first
-// line, which is the part that names the problem. The rest is a jsonschema
-// location trace that means nothing to somebody reading a 422 about their stub.
+func schemaURIList() string { return strings.Join(schemaURIOrder, ", ") }
+
+// cleanError turns the library's compilation report into one line a stub author
+// can act on.
+//
+// The report is a tree: a summary naming the metaschema, then nested causes. The
+// summary says only that the document is not a valid schema, while the deepest
+// cause says which keyword and what was wrong with it — for `{"type":"banana"}`,
+// that the value must be one of the seven type names. The deep line is the one
+// worth putting in a 422.
+//
+// It also removes the in-memory URL the schema was registered under. That is an
+// implementation detail of this package, and a reader seeing `mem://schema#`
+// beside their own stub would reasonably wonder what it referred to.
 func cleanError(err error) error {
-	first, _, _ := strings.Cut(err.Error(), "\n")
-	return errors.New(strings.TrimSpace(first))
+	lines := strings.Split(err.Error(), "\n")
+
+	best, bestIndent := "", -1
+	for _, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t-")
+		if trimmed == "" {
+			continue
+		}
+		// Deeper means more specific; the first at the deepest level wins, so a
+		// tie between the branches of an `anyOf` reads consistently.
+		if indent := len(line) - len(trimmed); indent > bestIndent {
+			best, bestIndent = trimmed, indent
+		}
+	}
+	if best == "" {
+		best, _, _ = strings.Cut(err.Error(), "\n")
+	}
+
+	best = strings.ReplaceAll(best, rootURL, "")
+	// The loader wraps its own message; the wrapper adds nothing the inner text
+	// does not already say.
+	if _, inner, found := strings.Cut(best, "points outside the schema"); found {
+		best = "$ref points outside the schema" + inner
+	}
+	return errors.New(strings.TrimSpace(best))
 }

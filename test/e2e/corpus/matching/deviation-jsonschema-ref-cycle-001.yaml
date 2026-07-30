@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-jsonschema-ref-cycle-001
+behaviors:
+  - B-DEV-DEVIATION-57
+  - B-MATCH-MATCHESJSONSCHEMA
+# There is no compatible answer to diff because WireMock does not answer at all:
+# a `$ref` cycle that consumes no instance registers there with a 201 and then
+# returns HTTP 500 with a Jetty error page and a `java.lang.StackOverflowError`
+# on the first matching request. `{"$ref":"#"}` is enough to do it, and so are
+# the mutual and `allOf` forms; all three were reproduced against the oracle.
+#
+# Nothing here is special-cased to achieve that. The schema compiler detects the
+# recursion, so a cycle with no escape is simply unsatisfiable — nothing matches
+# it — and a cycle with an escape branch resolves through the branch. No stub
+# WireMock accepts is refused on this account; the only difference is that a
+# request answered with a server error there is answered here.
+wm: n/a
+steps:
+  # A self-reference at the root. Unsatisfiable, so nothing validates against it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d57d57d5-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-ref-cycle-001/root",
+                     "bodyPatterns": [{"matchesJsonSchema": {"$ref": "#"}}]},
+         "response": {"status": 200, "body": "root"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-ref-cycle-001/root
+      headers: {Content-Type: application/json}
+      body: '{"a":1}'
+    expect: {status: 404}
+
+  # Mutually recursive with no base case, same answer — and, like the step
+  # above, an answer rather than a 500.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d57d57d5-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-ref-cycle-001/mutual",
+                     "bodyPatterns": [{"matchesJsonSchema": {"$defs": {"a": {"$ref": "#/$defs/b"},
+                                                                       "b": {"$ref": "#/$defs/a"}},
+                                                             "$ref": "#/$defs/a"}}]},
+         "response": {"status": 200, "body": "mutual"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-ref-cycle-001/mutual
+      headers: {Content-Type: application/json}
+      body: '{"a":1}'
+    expect: {status: 404}
+
+  # A cycle with an escape branch has an ordinary meaning and keeps it: the
+  # integer alternative resolves it. WireMock returns 500 for this one too.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d57d57d5-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-ref-cycle-001/escape",
+                     "bodyPatterns": [{"matchesJsonSchema": {"$defs": {"a": {"anyOf": [{"$ref": "#/$defs/a"},
+                                                                                        {"type": "integer"}]}},
+                                                             "$ref": "#/$defs/a"}}]},
+         "response": {"status": 200, "body": "escape"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-ref-cycle-001/escape
+      headers: {Content-Type: application/json}
+      body: '5'
+    expect: {status: 200, body: "escape"}
+
+  # And the constraint still holds for a value neither branch accepts, so the
+  # step above is resolution rather than the cycle being ignored.
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-ref-cycle-001/escape
+      headers: {Content-Type: application/json}
+      body: '"not-an-integer"'
+    expect: {status: 404}

@@ -11,6 +11,8 @@ import (
 	"github.com/b3vet/mockulus/internal/matchers"
 	"github.com/b3vet/mockulus/internal/regexx"
 	"github.com/b3vet/mockulus/internal/template"
+
+	"github.com/b3vet/mockulus/internal/jsonschemax"
 )
 
 // The stub mapping is the widest untrusted surface in the product: one admin
@@ -41,6 +43,9 @@ func fuzzOptions() Options {
 				Anchored: true,
 				Timeout:  50 * time.Millisecond,
 			})
+		},
+		CompileSchema: func(schema, version string) (matchers.SchemaValidator, error) {
+			return jsonschemax.Compile(schema, version)
 		},
 		CompileJSONPath: func(expr string) (matchers.JSONPathEvaluator, error) {
 			return jsonpath.NewEvaluator(expr)

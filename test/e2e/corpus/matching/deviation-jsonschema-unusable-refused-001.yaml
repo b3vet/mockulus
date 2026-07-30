@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-jsonschema-unusable-refused-001
+behaviors:
+  - B-DEV-DEVIATION-56
+  - B-ERR-1006
+# WireMock registers every document below with a 201 and validates only that the
+# operand is JSON, so there is no compatible answer to diff. What each one then
+# does there is the point: `{"type":"banana"}` and a dangling `$ref` match
+# nothing ever, a bare `42` matches *everything*, an unrecognised `$schema`
+# silently poisons the matcher, and an unresolvable `$ref` aborts the evaluation
+# with no error text anywhere in the response. Each is a stub that looks like a
+# criterion and is not one, so each is refused here with the field named.
+wm: n/a
+steps:
+  # A type that names no type. Code 1006 rather than the malformed-request code:
+  # the document is perfectly good JSON and is only unusable as a schema, which
+  # is the same distinction 1003 draws for a regex that does not compile.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d56d56d5-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/a",
+                     "bodyPatterns": [{"matchesJsonSchema": {"type": "banana"}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1006
+            title: "Invalid JSON Schema"
+            source: {pointer: "/request/bodyPatterns/0/matchesJsonSchema"}
+      # The message names the keyword and what was wrong with it, rather than
+      # only that the document is not a schema.
+      body_regex: "'/type'"
+
+  - admin: {method: GET, path: /__admin/mappings/d56d56d5-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # A bare value. This is the fail-open half: on WireMock it accepts every
+  # request, which is the worse of the two ways an invalid schema goes wrong.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/b",
+                     "bodyPatterns": [{"matchesJsonSchema": 42}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1006
+      body_regex: 'must be a JSON object or a boolean'
+
+  # A reference to a location that is not in the document.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/c",
+                     "bodyPatterns": [{"matchesJsonSchema": {"$ref": "#/$defs/missing"}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1006
+
+  # A reference outside the document. WireMock does not fetch this either — that
+  # was established with a listener that recorded no connection at all — so the
+  # refusal is not closing a network hole. It converts a silent no-match into a
+  # message naming the field.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/d",
+                     "bodyPatterns": [{"matchesJsonSchema": {"$ref": "http://example.invalid/s.json"}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 1006
+      body_regex: 'points outside the schema'
+
+  # A schemaVersion outside the five accepted spellings. WireMock refuses this
+  # one too, so only the code differs; the accepted set is named either way.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/e",
+                     "bodyPatterns": [{"matchesJsonSchema": {"type": "object"},
+                                       "schemaVersion": "BANANA"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'schemaVersion must be one of'
+
+  # An unrecognised $schema URI. On WireMock the stub registers and then matches
+  # nothing at all — even where the schema would otherwise accept everything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/f",
+                     "bodyPatterns": [{"matchesJsonSchema": {"$schema": "http://example.com/nonsense",
+                                                             "type": "object"}}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: '\$schema'
+
+  # schemaVersion beside a matcher that has no schema to version. WireMock drops
+  # the key silently — and drops it before validating the value, so even a
+  # nonsense version registers there.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/g",
+                     "bodyPatterns": [{"equalTo": "x", "schemaVersion": "V7"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'schemaVersion only applies to a matchesJsonSchema matcher'
+
+  # Nothing above registered, so none of those paths answers anything.
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-unusable-refused-001/b
+      headers: {Content-Type: application/json}
+      body: '{"anything":1}'
+    expect: {status: 404}
+
+  # The control: a usable schema still registers and still validates, so the
+  # refusals above are about the documents rather than about the matcher.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-unusable-refused-001/ok",
+                     "bodyPatterns": [{"matchesJsonSchema": {"type": "object", "required": ["id"]}}]},
+         "response": {"status": 200, "body": "ok"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-unusable-refused-001/ok
+      headers: {Content-Type: application/json}
+      body: '{"id":1}'
+    expect: {status: 200, body: "ok"}

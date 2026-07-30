@@ -111,9 +111,14 @@ license-check: ## Verify every module in the shipped binary's graph is on the al
 
 .PHONY: license-report
 license-report: ## Regenerate THIRD_PARTY_LICENSES from the module graph
+	# Generated aside and moved into place only on success. Redirecting straight
+	# at the file truncates it before the command runs, so a missing go-licenses
+	# empties the attribution file and the failure reads as a tool that is not
+	# installed rather than as the working tree it just damaged.
 	GOOS=$(LICENSE_GOOS) GOARCH=$(LICENSE_GOARCH) \
 		go-licenses report ./cmd/mockulus --template=.github/licenses.tpl \
-		--ignore $(MODULE) > THIRD_PARTY_LICENSES
+		--ignore $(MODULE) > THIRD_PARTY_LICENSES.tmp
+	mv THIRD_PARTY_LICENSES.tmp THIRD_PARTY_LICENSES
 
 .PHONY: image
 image: ## Build the shippable container image

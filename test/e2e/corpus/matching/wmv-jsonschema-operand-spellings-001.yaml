@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-operand-spellings-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too:
+# WireMock canonicalises an inline-object schema into a pretty-printed escaped
+# string and injects `"schemaVersion": "V202012"` the client never sent, while
+# mockulus echoes the document as registered (deviation #41). Every served
+# response is still diffed in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# A schema may be written inline as a JSON object or as a string holding the same
+# JSON, and the two spellings mean the same thing. Both are common: the inline
+# form is what a hand-written mapping carries, the string form is what a stub
+# generated from a `.json` schema file on disk carries, and a team hitting one
+# server with mappings authored for the other must not have to convert them.
+#
+# The two stubs below are the same schema in the two spellings, pointed at
+# different paths and probed identically. A server that read only one of them
+# would answer the two paths differently on the same document.
+#
+# This is also the one place the echo divergence is *visible* rather than merely
+# tolerated: registering the inline form on WireMock returns the string form,
+# so the round trip is not idempotent there. It changes nothing about matching,
+# which is what the steps below assert.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0002-0001-4000-8000-000000000001",
+         "name": "the schema written inline as an object",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-operand-spellings-001/inline",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["sku", "qty"],
+                        "properties": {"sku": {"type": "string", "pattern": "^[A-Z]{3}-[0-9]{4}$"},
+                                       "qty": {"type": "integer", "minimum": 1}}}}]},
+         "response": {"status": 200, "body": "inline",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0002-0001-4000-8000-000000000002",
+         "name": "the same schema written as an escaped string",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-operand-spellings-001/string",
+                     "bodyPatterns": [{"matchesJsonSchema": "{\"type\":\"object\",\"required\":[\"sku\",\"qty\"],\"properties\":{\"sku\":{\"type\":\"string\",\"pattern\":\"^[A-Z]{3}-[0-9]{4}$\"},\"qty\":{\"type\":\"integer\",\"minimum\":1}}}"}]},
+         "response": {"status": 200, "body": "string",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Conforming, under both spellings.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/inline
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "ABC-1234", "qty": 2}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "inline"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/string
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "ABC-1234", "qty": 2}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "string"}
+
+  # The `pattern` keyword bites under both spellings, which is what shows the
+  # string operand was parsed as a schema rather than kept as an opaque literal.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/inline
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "abc-1234", "qty": 2}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/string
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "abc-1234", "qty": 2}'
+    expect: {status: 404}
+
+  # As does a numeric bound, and a missing required property.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/inline
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "ABC-1234", "qty": 0}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/string
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "ABC-1234", "qty": 0}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/inline
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "ABC-1234"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-operand-spellings-001/string
+      headers: {Content-Type: "application/json"}
+      body: '{"sku": "ABC-1234"}'
+    expect: {status: 404}

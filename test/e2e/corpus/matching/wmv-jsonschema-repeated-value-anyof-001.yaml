@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-repeated-value-anyof-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-QUERYPARAMETERS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# the client never sent (deviation #41). Every served response is still diffed
+# in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# A repeated key is any-of: the criterion holds as soon as ONE of the values
+# satisfies the schema, and the values that do not are not held against it.
+#
+# The assertion that separates any-of from "the first value decides" is the pair
+# where the satisfying value comes second — so both orderings are sent, along
+# with a three-value request whose only satisfying member is last, which rules
+# out a two-value special case. And several values none of which satisfy the
+# schema is still a non-match: any-of is not any-value-present.
+#
+# The documents are percent-encoded because they are JSON in a query string, and
+# object-shaped because the JSON scalars are where the two servers genuinely
+# disagree (§5.5).
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e000e-0001-4000-8000-000000000001",
+         "name": "a schema over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter",
+                     "queryParameters": {"q": {"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["op"],
+                        "properties": {"op": {"enum": ["eq"]}}}}}},
+         "response": {"status": 200, "body": "filter",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # One value, satisfying and not satisfying, so the criterion is known to gate
+  # anything at all. {"op":"eq"} then {"op":"ne"}.
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter?q=%7B%22op%22%3A%22eq%22%7D"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "filter"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter?q=%7B%22op%22%3A%22ne%22%7D"
+    expect: {status: 404}
+
+  # Two values, only the second satisfying: a match. This is the ordering that
+  # tells any-of apart from "the first value decides".
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter?q=%7B%22op%22%3A%22ne%22%7D&q=%7B%22op%22%3A%22eq%22%7D"
+    expect: {status: 200, body: "filter"}
+
+  # And the other order, so it is not "the last value decides" either.
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter?q=%7B%22op%22%3A%22eq%22%7D&q=%7B%22op%22%3A%22ne%22%7D"
+    expect: {status: 200, body: "filter"}
+
+  # Three values with the satisfying one last, so the rule is not a two-value
+  # special case. The middle value is not even an object.
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter?q=%7B%22op%22%3A%22ne%22%7D&q=%7B%22op%22%3A%22gt%22%7D&q=%7B%22op%22%3A%22eq%22%7D"
+    expect: {status: 200, body: "filter"}
+
+  # Several values, none satisfying: still a non-match.
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter?q=%7B%22op%22%3A%22ne%22%7D&q=%7B%22op%22%3A%22gt%22%7D"
+    expect: {status: 404}
+
+  # A value the schema cannot even be applied to, beside a satisfying one, does
+  # not poison the criterion.
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-repeated-value-anyof-001/filter?q=nonsense&q=%7B%22op%22%3A%22eq%22%7D"
+    expect: {status: 200, body: "filter"}

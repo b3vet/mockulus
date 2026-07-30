@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/b3vet/mockulus/internal/jsonschemax"
 )
 
 // testPattern is a minimal PatternMatcher so this package's tests do not depend
@@ -17,13 +19,21 @@ func (p testPattern) MatchString(s string) bool { return p.re.MatchString(s) }
 func (p testPattern) Source() string            { return p.re.String() }
 
 func testOpts() Options {
-	return Options{CompileRegex: func(pattern string) (PatternMatcher, error) {
-		re, err := regexp.Compile(`\A(?:` + pattern + `)\z`)
-		if err != nil {
-			return nil, err
-		}
-		return testPattern{re}, nil
-	}}
+	return Options{
+		CompileRegex: func(pattern string) (PatternMatcher, error) {
+			re, err := regexp.Compile(`\A(?:` + pattern + `)\z`)
+			if err != nil {
+				return nil, err
+			}
+			return testPattern{re}, nil
+		},
+		// The real compiler rather than a fake: the draft, format and $ref
+		// policies are the behaviour under test wherever a schema appears, and
+		// a stand-in would agree with the matcher and not with the product.
+		CompileSchema: func(schema, version string) (SchemaValidator, error) {
+			return jsonschemax.Compile(schema, version)
+		},
+	}
 }
 
 // compile is a test helper that fails the test on any compilation problem. It
@@ -1072,11 +1082,10 @@ func TestIgnoreExtraElementsRelaxesArrayLength(t *testing.T) {
 // WireMock learns exactly which roadmap item they are waiting on.
 func TestDeferredMatchersAreRejectedByName(t *testing.T) {
 	cases := map[string]string{
-		`{"matchesXPath":"//a"}`:                  "matchesXPath",
-		`{"equalToXml":"<a/>"}`:                   "equalToXml",
-		`{"matchesJsonSchema":{"type":"object"}}`: "matchesJsonSchema",
-		`{"hasExactly":[{"equalTo":"a"}]}`:        "hasExactly",
-		`{"includes":[{"equalTo":"a"}]}`:          "includes",
+		`{"matchesXPath":"//a"}`:           "matchesXPath",
+		`{"equalToXml":"<a/>"}`:            "equalToXml",
+		`{"hasExactly":[{"equalTo":"a"}]}`: "hasExactly",
+		`{"includes":[{"equalTo":"a"}]}`:   "includes",
 	}
 	for doc, want := range cases {
 		m, probs := Compile(json.RawMessage(doc), "/request/bodyPatterns/0", testOpts())

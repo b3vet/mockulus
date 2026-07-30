@@ -10,8 +10,7 @@ deviations that can change a green suite into a red one.
 Two facts shape everything below.
 
 **Mockulus implements a subset.** XML and XPath matching, proxying, recording,
-webhooks, JSON Schema matching, multipart matching and Java-class extensions are
-not implemented. They are catalogued with design sketches in
+webhooks, multipart matching and Java-class extensions are not implemented. They are catalogued with design sketches in
 [ROADMAP.md](../ROADMAP.md). The date-time matchers `before`, `after` and
 `equalToDateTime` **are** implemented — see the note on them below, because their
 comparison rule is less obvious than it looks.
@@ -91,7 +90,7 @@ curl -s -X POST http://localhost:18411/__admin/mappings/import \
      --data-binary @import.json | jq .
 ```
 
-For a six-mapping suite carrying a SOAP stub, a date-range stub and a webhook,
+For a six-mapping suite carrying a SOAP stub, a multipart stub and a webhook,
 that answers `422` with:
 
 ```json
@@ -111,9 +110,9 @@ that answers `422` with:
     },
     {
       "code": 1000,
-      "source": { "pointer": "/mappings/5/request/bodyPatterns/0/matchesJsonSchema" },
+      "source": { "pointer": "/mappings/5/request/multipartPatterns" },
       "title": "Unsupported feature",
-      "detail": "matchesJsonSchema is not supported in mockulus v1 — see ROADMAP.md"
+      "detail": "multipartPatterns is not supported in mockulus v1 — see ROADMAP.md"
     }
   ]
 }
@@ -665,6 +664,44 @@ network.
   so mockulus only ever matches *more*, and a suite that passes on WireMock
   cannot fail here because of it.
 
+### `matchesJsonSchema`, and the draft that decides `format`
+
+Schema matching works. Two things about it are worth knowing before you rely on
+one, and both are WireMock's behaviour reproduced rather than choices of ours.
+
+**The draft decides whether `format` does anything.** `schemaVersion` takes
+exactly `V4`, `V6`, `V7`, `V201909` and `V202012`, and defaults to `V202012`.
+Under 2019-09 and 2020-12 `format` is an *annotation* — the JSON Schema spec
+moved it into a vocabulary that is off by default — so out of the box this
+matches:
+
+```jsonc
+{ "matchesJsonSchema": { "type": "string", "format": "email" } }
+// request body: "not-an-email"   → MATCHES, because the default draft ignores format
+```
+
+If you want `format` enforced, pin an older draft with `"schemaVersion": "V7"`,
+or declare `$schema` in the document itself — a document's own `$schema` wins
+over the `schemaVersion` field, in both directions.
+
+**`$ref` resolves inside the document only.** `$defs`, `definitions`, JSON
+pointers, `$anchor` and `$id` all work. A reference to a remote URL is refused
+when you register the stub (deviation 56). WireMock accepts it, but it never
+fetches it either — the difference is that WireMock's stub then silently matches
+nothing, with no error anywhere, while mockulus tells you at registration.
+
+The other refusals in that deviation are all schemas that could not have worked
+on WireMock either: a `type` that names no type, a `$ref` to a location that is
+not there, and a bare value like `42` — which on WireMock registers and then
+matches *every* request.
+
+One difference runs the other way. `matchesJsonSchema` here validates the parsed
+JSON document, so a body that is not JSON is a non-match (deviation 55). WireMock
+falls back to validating the raw request text as a JSON string, which makes it
+match *more* — and makes it self-contradictory for scalar bodies, where a schema
+and its own negation can both match. If your stubs validate object or array
+bodies, which is what schemas are normally written for, the two agree exactly.
+
 ### The date-time matchers, and the rule that is not obvious
 
 `before`, `after` and `equalToDateTime` work, and they follow WireMock exactly on
@@ -760,8 +797,8 @@ v1 architecture, what it depends on, and a size estimate. That entry is the
 place to comment on, because it is where the work would start.
 
 **The roadmap's order is a proposal, not a commitment.** Bucket 1 is the set of
-compat gaps with known demand — XML and XPath matching, `matchesJsonSchema`,
-multipart matching; the date-time matchers were the first of them to land. Bucket 2 is the new subsystems: proxy
+compat gaps with known demand — XML and XPath matching and multipart matching;
+the date-time and JSON Schema matchers have both since landed. Bucket 2 is the new subsystems: proxy
 mode, record and playback, webhooks. The ordering is explicitly reprioritised on
 demand signal, so the useful thing to do with a gap is report it rather than
 route around it. A v1.x feature landing can only ever turn a `422` into a

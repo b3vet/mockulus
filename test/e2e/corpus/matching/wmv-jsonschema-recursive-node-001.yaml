@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-recursive-node-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# the client never sent (deviation #41). Every served response is still diffed
+# in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# A schema may refer to itself, and legitimately: `$defs.node` describes a tree
+# node whose `child` is another node. This is the ordinary way to describe
+# nested comments, an org chart, a category tree — and it has to keep working.
+#
+# It is worth its own case because the reference is a cycle, and the obvious way
+# to refuse the *pathological* cycle — one that consumes no part of the instance
+# and so recurses forever, which crashes pinned WireMock with a
+# StackOverflowError — is a rule that would take this one with it if it were
+# written carelessly. The cycle here progresses: each hop consumes a `child`
+# property, so the recursion is bounded by the depth of the document.
+#
+# The negative probes are placed at the leaf on purpose. A schema that resolved
+# the reference once and then stopped would accept the first two levels and
+# never look at the third, so a violation planted at the top would prove nothing
+# about the recursion.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0009-0001-4000-8000-000000000001",
+         "name": "a node that contains a node",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-recursive-node-001/tree",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "$ref": "#/$defs/node",
+                        "$defs": {"node": {
+                           "type": "object",
+                           "required": ["name"],
+                           "properties": {"name": {"type": "string", "minLength": 1},
+                                          "child": {"$ref": "#/$defs/node"}}}}}}]},
+         "response": {"status": 200, "body": "tree",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A single node, and then two and three levels of nesting: the reference is
+  # followed as many times as the document needs.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"name": "root"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "tree"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"name": "root", "child": {"name": "leaf"}}'
+    expect: {status: 200, body: "tree"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"name": "root", "child": {"name": "middle", "child": {"name": "leaf"}}}'
+    expect: {status: 200, body: "tree"}
+
+  # A bad leaf three levels down. Everything above it conforms, so a match here
+  # would mean the recursion stopped early rather than that the document is
+  # acceptable.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"name": "root", "child": {"name": "middle", "child": {"name": 7}}}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"name": "root", "child": {"name": "middle", "child": {"name": ""}}}'
+    expect: {status: 404}
+
+  # The required property missing at the leaf, which is the same claim through a
+  # different keyword.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"name": "root", "child": {"name": "middle", "child": {"other": "x"}}}'
+    expect: {status: 404}
+
+  # And a child that is not a node at all.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"name": "root", "child": "leaf"}'
+    expect: {status: 404}
+
+  # The root is a node too, so the entry reference is live as well.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-recursive-node-001/tree
+      headers: {Content-Type: "application/json"}
+      body: '{"child": {"name": "leaf"}}'
+    expect: {status: 404}
