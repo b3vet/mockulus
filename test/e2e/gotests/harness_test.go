@@ -161,6 +161,10 @@ func spawn(t *testing.T, env map[string]string, persistent bool) *mockulus {
 		"MOCKULUS_ADMIN_PORT=0",
 		"MOCKULUS_LOG_FORMAT=json",
 		"MOCKULUS_LOG_LEVEL=info",
+		// Pinned for the same reason the runner pins it: a local date-time
+		// resolves against the process' zone, so a case about one must not
+		// depend on the zone the developer's machine happens to be in.
+		"TZ=UTC",
 	)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)

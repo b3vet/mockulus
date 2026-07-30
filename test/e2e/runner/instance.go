@@ -374,6 +374,11 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 		"MOCKULUS_ADMIN_PORT=0",
 		"MOCKULUS_LOG_FORMAT=json",
 		"MOCKULUS_LOG_LEVEL=info",
+		// The same zone the oracle container is pinned to, and for the same
+		// reason: a local date-time resolves against the process' zone, so a
+		// differential comparison is only meaningful when both sides agree on
+		// it. See StartWireMock.
+		"TZ=UTC",
 	)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
