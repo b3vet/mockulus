@@ -52,6 +52,43 @@ const (
 // runs one gate at a time, which claimLane makes a wait rather than a failure.
 var couchbasePorts = []string{"8091", "8092", "8093", "11210"}
 
+// directLaneEnv opts out of publishing those ports and addresses the container
+// by its own IP instead.
+//
+// The lane normally publishes fixed host ports, which means one machine runs one
+// gate at a time and — the case this exists for — a container from an unrelated
+// project holding 8091 blocks the lane outright. Stopping somebody else's
+// service is not the harness' call, so this is the way round it.
+//
+// It is opt-in rather than automatic because it is only true on some hosts. A
+// container IP is routable from the host under OrbStack and on Linux, and is
+// not under Docker Desktop's VM on macOS or Windows, where the published-port
+// path is the only one that works. CI keeps the default; a developer whose
+// ports are taken exports this.
+const directLaneEnv = "MOCKULUS_E2E_CB_DIRECT"
+
+// directLane reports whether to address the container by IP.
+func directLane() bool {
+	v := strings.TrimSpace(os.Getenv(directLaneEnv))
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
+}
+
+// containerIP asks Docker where the container is, which is what direct mode
+// dials instead of a published port.
+func containerIP(ctx context.Context, name string) (string, error) {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
+		"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name).Output()
+	if err != nil {
+		return "", fmt.Errorf("inspect %s for its address: %w", name, err)
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", fmt.Errorf("%s reported no address; this host probably cannot route "+
+			"container IPs, so unset %s and free the published ports instead", name, directLaneEnv)
+	}
+	return ip, nil
+}
+
 // couchbaseLabel marks a container as this harness's, so a later run can find
 // one left behind and tell it apart from a live run's.
 const couchbaseLabel = "mockulus-e2e=couchbase"
@@ -68,6 +105,11 @@ type Couchbase struct {
 	ConnStr string
 	// Image is the pinned tag, for the run log.
 	Image string
+
+	// host is where the harness reaches this container: the loopback address
+	// the ports were published on, or the container's own IP in direct mode
+	// (see directLaneEnv).
+	host string
 
 	container string
 	client    *http.Client
@@ -104,9 +146,21 @@ func StartCouchbase(ctx context.Context, versionFile string) (*Couchbase, error)
 		return nil, err
 	}
 
+	host := "127.0.0.1"
+	if directLane() {
+		ip, err := containerIP(ctx, name)
+		if err != nil {
+			_ = exec.CommandContext(context.WithoutCancel(ctx), "docker", "rm", "-f", name).Run()
+			return nil, err
+		}
+		host = ip
+		log("couchbase lane addressed directly at " + host + " (" + directLaneEnv + " is set)")
+	}
+
 	cb := &Couchbase{
-		ConnStr:   "couchbase://127.0.0.1",
+		ConnStr:   "couchbase://" + host,
 		Image:     image,
+		host:      host,
 		container: name,
 		client:    &http.Client{Timeout: 30 * time.Second},
 	}
@@ -207,7 +261,7 @@ func (c *Couchbase) provision(ctx context.Context) error {
 // earliest point cluster-init can succeed.
 func (c *Couchbase) waitManagement(ctx context.Context) error {
 	return poll(ctx, 90*time.Second, "the couchbase management service never answered", func() error {
-		resp, err := c.get(ctx, "http://127.0.0.1:8091/pools")
+		resp, err := c.get(ctx, "http://"+c.host+":8091/pools")
 		if err != nil {
 			return err
 		}
@@ -261,7 +315,7 @@ func (c *Couchbase) createBucket(ctx context.Context) error {
 // first instance to start.
 func (c *Couchbase) waitBucketQueryable(ctx context.Context) error {
 	if err := poll(ctx, 120*time.Second, "the bucket's nodes never became healthy", func() error {
-		resp, err := c.get(ctx, "http://127.0.0.1:8091/pools/default/buckets/"+couchbaseBucket)
+		resp, err := c.get(ctx, "http://"+c.host+":8091/pools/default/buckets/"+couchbaseBucket)
 		if err != nil {
 			return err
 		}
@@ -344,7 +398,7 @@ func (c *Couchbase) get(ctx context.Context, url string) (httpAnswer, error) {
 func (c *Couchbase) query(ctx context.Context, statement string) (httpAnswer, error) {
 	form := strings.NewReader("statement=" + url.QueryEscape(statement))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"http://127.0.0.1:8093/query/service", form)
+		"http://"+c.host+":8093/query/service", form)
 	if err != nil {
 		return httpAnswer{}, err
 	}
@@ -419,8 +473,10 @@ func claimLane(ctx context.Context, name, image string) error {
 
 	args := make([]string, 0, 7+2*len(couchbasePorts))
 	args = append(args, "run", "-d", "--name", name, "--label", couchbaseLabel)
-	for _, port := range couchbasePorts {
-		args = append(args, "-p", "127.0.0.1:"+port+":"+port)
+	if !directLane() {
+		for _, port := range couchbasePorts {
+			args = append(args, "-p", "127.0.0.1:"+port+":"+port)
+		}
 	}
 	args = append(args, image)
 
