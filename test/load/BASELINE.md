@@ -83,6 +83,31 @@ shared before they measure anything, and every one of them needs the reference
 rig above before its number means what the SLO says. S6, S9 and S10 refuse to
 run rather than pass vacuously when the topology they need is absent.
 
+## S11 — S1's shape with tracing on
+
+`test/load/s11.js`, and the one scenario here that is **informational rather
+than gating**. It carries no throughput or latency threshold, only the two that
+would mean the run did not measure what it claims to: every request must
+succeed, and the instance must actually be exporting.
+
+The reason it is not a gate is the same reason it exists. The SLOs of SPEC §16.1
+are stated for the default configuration, where tracing is off and costs one
+atomic load per request; a deployment that turns it on has chosen a different
+trade, and holding that configuration to numbers measured without it would fail
+runs for doing what they were asked to do. What the operations guide should be
+able to say instead is what the trade costs, and that has to be a measured
+number rather than an assurance.
+
+Half the generated traffic arrives carrying a sampled `traceparent`, because
+sampling is parent-based: that fraction, not `tracing.sample_ratio`, is what
+decides how much of the load is recorded, and a run where nothing was sampled
+would report S1's numbers under S11's name.
+
+No numbers recorded yet — it runs nightly beside S1 on the same rig, and the
+difference between the two on one night is the figure worth quoting. Recording
+one from a laptop would be worse than recording none, for the reason the section
+above gives about Docker Desktop.
+
 ## Microbenchmarks
 
 `make bench`. These are the second half of SPEC §16.2: the k6 scenarios above
