@@ -40,6 +40,41 @@ jobs:
           for i in $(seq 1 30); do curl -sf localhost:9090/readyz >/dev/null && break; sleep 1; done
           k6 run -e MODE=latency -e RATE=20000 -e DURATION=60s test/load/s1.js
           k6 run -e MODE=throughput test/load/s1.js
+          pkill -f 'bin/mockulus' || true
+
+      # S11 reports what tracing costs; it does not gate on it. The SLOs of
+      # §16.1 are stated for the default configuration, and a deployment that
+      # turns tracing on is choosing a different trade — one worth publishing a
+      # measured number for rather than an assurance. `continue-on-error` says
+      # the same thing the scenario's missing thresholds do.
+      - name: S11 — the same shape with tracing on (informational)
+        continue-on-error: true
+        run: |
+          # A collector that accepts everything and keeps nothing, so the number
+          # is mockulus' own cost and not a measurement of a trace backend.
+          python3 - <<'PY' &
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          class Sink(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'application/x-protobuf')
+                  self.send_header('Content-Length', '0')
+                  self.end_headers()
+              def log_message(self, *args): pass
+          HTTPServer(('127.0.0.1', 4318), Sink).serve_forever()
+          PY
+          for i in $(seq 1 30); do curl -sf -o /dev/null localhost:4318 && break || sleep 1; done
+          MOCKULUS_LOG_LEVEL=warn \
+          MOCKULUS_TRACING_ENABLED=true \
+          MOCKULUS_TRACING_ENDPOINT=127.0.0.1:4318 \
+          MOCKULUS_TRACING_INSECURE=true \
+          MOCKULUS_TRACING_SAMPLE_RATIO=1 \
+            ./bin/mockulus &
+          for i in $(seq 1 30); do curl -sf localhost:9090/readyz >/dev/null && break; sleep 1; done
+          k6 run -e MODE=latency -e RATE=20000 -e DURATION=60s test/load/s11.js
+          k6 run -e MODE=throughput test/load/s11.js
+          echo "trace export failures: $(curl -s localhost:9090/metrics | awk '/^mockulus_trace_export_failures_total/ {print $2}')"
 
       - uses: actions/upload-artifact@v4
         if: always()
