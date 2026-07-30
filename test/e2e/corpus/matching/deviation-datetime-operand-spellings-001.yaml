@@ -163,7 +163,52 @@ steps:
         errors:
           - code: 10
             source: {pointer: "/request/headers/X-When/truncateExpectedTo"}
-      body_regex: 'truncateExpectedTo'
+      # The refusal names the parameter that does exist. This spelling is one of
+      # three that mockulus' own spec and roadmap claimed WireMock had, so we are
+      # the reason anyone would type it, and a bare "unknown matcher" would send
+      # its author hunting for a typo they did not make.
+      body_regex: 'the parameter is truncateExpected'
+
+  # The other two of those three, and the one with no counterpart to name: there
+  # is no offset parameter at all, so the message says what to write instead.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/misspelt2",
+                     "headers": {"X-When": {"before": "2021-06-14T12:13:14Z",
+                                            "truncateActualTo": "first day of month"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_regex: 'the parameter is truncateActual'
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/misspelt3",
+                     "headers": {"X-When": {"after": "now", "expectedOffset": "3 days"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_regex: 'there is no offset parameter'
+
+  # A name nothing ever claimed still gets the plain refusal, so the hint is
+  # scoped to the three we published rather than a guess at every typo.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/misspelt4",
+                     "headers": {"X-When": {"after": "now", "totallyMadeUp": "x"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_regex: 'unknown matcher totallyMadeUp"?\}'
 
   # The scope of the refusal, from the other side: the spelling WireMock can act
   # on is accepted here and behaves identically on both servers. The deviation

@@ -327,3 +327,33 @@ func TestSourceIsPreservedForDiagnostics(t *testing.T) {
 		t.Errorf("Source() = %q, want the schema as registered", got)
 	}
 }
+
+// TestListsCoverEveryDraft holds the two enumerated error messages to the maps
+// they describe. Both are hand-ordered so a stub author reads the drafts in the
+// order they were published, and a hand-ordered list is one a new draft can be
+// added to a map without reaching.
+func TestListsCoverEveryDraft(t *testing.T) {
+	if len(versionOrder) != len(versions) {
+		t.Fatalf("versionOrder lists %d spellings, versions has %d", len(versionOrder), len(versions))
+	}
+	for _, name := range versionOrder {
+		if _, ok := versions[name]; !ok {
+			t.Errorf("versionOrder names %q, which is not an accepted spelling", name)
+		}
+	}
+	if len(schemaURIOrder) != len(schemaURIs) {
+		t.Fatalf("schemaURIOrder lists %d URIs, schemaURIs has %d", len(schemaURIOrder), len(schemaURIs))
+	}
+	for _, uri := range schemaURIOrder {
+		if _, ok := schemaURIs[uri]; !ok {
+			t.Errorf("schemaURIOrder names %q, which is not an accepted $schema", uri)
+		}
+	}
+	// The two lists describe the same five drafts, so they must agree
+	// position by position or one message contradicts the other.
+	for i, name := range versionOrder {
+		if versions[name] != schemaURIs[schemaURIOrder[i]] {
+			t.Errorf("position %d: %s and %s are different drafts", i, name, schemaURIOrder[i])
+		}
+	}
+}

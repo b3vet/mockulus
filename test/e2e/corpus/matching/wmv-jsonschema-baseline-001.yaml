@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-baseline-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# Two echo divergences, both known and both narrow.
+#
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+#
+# And the 201 that echoes a newly created stub: WireMock canonicalises an
+# inline-object schema into a Jackson pretty-printed escaped string and injects
+# `"schemaVersion": "V202012"` into the pattern even when the client never sent
+# one, while mockulus returns the document as registered (deviation #41).
+# Neither difference reaches a matching decision — every served response below is
+# still compared in full on both servers.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# The baseline claim, and the one everything else in this family rests on: the
+# matcher really validates. A conforming document matches, a document whose types
+# are wrong does not, and a document missing a required property does not.
+#
+# The three negatives are the point. A matcher that compiled the schema and then
+# accepted everything passes the first step and fails these, and so does one that
+# checks only the top-level type.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0001-0001-4000-8000-000000000001",
+         "name": "an object schema over the whole body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-baseline-001/order",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id", "customer"],
+                        "properties": {"id": {"type": "integer", "minimum": 1},
+                                       "customer": {"type": "string", "minLength": 1},
+                                       "tags": {"type": "array",
+                                                "items": {"type": "string"}}},
+                        "additionalProperties": false}}]},
+         "response": {"status": 200, "body": "order",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Conforming, with and without the optional property.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 7, "customer": "ada"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "order"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 7, "customer": "ada", "tags": ["priority", "eu"]}'
+    expect: {status: 200, body: "order"}
+
+  # Non-conforming by type, at the top level and inside the array.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": "seven", "customer": "ada"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 7, "customer": "ada", "tags": ["priority", 3]}'
+    expect: {status: 404}
+
+  # Non-conforming by value rather than by type, which separates "the shape is
+  # checked" from "the constraints are checked".
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 0, "customer": "ada"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 7, "customer": ""}'
+    expect: {status: 404}
+
+  # A required property that is simply absent.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 7}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{}'
+    expect: {status: 404}
+
+  # And a property the schema does not allow.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 7, "customer": "ada", "discount": 5}'
+    expect: {status: 404}
+
+  # A body that is not JSON at all is a non-match here on both servers. The two
+  # get there differently — WireMock reads the raw text as a JSON string node and
+  # that node fails `"type": "object"`, mockulus refuses the body outright — but
+  # an object schema is exactly the case where the two readings cannot disagree,
+  # which is why this step belongs in a parity case.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-baseline-001/order
+      headers: {Content-Type: "text/plain"}
+      body: "not json at all"
+    expect: {status: 404}

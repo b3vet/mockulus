@@ -5,6 +5,7 @@ package matchers
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -28,6 +29,8 @@ const (
 	ProblemRegex
 	// ProblemJSONPath is a JSONPath expression that does not parse.
 	ProblemJSONPath
+	// ProblemSchema is a JSON Schema that does not compile.
+	ProblemSchema
 )
 
 // Problem is one reason a matcher document was rejected. The caller maps it
@@ -60,6 +63,8 @@ type Options struct {
 	CompileRegex RegexCompiler
 	// CompileJSONPath builds path evaluators for `matchesJsonPath`.
 	CompileJSONPath JSONPathCompiler
+	// CompileSchema builds validators for `matchesJsonSchema`.
+	CompileSchema SchemaCompiler
 	// AllowContentPatterns admits the byte-oriented matchers, which are valid
 	// in some positions and not others — see contentPatterns.
 	AllowContentPatterns bool
@@ -114,11 +119,10 @@ type JSONPathCompiler func(expr string) (JSONPathEvaluator, error)
 // are named individually so the 422 tells a team exactly which roadmap item
 // they are waiting on, rather than a generic refusal.
 var deferredMatchers = map[string]string{
-	"matchesJsonSchema": "matchesJsonSchema",
-	"equalToXml":        "equalToXml (XML matching)",
-	"matchesXPath":      "matchesXPath (XPath matching)",
-	"hasExactly":        "the hasExactly multi-value operator",
-	"includes":          "the includes multi-value operator",
+	"equalToXml":   "equalToXml (XML matching)",
+	"matchesXPath": "matchesXPath (XPath matching)",
+	"hasExactly":   "the hasExactly multi-value operator",
+	"includes":     "the includes multi-value operator",
 }
 
 // modifierKeys are recognised alongside a matcher rather than being matchers
@@ -139,6 +143,14 @@ var modifierKeys = map[string]bool{
 	"ignoreArrayOrder":    true,
 	"ignoreExtraElements": true,
 }
+
+// schemaModifierKey rides along with `matchesJsonSchema` and only with it.
+//
+// WireMock drops it silently anywhere else, and drops it *before* validating the
+// value, so `{"equalTo":"x","schemaVersion":"BANANA"}` registers cleanly there.
+// That is the same accept-and-ignore shape the temporal modifiers have and it is
+// refused for the same reason (§5.5).
+const schemaModifierKey = "schemaVersion"
 
 // temporalMatcherKeys are the three date-time matchers.
 var temporalMatcherKeys = map[string]bool{
@@ -207,6 +219,15 @@ func Compile(raw json.RawMessage, pointer string, opts Options) (Matcher, []Prob
 		value := doc[key]
 
 		if modifierKeys[key] {
+			continue
+		}
+		if key == schemaModifierKey {
+			if _, present := doc["matchesJsonSchema"]; !present {
+				problems = append(problems, Problem{
+					Pointer: pointer + "/" + key,
+					Detail:  "schemaVersion only applies to a matchesJsonSchema matcher",
+				})
+			}
 			continue
 		}
 		if temporalModifierKeys[key] {
@@ -314,6 +335,27 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		}
 		return &BinaryEqualTo{Expected: decoded, Source: s}, nil
 
+	case "matchesJsonSchema":
+		if opts.CompileSchema == nil {
+			return fail("no JSON Schema compiler is configured")
+		}
+		// Both spellings WireMock takes: an inline document, and the same
+		// document as an escaped string. decodeExpectedJSON is what equalToJson
+		// already uses for exactly that pair.
+		_, schema, err := decodeExpectedJSON(value)
+		if err != nil {
+			return fail("matchesJsonSchema takes a JSON Schema, inline or as a string: " + err.Error())
+		}
+		validator, err := opts.CompileSchema(schema, stringField(doc, schemaModifierKey))
+		if err != nil {
+			return nil, []Problem{{
+				Kind:    ProblemSchema,
+				Pointer: at,
+				Detail:  err.Error(),
+			}}
+		}
+		return &MatchesJSONSchema{Schema: validator}, nil
+
 	case "before", "after", "equalToDateTime":
 		var operand string
 		if err := json.Unmarshal(value, &operand); err != nil {
@@ -331,6 +373,16 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		}
 		m, err := CompileTemporal(key, spec)
 		if err != nil {
+			// A refusal earned by a modifier points at that modifier, so the
+			// pointer names the key the author wrote rather than the matcher it
+			// was attached to. This is the same pointer the misplaced-modifier
+			// refusal below already answers, and the two disagreeing was the
+			// only place on this surface where §5.5's "the pointer names the
+			// offending field" was not true.
+			var fe *FieldError
+			if errors.As(err, &fe) {
+				return nil, []Problem{{Pointer: pointer + "/" + fe.Field, Detail: err.Error()}}
+			}
 			return fail(err.Error())
 		}
 		return m, nil
@@ -493,11 +545,31 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		return &Not{Matcher: child}, nil
 
 	default:
+		detail := "unknown matcher " + key
+		if hint, ok := neverExisted[key]; ok {
+			detail += "; " + hint
+		}
 		return nil, []Problem{{
 			Pointer: at,
-			Detail:  "unknown matcher " + key,
+			Detail:  detail,
 		}}
 	}
+}
+
+// neverExisted names the three parameters mockulus's own spec and roadmap
+// claimed WireMock had, which it does not.
+//
+// They earn a hint rather than the bare refusal because we are the reason
+// somebody would be typing one: a stub author who copied a name out of our
+// documentation gets told it is unknown, looks for a misspelling, and finds
+// nothing wrong with what they wrote. Naming the real parameter — or saying
+// there is none — costs one line and closes that loop. WireMock drops all three
+// silently, so no suite depends on either wording.
+var neverExisted = map[string]string{
+	"truncateExpectedTo": "the parameter is truncateExpected",
+	"truncateActualTo":   "the parameter is truncateActual",
+	"expectedOffset": "there is no offset parameter — write the offset into the " +
+		"expected value itself, as in \"now +3 days\"",
 }
 
 // DecodeBase64 reads an operand the way Java's Base64.getDecoder() does, which

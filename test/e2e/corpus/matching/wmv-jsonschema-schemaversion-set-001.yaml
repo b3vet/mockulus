@@ -1,0 +1,181 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-schemaversion-set-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# even where the client sent nothing (deviation #41). Every served response is
+# still diffed in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# `schemaVersion` names the draft a schema is read under, and exactly five
+# spellings exist: V4, V6, V7, V201909, V202012. All five have to register *and*
+# validate — the second half being the part worth asserting, because a server
+# that accepted the name and then quietly fell back to its default draft would
+# pass a registration-only test and answer differently on any schema whose
+# meaning changed between drafts.
+#
+# The schema here is deliberately written in the intersection of all five drafts
+# — `type`, `required`, `properties`, `minimum`, `minItems` — so a difference in
+# the answers can only come from the draft being ignored or the schema not being
+# applied, and not from a keyword that means different things in different
+# drafts. Where a keyword really does change meaning, that is the `format` cases.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0004-0001-4000-8000-000000000001",
+         "name": "draft 4",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-schemaversion-set-001/v4",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id", "items"],
+                        "properties": {"id": {"type": "integer", "minimum": 1},
+                                       "items": {"type": "array", "minItems": 1}}},
+                       "schemaVersion": "V4"}]},
+         "response": {"status": 200, "body": "v4",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0004-0001-4000-8000-000000000002",
+         "name": "draft 6",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-schemaversion-set-001/v6",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id", "items"],
+                        "properties": {"id": {"type": "integer", "minimum": 1},
+                                       "items": {"type": "array", "minItems": 1}}},
+                       "schemaVersion": "V6"}]},
+         "response": {"status": 200, "body": "v6",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0004-0001-4000-8000-000000000003",
+         "name": "draft 7",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-schemaversion-set-001/v7",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id", "items"],
+                        "properties": {"id": {"type": "integer", "minimum": 1},
+                                       "items": {"type": "array", "minItems": 1}}},
+                       "schemaVersion": "V7"}]},
+         "response": {"status": 200, "body": "v7",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0004-0001-4000-8000-000000000004",
+         "name": "draft 2019-09",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-schemaversion-set-001/v201909",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id", "items"],
+                        "properties": {"id": {"type": "integer", "minimum": 1},
+                                       "items": {"type": "array", "minItems": 1}}},
+                       "schemaVersion": "V201909"}]},
+         "response": {"status": 200, "body": "v201909",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0004-0001-4000-8000-000000000005",
+         "name": "draft 2020-12",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-schemaversion-set-001/v202012",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id", "items"],
+                        "properties": {"id": {"type": "integer", "minimum": 1},
+                                       "items": {"type": "array", "minItems": 1}}},
+                       "schemaVersion": "V202012"}]},
+         "response": {"status": 200, "body": "v202012",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Each draft accepts the conforming document …
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v4
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "items": ["a"]}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v4"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v6
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "items": ["a"]}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v6"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v7
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "items": ["a"]}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v7"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v201909
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "items": ["a"]}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v201909"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v202012
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "items": ["a"]}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v202012"}
+
+  # … and each refuses the one that violates a constraint the draft carries,
+  # which is what shows the schema is live under that draft rather than merely
+  # accepted beside it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v4
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 0, "items": ["a"]}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v6
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "items": []}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v7
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v201909
+      headers: {Content-Type: "application/json"}
+      body: '{"id": "one", "items": ["a"]}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schemaversion-set-001/v202012
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "items": "a"}'
+    expect: {status: 404}

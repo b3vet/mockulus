@@ -196,8 +196,6 @@ func TestDeferredFeaturesAreRejectedWithPointers(t *testing.T) {
 			"/request/bodyPatterns/0/matchesXPath"},
 		{`{"request":{"urlPath":"/x","bodyPatterns":[{"equalToXml":"<a/>"}]}}`,
 			"/request/bodyPatterns/0/equalToXml"},
-		{`{"request":{"urlPath":"/x","bodyPatterns":[{"matchesJsonSchema":{}}]}}`,
-			"/request/bodyPatterns/0/matchesJsonSchema"},
 	}
 	for _, c := range cases {
 		problems := compileErrs(t, c.doc)

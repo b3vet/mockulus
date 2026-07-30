@@ -132,15 +132,15 @@ what makes the Evidence column worth reading.
 | | Count |
 |---|---:|
 | WireMock surface — supported | 73 |
-| WireMock surface — supported with a documented deviation | 8 |
-| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 8 |
-| Deliberate deviations from WireMock | 54 |
-| Catalogued behaviors in total | 226 |
+| WireMock surface — supported with a documented deviation | 9 |
+| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
+| Deliberate deviations from WireMock | 57 |
+| Catalogued behaviors in total | 230 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 7 |
-| E2E corpus cases | 572 |
-| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 380 |
-| … `wm: n/a` — expectations from the spec | 192 |
+| E2E corpus cases | 589 |
+| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 394 |
+| … `wm: n/a` — expectations from the spec | 195 |
 | Go-native cases (raw socket, process lifecycle) | 27 |
 
 Milestone cursor `M7`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
@@ -152,7 +152,7 @@ Every catalogued behavior is bound by at least one case. The E2E gate fails when
 
 ### What is refused
 
-8 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
+7 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
 
 | Feature | Answer | Behavior | Note |
 |---|---|---|---|
@@ -160,7 +160,6 @@ Every catalogued behavior is bound by at least one case. The E2E gate fails when
 | `postServeActions` | ❌ 422 | `B-STUB-POSTSERVEACTIONS` | Webhooks deferred |
 | `multipartPatterns` | ❌ 422 | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
 | `customMatcher`, `hasExactly`/`includes` multi-value ops | ❌ 422 | `B-REQ-CUSTOMMATCHER-HASEXACTLY-INCLUDES-MULTI-VALUE-OPS` | Roadmap |
-| `matchesJsonSchema` | ❌ 422 | `B-MATCH-MATCHESJSONSCHEMA` | Roadmap |
 | `equalToXml`, `matchesXPath` | ❌ 422 | `B-MATCH-EQUALTOXML-MATCHESXPATH` | Roadmap |
 | `proxyBaseUrl`, `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` | ❌ 422 | `B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR` | Roadmap (proxy mode) |
 | `fromConfiguredStub`, `additionalHeaders` (proxy-related) | ❌ 422 | `B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED` | — |
@@ -235,12 +234,12 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 | `urlPath` | ✅ | 24 · verified | `B-REQ-URLPATH` | Exact path only |
 | `urlPathPattern` | ✅ | 15 · verified | `B-REQ-URLPATHPATTERN` | Regex on path only |
 | `urlPathTemplate` + `pathParameters` | ✅ | 5 · verified | `B-REQ-URLPATHTEMPLATE-PATHPARAMETERS` | WM 3 templates `/x/{id}`; per-param matchers |
-| `queryParameters` | ✅ | 42 · verified | `B-REQ-QUERYPARAMETERS` | Per-param matcher; a repeated param matches if **any** value satisfies the matcher; `absent` supported. `?x=` and bare `?x` are both present-with-empty-string, never absent |
-| `headers` | ✅ | 64 · verified | `B-REQ-HEADERS` | Case-insensitive names (both directions); a repeated header matches if **any** value satisfies the matcher; values are case-sensitive unless `caseInsensitive`; `absent` supported |
+| `queryParameters` | ✅ | 44 · verified | `B-REQ-QUERYPARAMETERS` | Per-param matcher; a repeated param matches if **any** value satisfies the matcher; `absent` supported. `?x=` and bare `?x` are both present-with-empty-string, never absent |
+| `headers` | ✅ | 65 · verified | `B-REQ-HEADERS` | Case-insensitive names (both directions); a repeated header matches if **any** value satisfies the matcher; values are case-sensitive unless `caseInsensitive`; `absent` supported |
 | `cookies` | ✅ | 5 · verified | `B-REQ-COOKIES` | — |
 | `formParameters` | ✅ | 3 · verified | `B-REQ-FORMPARAMETERS` | `application/x-www-form-urlencoded` bodies; parsed lazily |
 | `basicAuthCredentials` | ✅ | 1 · verified | `B-REQ-BASICAUTHCREDENTIALS` | Sugar over `Authorization` |
-| `bodyPatterns` | ✅ | 41 · verified | `B-REQ-BODYPATTERNS` | All listed patterns must match (AND). Matchers below |
+| `bodyPatterns` | ✅ | 52 · verified | `B-REQ-BODYPATTERNS` | All listed patterns must match (AND). Matchers below |
 | `multipartPatterns` | ❌ 422 | 1 · n/a | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
 | `customMatcher`, `hasExactly`/`includes` multi-value ops | ❌ 422 | 1 · n/a | `B-REQ-CUSTOMMATCHER-HASEXACTLY-INCLUDES-MULTI-VALUE-OPS` | Roadmap |
 
@@ -259,7 +258,7 @@ Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`
 | `before`, `after`, `equalToDateTime` (+`truncateExpected`, `actualFormat`) | 🔶 | 29 · verified | `B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT` | **The expected value's type selects the comparison.** An expected carrying a zone compares *instants* — the actual's offset is honoured and a zoneless actual resolves in the pod's zone; an expected with no zone compares *wall-clock fields* and the actual's offset is discarded rather than converted. So `2021-06-14T12:00:00` reports `2021-06-14T13:00:00+03:00` as later, though that instant is earlier. `before`/`after` are strict; equality is instant-valued and exact to the nanosecond, so `12:13:14Z` equals `12:13:14.000Z`. Operands: ISO-8601 (an offset must carry a colon), a bare date, RFC 1123, and the now-relative forms `now`, `now ±N units`, `±N units` with plural units from `seconds`…`years` (no `weeks`). Modifiers: `truncateExpected`, `truncateActual`, `applyTruncationLast`, `actualFormat` — there is **no** offset parameter, an offset is written into the expected value. `actualFormat` replaces ISO parsing rather than extending it; `unix` is seconds and `epoch` is milliseconds. An unparseable actual is a non-match. Deviations #49–#53 |
 | `equalToJson` (+`ignoreArrayOrder`, `ignoreExtraElements`) | ✅ | 40 · verified | `B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS` | Structural JSON equality; numbers compared by value, so `1` equals `1.0`. `ignoreExtraElements` forgives elements the expected document never accounted for in **arrays as well as objects**: positionally those are the ones past the end, so expected `[1,2]` accepts `[1,2,3]` and still refuses `[3,1,2]`, and an actual array *shorter* than the expected one remains a mismatch. `ignoreArrayOrder` gives up the positions and keeps the count; together they are a subset test — each expected element pairs with a distinct actual element, the unclaimed ones are ignored, and duplicates still have to go round (deviation #25). json-unit placeholders are interpreted as WM does: `ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, and `regex` (full match); in an array a placeholder occupies a slot rather than excusing one. An **unrecognised** placeholder is rejected at registration (deviation #5) |
 | `matchesJsonPath` | ✅ | 47 · verified | `B-MATCH-MATCHESJSONPATH` | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. JSONPath dialect: §6.7 |
-| `matchesJsonSchema` | ❌ 422 | 1 · n/a | `B-MATCH-MATCHESJSONSCHEMA` | Roadmap |
+| `matchesJsonSchema` | 🔶 | 16 · verified | `B-MATCH-MATCHESJSONSCHEMA` | Validates the subject against an embedded JSON Schema, inline or as an escaped string. Draft from `schemaVersion` — exactly `V4`, `V6`, `V7`, `V201909`, `V202012`, defaulting to `V202012` — and a document's own `$schema` overrides that field in both directions. **`format` is asserted only under V4/V6/V7**; 2019-09 and 2020-12 treat it as an annotation, which is the spec's own vocabulary boundary and means the default asserts nothing. `$ref` resolves **within the document only** (`$defs`, `definitions`, JSON pointers, `$anchor`, `$id`); WireMock does not fetch a remote one either, it just fails silently. A subject that is not a JSON document is a non-match. Deviations #55–#57 |
 | `equalToXml`, `matchesXPath` | ❌ 422 | 1 · n/a | `B-MATCH-EQUALTOXML-MATCHESXPATH` | Roadmap |
 | `absent` | ✅ | 32 · verified | `B-MATCH-ABSENT` | Key-level matcher |
 | `and`, `or`, `not` | ✅ | 19 · verified | `B-MATCH-AND-OR-NOT` | Combinators over the above |
@@ -304,7 +303,7 @@ The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt
 
 ## Deliberate deviations
 
-[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 54 deviations
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 57 deviations
 
 The complete list — every place a request that WireMock would accept is answered
 differently here, or refused. Each is deliberate and, where it makes sense, has a
@@ -447,7 +446,7 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 > `B-DEV-DEVIATION-34` · 1 case · wm: n/a · Started is always among a scenario's possible states and can always be set
 
-**35.** WireMock's JSON parser is more permissive than `encoding/json`, and mockulus does not follow it. A request body carrying trailing content after a complete document (`{"a":1} tail`), single-quoted member names or values, or `/* */` and `//` comments is parsed there and refused here — so `equalToJson` and `matchesJsonPath` match there and do not here. The same leniency applies to the `equalToJson` *operand*, which registers there and is 422 here. Strictness is the deliberate half: a body that is not JSON is a fact about the request worth reporting, not a shape to guess at.
+**35.** WireMock's JSON parser is more permissive than `encoding/json`, and mockulus does not follow it. A request body carrying trailing content after a complete document (`{"a":1} tail`), single-quoted member names or values, or `/* */` and `//` comments is parsed there and refused here — so `equalToJson` and `matchesJsonPath` match there and do not here. The same leniency applies to the `equalToJson` *operand*, which registers there and is 422 here. Strictness is the deliberate half: a body that is not JSON is a fact about the request worth reporting, not a shape to guess at. The same strictness governs `matchesJsonSchema`: a subject carrying anything after a complete JSON document is not a document, where WireMock reads the first value and ignores the rest (§5.2, deviation #55).
 
 > `B-DEV-DEVIATION-35` · 2 cases · wm: n/a · a body WireMock's lenient parser accepts and encoding/json rejects does not match here
 
@@ -527,6 +526,18 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 > `B-DEV-DEVIATION-54` · 1 case · wm: n/a · pathParameters without a urlPathTemplate is refused 422 rather than dropped
 
+**55.** A subject that is **not a JSON document** is a plain non-match for `matchesJsonSchema`. WireMock falls back to validating the raw request text as a JSON *string*, so `not json at all` satisfies `{"type":"string"}` there — and for a number, boolean or null body it tries both readings and matches if either succeeds, which makes a schema and its own negation both hold for the body `4`. A matcher whose result cannot be reasoned about is not a behaviour worth reproducing, and unparseable input is already a non-match everywhere else here (§6.7). Trailing content after a complete document is likewise not a document, which is deviation #35 applied to this matcher — WireMock reads the first value and ignores the rest. The difference runs the other way from most: WireMock has two readings to succeed with and so matches *more*, and this is confined to scalar and unparseable subjects, since a schema is written for an object or an array.
+
+> `B-DEV-DEVIATION-55` · 1 case · wm: n/a · a subject that is not a JSON document is a plain non-match for matchesJsonSchema, where WireMock validates the raw text as a string
+
+**56.** A **JSON Schema that does not compile is refused 422** with code 1006, and so is a `schemaVersion` outside the five accepted spellings, an unrecognised `$schema` URI, and a `$ref` that points anywhere but inside the document. WireMock validates only that the operand is JSON: `{"type":"banana"}` and a dangling `$ref` register there and then match nothing ever, a bare `42` registers and matches *everything*, an unrecognised `$schema` silently poisons the whole matcher, and an unresolvable `$ref` aborts the evaluation with no error text anywhere in the response. Every one of those is a stub that looks like a criterion and is not one. The remote-`$ref` refusal in particular closes no network hole — WireMock never fetches, which was established rather than assumed — it converts a silent, undiagnosable no-match into a message naming the field, at the cost that WireMock's failure is *lazy*, so a stub whose bad reference sits under a property no request carries works there and is refused here.
+
+> `B-DEV-DEVIATION-56` · 1 case · wm: n/a · a schema that does not compile, an unknown schemaVersion, an unrecognised $schema and a $ref outside the document are each refused 422
+
+**57.** A **`$ref` cycle that consumes no instance is answered rather than crashing**. WireMock registers such a stub and then returns 500 with a `StackOverflowError` on the first matching request — `{"$ref":"#"}` is enough, as are the mutual and `allOf` forms. Ours compiles them: a cycle with no escape is unsatisfiable, so nothing matches it, and a cycle with an escape branch resolves through it normally. No stub WireMock accepts is refused on this account, so the difference is only that a request answered with a server error there is answered here.
+
+> `B-DEV-DEVIATION-57` · 1 case · wm: n/a · a $ref cycle is answered rather than returning a server error
+
 ## Beyond the WireMock surface
 
 A single-node oracle has nothing to diff these against: an operational contract
@@ -549,7 +560,7 @@ What the server does when the store is not there. The half worth reading is what
 
 ### Error catalog
 
-[SPEC Appendix B](../SPEC.md#appendix-b--error-catalog) · 14 behaviors
+[SPEC Appendix B](../SPEC.md#appendix-b--error-catalog) · 15 behaviors
 
 Every rejection carries one of these in a WireMock-shaped error envelope, with a JSON pointer at the offending field. A 422 lists **all** problems in one response.
 
@@ -563,6 +574,7 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 | 1003 | 422 | 5 · n/a | `B-ERR-1003` | Regex does not compile (both engines) |
 | 1004 | 422 | 2 · n/a | `B-ERR-1004` | Unknown transformer name |
 | 1005 | 422 | 1 · n/a | `B-ERR-1005` | Unknown settings key |
+| 1006 | 422 | 1 · n/a | `B-ERR-1006` | JSON Schema that does not compile (`matchesJsonSchema`) |
 | 1010 | 500 | 2 · n/a | `B-ERR-1010` | Journal disabled (WM parity shape **[DH]**) |
 | 1020 | 503 | 9 · n/a | `B-ERR-1020` | Store unavailable (admin writes during CB outage) |
 | 1021 | 500 | 1 · n/a | `B-ERR-1021` | Scenario state unavailable (CB outage, scenario stub) |

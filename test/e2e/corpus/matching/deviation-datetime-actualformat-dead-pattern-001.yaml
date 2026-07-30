@@ -20,6 +20,11 @@ wm: n/a
 # compile", so a pattern that is mostly punctuation is still fine as long as one
 # field survives — which is what the last stub here pins, so the refusal cannot
 # quietly grow into a rejection of unusual but working patterns.
+#
+# Every pointer below names `actualFormat` rather than the matcher it rides on.
+# That is the rule for the whole modifier family and it is pinned rather than
+# incidental: `equalToDateTime` is not what has to change, and an author sent to
+# it would be looking at the one part of the criterion that is correct.
 steps:
   - admin:
       method: POST
@@ -36,7 +41,7 @@ steps:
       body_json_subset:
         errors:
           - code: 10
-            source: {pointer: "/request/headers/X-When/equalToDateTime"}
+            source: {pointer: "/request/headers/X-When/actualFormat"}
       body_regex: 'actualFormat'
 
   # An empty `actualFormat` is not "no actualFormat": the stub does not exist,
@@ -68,7 +73,7 @@ steps:
       body_json_subset:
         errors:
           - code: 10
-            source: {pointer: "/request/headers/X-When/before"}
+            source: {pointer: "/request/headers/X-When/actualFormat"}
       body_regex: 'qqqq'
 
   - admin: {method: GET, path: /__admin/mappings/d7000107-0000-4000-8000-000000000002}
@@ -90,7 +95,7 @@ steps:
       body_json_subset:
         errors:
           - code: 10
-            source: {pointer: "/request/headers/X-When/after"}
+            source: {pointer: "/request/headers/X-When/actualFormat"}
 
   # The boundary the refusal must not cross: a pattern that is nearly all
   # punctuation but names one real field is accepted and works. The test is

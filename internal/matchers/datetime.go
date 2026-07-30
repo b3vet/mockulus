@@ -3,7 +3,6 @@
 package matchers
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -432,6 +431,25 @@ type TemporalSpec struct {
 	Location *time.Location
 }
 
+// FieldError is a refusal that belongs to one modifier key rather than to the
+// matcher as a whole, so the 422 can point at the field the author actually
+// wrote. Without it every refusal below lands on the matcher name, and a stub
+// author who wrote `truncateExpected` is told something is wrong with their
+// `equalToDateTime` — which is both true and useless for finding the typo.
+type FieldError struct {
+	// Field is the modifier key the refusal belongs to.
+	Field string
+	// Err is the refusal itself.
+	Err error
+}
+
+func (e *FieldError) Error() string { return e.Err.Error() }
+func (e *FieldError) Unwrap() error { return e.Err }
+
+func fieldErrf(field, format string, args ...any) error {
+	return &FieldError{Field: field, Err: fmt.Errorf(format, args...)}
+}
+
 // CompileTemporal builds a date-time matcher, refusing at registration anything
 // that could not take effect at match time.
 //
@@ -478,7 +496,7 @@ func CompileTemporal(op string, spec TemporalSpec) (Matcher, error) {
 	if spec.HasActualFormat {
 		format, err := compileActualFormat(spec.ActualFormat)
 		if err != nil {
-			return nil, err
+			return nil, &FieldError{Field: "actualFormat", Err: err}
 		}
 		m.format = format
 	}
@@ -486,14 +504,15 @@ func CompileTemporal(op string, spec TemporalSpec) (Matcher, error) {
 	if spec.HasTruncateExpected {
 		tr, err := parseTruncation(spec.TruncateExpected)
 		if err != nil {
-			return nil, fmt.Errorf("truncateExpected: %w", err)
+			return nil, fieldErrf("truncateExpected", "truncateExpected: %w", err)
 		}
 		// Inert on a literal expected, which is a statically detectable case and
 		// so a refusal rather than a silence. WireMock applies this parameter
 		// only to a now-relative operand.
 		if !relative {
-			return nil, fmt.Errorf("truncateExpected has no effect on the literal date-time %q; "+
-				"it applies only to a now-relative expected value such as \"now +3 days\"",
+			return nil, fieldErrf("truncateExpected",
+				"truncateExpected has no effect on the literal date-time %q; "+
+					"it applies only to a now-relative expected value such as \"now +3 days\"",
 				spec.Expected)
 		}
 		m.truncExpected = tr
@@ -502,21 +521,23 @@ func CompileTemporal(op string, spec TemporalSpec) (Matcher, error) {
 	if spec.HasTruncateActual {
 		tr, err := parseTruncation(spec.TruncateActual)
 		if err != nil {
-			return nil, fmt.Errorf("truncateActual: %w", err)
+			return nil, fieldErrf("truncateActual", "truncateActual: %w", err)
 		}
 		// Inert whenever the actual is read through a custom pattern: WireMock
 		// truncates only a value that parsed to a zoned instant, and a pattern
 		// yields one only for `unix`/`epoch`. Also statically detectable.
 		if m.format != nil && m.format.kind == formatLayout {
-			return nil, errors.New("truncateActual has no effect when actualFormat reads the value " +
-				"with a pattern; it applies to an ISO-8601 actual carrying an offset, or to unix/epoch")
+			return nil, fieldErrf("truncateActual",
+				"truncateActual has no effect when actualFormat reads the value "+
+					"with a pattern; it applies to an ISO-8601 actual carrying an offset, or to unix/epoch")
 		}
 		m.truncActual = tr
 	}
 
 	if spec.ApplyTruncLast && !spec.HasTruncateExpected {
-		return nil, errors.New("applyTruncationLast has no effect without truncateExpected; " +
-			"it chooses whether the truncation or the offset is applied first")
+		return nil, fieldErrf("applyTruncationLast",
+			"applyTruncationLast has no effect without truncateExpected; "+
+				"it chooses whether the truncation or the offset is applied first")
 	}
 	m.applyTruncLast = spec.ApplyTruncLast
 

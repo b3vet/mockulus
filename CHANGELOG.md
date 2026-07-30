@@ -65,6 +65,37 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- `matchesJsonSchema`, with its `schemaVersion` modifier. Another 422 becomes a
+  supported feature. Drafts `V4`, `V6`, `V7`, `V201909` and `V202012` are
+  accepted, defaulting to `V202012`, and the operand may be an inline object, a
+  boolean, or a schema encoded as a JSON string — all three spellings WireMock
+  takes.
+
+  The part worth knowing before writing one: **the draft decides whether `format`
+  does anything.** Under 2019-09 and 2020-12 `format` is an annotation rather
+  than an assertion — the JSON Schema specification moved it into a vocabulary
+  that is off by default — so on the default draft `{"type":"string",
+  "format":"email"}` accepts `"not-an-email"`. Pin `V7` or declare `$schema` in
+  the document to get it enforced. A document's own `$schema` overrides
+  `schemaVersion` in both directions, which is again WireMock's behaviour and was
+  established by probing it.
+
+  `$ref` resolves within the document — `$defs`, `definitions`, JSON pointers,
+  `$anchor` and `$id` all work. A reference out of the document is refused at
+  registration with the new code `1006` rather than accepted and left to match
+  nothing, which is what WireMock does with one: it never fetches the URL either,
+  so nothing is lost but the silence. The same refusal covers the other documents
+  that are JSON but not usable schemas — a `type` naming no type, a dangling
+  `$ref`, an unrecognised `$schema`, and a bare scalar, which on WireMock
+  registers happily and then matches **every** request.
+
+  One difference runs the other way, and a suite validating scalar bodies could
+  notice it: the matcher here validates the parsed JSON document, so a body that
+  is not JSON is a non-match. WireMock falls back to validating the raw request
+  text as a JSON string, which makes `{"type":"string"}` and its own negation
+  both match the body `4`. Object and array bodies — what schemas are normally
+  written against — behave identically on both.
+
 ### Changed
 
 - **Three modifier names that do not exist were removed from the stub format.**
@@ -73,7 +104,11 @@ supported feature is a minor.
   them. The effect was inverted: every real modifier was reported as an unknown
   matcher, and the three invented ones passed without comment. WireMock drops an
   unrecognised key silently, so registering successfully never proved a name
-  existed — only reading the stub back does.
+  existed — only reading the stub back does. Because our own documentation is
+  the reason anyone would be typing one, all three now answer with the parameter
+  that does exist rather than a bare "unknown matcher" — and `expectedOffset`
+  says there is no offset parameter at all, since the offset goes into the
+  expected value itself.
 - SPEC §5.6 no longer promises a `runner --record-wm` flag. It was never built,
   and the section had no catalog entry of any kind, which is how the claim
   survived a whole release; the section is now pinned like §8, §9 and §11 so the

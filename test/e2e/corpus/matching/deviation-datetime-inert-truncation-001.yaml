@@ -41,9 +41,11 @@ steps:
       body_json_subset:
         errors:
           - code: 10
-            source: {pointer: "/request/headers/X-When/equalToDateTime"}
-      # The detail names the parameter and the value it could not act on, so the
-      # author can see which half to change.
+            source: {pointer: "/request/headers/X-When/truncateExpected"}
+      # The pointer names the parameter rather than the matcher it was attached
+      # to: the parameter is the half that has to change, and pointing at
+      # `equalToDateTime` would send the author to the value that is fine. The
+      # detail names the operand it could not act on for the same reason.
       body_regex: 'truncateExpected'
 
   # Nothing persisted, on either the mock port or the admin one.
@@ -97,7 +99,7 @@ steps:
       body_json_subset:
         errors:
           - code: 10
-            source: {pointer: "/request/headers/X-When/equalToDateTime"}
+            source: {pointer: "/request/headers/X-When/truncateActual"}
       body_regex: 'truncateActual'
 
   - request:
@@ -149,7 +151,7 @@ steps:
       body_json_subset:
         errors:
           - code: 10
-            source: {pointer: "/request/headers/X-When/after"}
+            source: {pointer: "/request/headers/X-When/applyTruncationLast"}
       body_regex: 'applyTruncationLast'
 
   - admin: {method: GET, path: /__admin/mappings/d7000103-0000-4000-8000-000000000005}
@@ -173,5 +175,5 @@ steps:
       body_json_subset:
         errors:
           - code: 10
-            source: {pointer: "/request/headers/X-When/after"}
+            source: {pointer: "/request/headers/X-When/truncateExpected"}
       body_regex: 'banana'
