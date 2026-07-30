@@ -54,8 +54,16 @@ func StartWireMock(ctx context.Context, versionFile string) (*WireMock, error) {
 
 	// Port 0 lets Docker pick, and `docker port` reports what it picked, so
 	// concurrent runs on one machine do not collide.
+	//
+	// TZ is pinned because both servers resolve a local date-time against the
+	// zone they are running in, and a differential run compares their answers.
+	// Left unset the two zones are whatever each container and each developer's
+	// machine happened to have, so a case about local time would pass in CI and
+	// fail on a laptop for a reason that has nothing to do with either server.
+	// UTC is also what a container defaults to, so this pins the common case
+	// rather than choosing an unusual one.
 	run := exec.CommandContext(ctx, "docker", "run", "-d", "--name", name,
-		"-p", "0:8080", image)
+		"-e", "TZ=UTC", "-p", "0:8080", image)
 	out, err := run.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("start %s: %w: %s", image, err, out)
