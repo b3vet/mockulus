@@ -546,8 +546,13 @@ func matcherCost(m matchers.Matcher) int {
 		return 1
 	case *matchers.Regex:
 		return 2
-	case *matchers.EqualToJSON:
+	// A temporal match parses the actual value on every evaluation, which is
+	// costlier than a regex over an already-materialised string but has no
+	// backtracking to blow up on.
+	case *matchers.Temporal:
 		return 3
+	case *matchers.EqualToJSON:
+		return 4
 	case *matchers.Not:
 		return matcherCost(t.Matcher)
 	case *matchers.And:
@@ -555,7 +560,7 @@ func matcherCost(m matchers.Matcher) int {
 	case *matchers.Or:
 		return maxCost(t.Matchers)
 	default:
-		return 4
+		return 5
 	}
 }
 

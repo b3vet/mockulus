@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-equality-nanos-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# How precise equality is, which is a question with a wrong answer in both
+# directions. `12:13:14Z` equals `12:13:14.000Z` — so trailing zeros in the
+# fraction are not text to be compared. It does not equal `12:13:14.001Z` — so
+# the comparison is not to the second either. And the resolution goes all the way
+# to the nanosecond: `.000000001Z` is unequal and ordered *after*, which an
+# implementation storing milliseconds reports as equal and as neither direction.
+#
+# `before` and `after` ride along on the same operand because the ordering
+# assertions are what stop the inequality ones from being satisfiable by a
+# matcher that simply never matches.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0007-0001-4000-8000-000000000001",
+         "name": "equalToDateTime to the second",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-equality-nanos-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {equalToDateTime: "2021-06-14T12:13:14Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0007-0001-4000-8000-000000000002",
+         "name": "after the same second",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-equality-nanos-001/after",
+                     "headers": {"X-When": {"after": "2021-06-14T12:13:14Z"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0007-0001-4000-8000-000000000003",
+         "name": "before the same second",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-equality-nanos-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14T12:13:14Z"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A zero fraction is the same instant, however it is spelled.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/equal
+      headers: {X-When: "2021-06-14T12:13:14.000Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/equal
+      headers: {X-When: "2021-06-14T12:13:14.000000000Z"}
+    expect: {status: 200, body: "equal"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/after
+      headers: {X-When: "2021-06-14T12:13:14.000Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/before
+      headers: {X-When: "2021-06-14T12:13:14.000Z"}
+    expect: {status: 404}
+
+  # One millisecond past it is unequal and later.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/equal
+      headers: {X-When: "2021-06-14T12:13:14.001Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/after
+      headers: {X-When: "2021-06-14T12:13:14.001Z"}
+    expect: {status: 200, body: "after"}
+
+  # One nanosecond past it, which is the whole point: unequal, and later.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/equal
+      headers: {X-When: "2021-06-14T12:13:14.000000001Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/after
+      headers: {X-When: "2021-06-14T12:13:14.000000001Z"}
+    expect: {status: 200, body: "after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/before
+      headers: {X-When: "2021-06-14T12:13:14.000000001Z"}
+    expect: {status: 404}
+
+  # One nanosecond short of it, so the resolution is not an artifact of rounding
+  # in one direction.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/equal
+      headers: {X-When: "2021-06-14T12:13:13.999999999Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/before
+      headers: {X-When: "2021-06-14T12:13:13.999999999Z"}
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-nanos-001/after
+      headers: {X-When: "2021-06-14T12:13:13.999999999Z"}
+    expect: {status: 404}

@@ -1,0 +1,171 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-repeated-value-anyof-001
+behaviors:
+  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
+  - B-REQ-QUERYPARAMETERS
+  - B-REQ-HEADERS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A repeated key is any-of: the criterion holds as soon as ONE of the values
+# satisfies it, and the values that do not are not held against it. This case
+# pins that rule for `equalToDateTime`, where both servers implement it, and for
+# the orderings of `before` where both servers agree.
+#
+# WHAT IS DELIBERATELY NOT ASSERTED HERE, and why. `before` and `after` are NOT
+# any-of on pinned WireMock 3.13.2, and PROBE_DATETIME.md §P7 says they are:
+#
+#   ?when=<not-before>&when=<before>   WireMock 404, mockulus 200
+#   ?when=<before>&when=<not-before>   WireMock 200, mockulus 200
+#   ?when=not-a-date&when=<before>     WireMock 200, mockulus 200
+#
+# Measured on the pinned oracle at TZ=UTC, identically for headers, query
+# parameters and cookies, and for `after` in both directions. The rule WireMock
+# follows is that among the values which PARSE, the first one decides the whole
+# criterion; unparseable values are skipped over, and a later value that would
+# satisfy the criterion is never consulted. `equalToDateTime` is exempt — it is
+# order-independent any-of there, which is consistent with WireMock selecting the
+# best of the several values by match distance and with `before`/`after` having no
+# distance to report, so every value that parses ties and the first tie wins.
+#
+# §P7's "order-independent, for both headers and query parameters" was evidently
+# established with the satisfying value first, which is the one ordering that
+# cannot tell the two rules apart. mockulus answers any-of for all three
+# matchers, so it matches strictly MORE than WireMock here — the safe direction,
+# and the same direction as the date-only widening — but it is an undecided
+# divergence with no §5.5 number, so the corpus does not get to claim either
+# answer as parity yet. The two steps below that use `before` are exactly the
+# orderings that are parity today; the diverging one is left for the deviation
+# entry that settles it.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000e-0001-4000-8000-000000000001",
+         "name": "equalToDateTime, over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-repeated-value-anyof-001/query",
+                     "queryParameters": {"when": {"equalToDateTime": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "query",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            when: {equalToDateTime: "2021-06-14T12:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000e-0001-4000-8000-000000000002",
+         "name": "equalToDateTime, on a repeated header",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-repeated-value-anyof-001/header",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "header",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000e-0001-4000-8000-000000000003",
+         "name": "before, over a repeated query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-repeated-value-anyof-001/before",
+                     "queryParameters": {"when": {"before": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # One value, satisfying and not satisfying, so the criterion is known to gate
+  # anything at all.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/query?when=2021-06-14T12:00:00Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "query"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/query?when=2021-06-14T13:00:00Z"
+    expect: {status: 404}
+
+  # Two values, only the second satisfying: a match. The satisfying value need
+  # not be the first one, which is the assertion that separates any-of from "the
+  # first value decides".
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/query?when=2021-06-14T13:00:00Z&when=2021-06-14T12:00:00Z"
+    expect: {status: 200, body: "query"}
+
+  # And the other order, so it is not "the last value decides" either.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/query?when=2021-06-14T12:00:00Z&when=2021-06-14T13:00:00Z"
+    expect: {status: 200, body: "query"}
+
+  # Three values with the satisfying one last, so the rule is not a two-value
+  # special case.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/query?when=2021-06-14T13:00:00Z&when=2021-06-14T14:00:00Z&when=2021-06-14T12:00:00Z"
+    expect: {status: 200, body: "query"}
+
+  # Several values, none satisfying: still a non-match. Any-of is not
+  # any-value-present.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/query?when=2021-06-14T13:00:00Z&when=2021-06-14T14:00:00Z"
+    expect: {status: 404}
+
+  # An unreadable value beside a satisfying one does not poison the criterion.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/query?when=not-a-date&when=2021-06-14T12:00:00Z"
+    expect: {status: 200, body: "query"}
+
+  # The same rule at the header position, where the repeated values arrive as two
+  # field lines rather than as two query pairs.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-repeated-value-anyof-001/header
+      headers: {X-When: "2021-06-14T12:00:00Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "header"}
+
+  # A `before` criterion with the satisfying value first — the ordering both
+  # servers answer the same way. The unparseable-then-satisfying pair is the
+  # other one: a value that cannot be read is skipped rather than deciding the
+  # criterion, on both servers.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/before?when=2021-06-14T11:00:00Z&when=2021-06-14T13:00:00Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "before"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/before?when=not-a-date&when=2021-06-14T11:00:00Z"
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-repeated-value-anyof-001/before?when=2021-06-14T13:00:00Z&when=2021-06-14T14:00:00Z"
+    expect: {status: 404}
+
+  # One field line is one value however many commas it holds. RFC 7230 lets a
+  # list-valued header be sent either way and neither server treats the two
+  # spellings as equivalent, so a comma-joined pair is a single string that is not
+  # a date — not a two-value any-of. Both orderings of the members are refused,
+  # which is what shows the line was never split.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-repeated-value-anyof-001/header
+      headers: {X-When: "2021-06-14T13:00:00Z,2021-06-14T12:00:00Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-repeated-value-anyof-001/header
+      headers: {X-When: "2021-06-14T12:00:00Z,2021-06-14T13:00:00Z"}
+    expect: {status: 404}

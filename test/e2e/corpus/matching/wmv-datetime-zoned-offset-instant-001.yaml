@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-zoned-offset-instant-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# An expected value that carries an offset compares INSTANTS. `12:00:00+03:00`
+# is 09:00Z, so an actual of `10:00:00Z` is *after* it even though 10 is less
+# than 12 when the two are read as wall-clock text.
+#
+# This is also the coverage for the colon-bearing offset spelling of an expected
+# operand. The offset is honoured to the exact instant rather than merely
+# accepted: the step at 09:00:00Z is refused by both directions, which can only
+# be true if the threshold really moved to 09:00Z, and the step at 11:00:00Z is
+# reported *after* while a wall-clock reading of the same operand would report it
+# *before*.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0003-0001-4000-8000-000000000001",
+         "name": "before an expected value carrying +03:00",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-zoned-offset-instant-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14T12:00:00+03:00"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2021-06-14T12:00:00+03:00"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0003-0001-4000-8000-000000000002",
+         "name": "after an expected value carrying +03:00",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-zoned-offset-instant-001/after",
+                     "headers": {"X-When": {"after": "2021-06-14T12:00:00+03:00"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The recorded row: 10:00Z is later than 09:00Z, so `after` holds and `before`
+  # does not — the answer a wall-clock comparison of "10" against "12" inverts.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/after
+      headers: {X-When: "2021-06-14T10:00:00Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/before
+      headers: {X-When: "2021-06-14T10:00:00Z"}
+    expect: {status: 404}
+
+  # 11:00Z is further past the threshold and still `after`, which is the same
+  # claim one hour before the wall-clock reading would flip.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/after
+      headers: {X-When: "2021-06-14T11:00:00Z"}
+    expect: {status: 200, body: "after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/before
+      headers: {X-When: "2021-06-14T11:00:00Z"}
+    expect: {status: 404}
+
+  # The inverse, so this is not a matcher that reports everything as later:
+  # 08:00Z really is before 09:00Z.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/before
+      headers: {X-When: "2021-06-14T08:00:00Z"}
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/after
+      headers: {X-When: "2021-06-14T08:00:00Z"}
+    expect: {status: 404}
+
+  # And the boundary lands on the offset-resolved instant, not on the written
+  # hour. Both directions refuse 09:00Z; a matcher that dropped the +03:00 would
+  # serve `before` here.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/before
+      headers: {X-When: "2021-06-14T09:00:00Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/after
+      headers: {X-When: "2021-06-14T09:00:00Z"}
+    expect: {status: 404}
+
+  # The same instant written with the same offset as the operand is refused by
+  # both too, which is strictness stated in the actual's own spelling.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/before
+      headers: {X-When: "2021-06-14T12:00:00+03:00"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoned-offset-instant-001/after
+      headers: {X-When: "2021-06-14T12:00:00+03:00"}
+    expect: {status: 404}

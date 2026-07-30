@@ -1,0 +1,172 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-datetime-dateonly-wholeday-001
+behaviors: [B-DEV-DEVIATION-51, B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT]
+# Mockulus-specific by construction: WireMock answers 404 to the whole-day steps
+# below, because it reads a bare date as midnight. There is no compatible answer
+# to diff — the difference is the deviation.
+wm: n/a
+#
+# Deviation #51. `equalToDateTime: "2021-06-14"` matches every moment of 14 June
+# here. WireMock reads the bare date as midnight, so the same criterion matches
+# `00:00:00` and excludes the other 86 399 seconds of the day it names — which
+# is not what anybody writing a date means, and fails in the quietest possible
+# way: the stub is installed, the day is right, and the request does not match.
+#
+# The widening is deliberately confined to equality. `before` and `after` keep
+# WireMock's midnight exactly, and the second half of this case is what pins
+# that: widening those would *refuse* requests WireMock accepts, and the whole
+# argument for deviating here is that the difference only ever runs one way —
+# every request WireMock matches, mockulus matches identically, so no suite that
+# passes there can fail here.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000104-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-dateonly-wholeday-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The deviation itself: an afternoon on the named day matches. WireMock: 404.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/equal
+      headers: {X-When: "2021-06-14T13:00:00Z"}
+    expect: {status: 200, body: "equal"}
+
+  # The last second of the day, which is the far end of the widening.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/equal
+      headers: {X-When: "2021-06-14T23:59:59Z"}
+    expect: {status: 200, body: "equal"}
+
+  # The one instant WireMock does match is still matched: the widening adds, it
+  # does not move.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/equal
+      headers: {X-When: "2021-06-14T00:00:00Z"}
+    expect: {status: 200, body: "equal"}
+
+  # It is a day, not a range that leaks: midnight of the next day is out, and so
+  # is the last second of the previous one.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/equal
+      headers: {X-When: "2021-06-15T00:00:00Z"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/equal
+      headers: {X-When: "2021-06-13T23:59:59Z"}
+    expect: {status: 404}
+
+  # A date-only *actual* against the same criterion still matches, so the
+  # widening did not cost the plainest reading of all.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/equal
+      headers: {X-When: "2021-06-14"}
+    expect: {status: 200, body: "equal"}
+
+  # `after` keeps midnight. The same bare date, and the same afternoon value —
+  # matched here because 13:00 is after midnight, which is WireMock's answer
+  # exactly.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000104-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-dateonly-wholeday-001/after",
+                     "headers": {"X-When": {"after": "2021-06-14"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/after
+      headers: {X-When: "2021-06-14T13:00:00Z"}
+    expect: {status: 200, body: "after"}
+
+  # The step that proves `after` was not widened with equality: under a whole-day
+  # reading the named day would be *inside* the excluded interval and this would
+  # be a 404 — under midnight semantics it is refused only because `after` is
+  # strict and 00:00 is not after 00:00. Either way 404, so the next step is the
+  # one that actually separates them.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/after
+      headers: {X-When: "2021-06-14T00:00:00Z"}
+    expect: {status: 404}
+
+  # Here is the separation. 13:00 on the named day is after midnight and inside
+  # the day: a whole-day `after` would refuse it, midnight semantics accept it,
+  # and it is accepted three steps above. This step pins the other side — an
+  # instant before midnight of the named day is refused, so the threshold really
+  # is midnight and not the end of the day.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/after
+      headers: {X-When: "2021-06-13T23:59:59Z"}
+    expect: {status: 404}
+
+  # `before` mirrors it: nothing on the named day is under the threshold,
+  # because the threshold is that day's midnight.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000104-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-dateonly-wholeday-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/before
+      headers: {X-When: "2021-06-13T23:59:59Z"}
+    expect: {status: 200, body: "before"}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/before
+      headers: {X-When: "2021-06-14T13:00:00Z"}
+    expect: {status: 404}
+
+  # A dated expected value is unaffected: the widening is triggered by the
+  # operand carrying no time, not by `equalToDateTime` itself. This criterion
+  # names an instant and matches only that instant.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000104-0000-4000-8000-000000000004",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-dateonly-wholeday-001/instant",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T00:00:00Z"}}},
+         "response": {"status": 200, "body": "instant",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/instant
+      headers: {X-When: "2021-06-14T00:00:00Z"}
+    expect: {status: 200, body: "instant"}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-dateonly-wholeday-001/instant
+      headers: {X-When: "2021-06-14T13:00:00Z"}
+    expect: {status: 404}

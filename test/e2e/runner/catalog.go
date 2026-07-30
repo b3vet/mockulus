@@ -290,7 +290,16 @@ func (d *specDoc) SectionHash(section string) string {
 		}
 		// Match the section number exactly: "## 8. Cluster synchronization"
 		// must not be found by looking for "8." inside "## 18. …".
-		if strings.HasPrefix(strings.TrimLeft(line, "# "), section+". ") {
+		//
+		// Two spellings, because the document uses two. A top-level section puts
+		// a dot after its number ("## 8. Cluster synchronization") and a
+		// subsection does not ("### 5.6 Differential compatibility
+		// verification"). Only the first was matched here, so a prose contract
+		// could pin a whole chapter and nothing narrower — which for §5.6 would
+		// have meant pinning all of §5 and re-syncing on every edit to the
+		// matcher tables. The number itself is still matched exactly either way.
+		heading := strings.TrimLeft(line, "# ")
+		if strings.HasPrefix(heading, section+". ") || strings.HasPrefix(heading, section+" ") {
 			start = i
 			break
 		}

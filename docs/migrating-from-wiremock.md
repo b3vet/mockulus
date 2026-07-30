@@ -10,9 +10,11 @@ deviations that can change a green suite into a red one.
 Two facts shape everything below.
 
 **Mockulus implements a subset.** XML and XPath matching, proxying, recording,
-webhooks, JSON Schema matching, multipart matching, date-time matchers and
-Java-class extensions are not in v1. They are catalogued with design sketches in
-[ROADMAP.md](../ROADMAP.md).
+webhooks, JSON Schema matching, multipart matching and Java-class extensions are
+not implemented. They are catalogued with design sketches in
+[ROADMAP.md](../ROADMAP.md). The date-time matchers `before`, `after` and
+`equalToDateTime` **are** implemented — see the note on them below, because their
+comparison rule is less obvious than it looks.
 
 **Nothing in that subset is silently ignored.** A stub using an unsupported
 field is refused at registration with `422` and an error body whose
@@ -109,9 +111,9 @@ that answers `422` with:
     },
     {
       "code": 1000,
-      "source": { "pointer": "/mappings/5/request/queryParameters/since/after" },
+      "source": { "pointer": "/mappings/5/request/bodyPatterns/0/matchesJsonSchema" },
       "title": "Unsupported feature",
-      "detail": "the after date-time matcher is not supported in mockulus v1 — see ROADMAP.md"
+      "detail": "matchesJsonSchema is not supported in mockulus v1 — see ROADMAP.md"
     }
   ]
 }
@@ -655,6 +657,57 @@ network.
 - **`caseInsensitive` folds by Unicode simple case folding** (deviation 43),
   where Java folds per UTF-16 code unit. They disagree on the Turkish dotted and
   dotless I in one direction and on supplementary-plane pairs in the other.
+- **`equalToDateTime` against a bare date matches that whole day** (deviation
+  51). WireMock reads a date-only value as midnight, so
+  `equalToDateTime: "2021-06-14"` matches only `00:00:00` there and excludes
+  every other moment of the day it names. Mockulus matches any instant that day.
+  The widening is confined to equality — `before` and `after` keep midnight —
+  so mockulus only ever matches *more*, and a suite that passes on WireMock
+  cannot fail here because of it.
+
+### The date-time matchers, and the rule that is not obvious
+
+`before`, `after` and `equalToDateTime` work, and they follow WireMock exactly on
+everything below except where a deviation is named. One rule is worth knowing
+before you write one, because it is the opposite of what most people assume.
+
+**The expected value's type decides what is being compared.** If the expected
+value carries a zone, the two sides are compared as *instants*: the request's
+offset is honoured, and a request value with no offset is read in the pod's own
+timezone. If the expected value has no zone, the two are compared as
+*wall-clock readings*, and the request's offset is **discarded rather than
+converted**. So:
+
+```jsonc
+// expected carries Z → instants. 12:00+03:00 is 09:00Z, so this matches.
+{ "after": "2021-06-14T12:00:00+03:00" }   // request: 2021-06-14T10:00:00Z  → match
+
+// expected carries no zone → wall clock. The request's instant is 10:00Z,
+// two hours EARLIER, and it still counts as after, because 13:00 > 12:00.
+{ "after": "2021-06-14T12:00:00" }         // request: 2021-06-14T13:00:00+03:00 → match
+```
+
+That is WireMock's behaviour, reproduced deliberately. The practical advice is to
+write your expected values **with an offset** unless you specifically want
+wall-clock comparison, because instants are what almost everyone means.
+
+Three more things that catch people, all WireMock's behaviour and all reproduced:
+
+- `before` and `after` are **strict**. A request value exactly equal to the
+  expected satisfies neither. There is no `beforeOrEqualTo`; write
+  `{"or": [{"equalToDateTime": …}, {"before": …}]}`.
+- `actualFormat` **replaces** ISO parsing rather than adding to it. Once you set
+  it, an ISO-8601 request value stops matching.
+- `unix` means epoch **seconds** and `epoch` means epoch **milliseconds**. They
+  are not synonyms, and mixing them up is a factor-of-1000 error.
+
+Where mockulus refuses what WireMock accepts, it is always a criterion that could
+not have worked there either (deviations 49, 50, 52, 53): an operand WireMock
+takes and can never match — a `+0300` offset without its colon, `now+2days`
+without spaces, a bare epoch number — a truncation parameter in a position where
+WireMock silently ignores it, or an `actualFormat` on a matcher that has no date
+to format. Each is a 422 naming the field, so the assessment step above finds
+them all at once.
 
 ### Responses on the wire
 
@@ -707,8 +760,8 @@ v1 architecture, what it depends on, and a size estimate. That entry is the
 place to comment on, because it is where the work would start.
 
 **The roadmap's order is a proposal, not a commitment.** Bucket 1 is the set of
-compat gaps with known demand — XML and XPath matching, date-time matchers,
-`matchesJsonSchema`, multipart matching. Bucket 2 is the new subsystems: proxy
+compat gaps with known demand — XML and XPath matching, `matchesJsonSchema`,
+multipart matching; the date-time matchers were the first of them to land. Bucket 2 is the new subsystems: proxy
 mode, record and playback, webhooks. The ordering is explicitly reprioritised on
 demand signal, so the useful thing to do with a gap is report it rather than
 route around it. A v1.x feature landing can only ever turn a `422` into a

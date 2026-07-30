@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-placement-bodypatterns-001
+behaviors:
+  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The matchers work in `bodyPatterns`, where the value under comparison is the
+# whole request body rather than a named field. Same semantics: strict on both
+# directions, equality by instant.
+#
+# The body is sent as `text/plain` deliberately. The temporal matchers do not read
+# the body as JSON, and leaving the runner to default the type to
+# `application/json` would put a second question — how each server treats a
+# declared type its content does not honour — inside a case about the comparison.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0011-0001-4000-8000-000000000001",
+         "name": "equalToDateTime over the whole body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-datetime-placement-bodypatterns-001/equal",
+                     "bodyPatterns": [{"equalToDateTime": "2021-06-14T12:00:00Z"}]},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          bodyPatterns:
+            - {equalToDateTime: "2021-06-14T12:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0011-0001-4000-8000-000000000002",
+         "name": "before over the whole body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-datetime-placement-bodypatterns-001/before",
+                     "bodyPatterns": [{"before": "2021-06-14T12:00:00Z"}]},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0011-0001-4000-8000-000000000003",
+         "name": "after over the whole body",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-datetime-placement-bodypatterns-001/after",
+                     "bodyPatterns": [{"after": "2021-06-14T12:00:00Z"}]},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Equality by instant, in the body position: a different spelling of the same
+  # instant matches, and the same wall clock at a different instant does not.
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/equal
+      headers: {Content-Type: "text/plain"}
+      body: "2021-06-14T15:00:00+03:00"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/equal
+      headers: {Content-Type: "text/plain"}
+      body: "2021-06-14T12:00:00+03:00"
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/equal
+      headers: {Content-Type: "text/plain"}
+      body: "2021-06-14T12:00:00Z"
+    expect: {status: 200, body: "equal"}
+
+  # Both directions, and the boundary neither of them accepts.
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/before
+      headers: {Content-Type: "text/plain"}
+      body: "2021-06-14T11:00:00Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "before"}
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/before
+      headers: {Content-Type: "text/plain"}
+      body: "2021-06-14T12:00:00Z"
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/after
+      headers: {Content-Type: "text/plain"}
+      body: "2021-06-14T13:00:00Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "after"}
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/after
+      headers: {Content-Type: "text/plain"}
+      body: "2021-06-14T12:00:00Z"
+    expect: {status: 404}
+
+  # A body that is not a date is a plain non-match here as anywhere else.
+  - request:
+      method: POST
+      path: /e2e/wmv-datetime-placement-bodypatterns-001/before
+      headers: {Content-Type: "text/plain"}
+      body: "not-a-date"
+    expect: {status: 404}

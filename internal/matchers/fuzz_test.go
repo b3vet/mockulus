@@ -88,6 +88,24 @@ func fuzzSubjects() []Subject {
 // take compilation to its edges: every operand at the wrong type, the
 // combinators empty and nested, and the placeholders spelled wrong.
 var matcherSeeds = []string{
+	// The date-time matchers, with the modifier shapes that ride along and the
+	// operand spellings WireMock accepts but can never match.
+	`{"before":"2021-06-14T12:13:14Z"}`,
+	`{"after":"2021-06-14T12:13:14+03:00"}`,
+	`{"equalToDateTime":"2021-06-14"}`,
+	`{"equalToDateTime":"now +3 days"}`,
+	`{"before":"now"}`,
+	`{"after":"-3 hours"}`,
+	`{"equalToDateTime":"2021-06-14T12:13:14Z","actualFormat":"dd/MM/yyyy"}`,
+	`{"equalToDateTime":"2021-06-14T12:13:14Z","actualFormat":"unix"}`,
+	`{"equalToDateTime":"2021-06-14T12:13:14Z","actualFormat":"epoch"}`,
+	`{"equalToDateTime":"2021-06-01T00:00:00Z","truncateActual":"first day of month"}`,
+	`{"after":"now +3 days","truncateExpected":"FIRST_DAY_OF_MONTH","applyTruncationLast":true}`,
+	`{"before":"2021-06-14T12:13:14+0300"}`,
+	`{"before":"now+2days"}`,
+	`{"before":"  now  "}`,
+	`{"equalToDateTime":"2021-06-14T12:13:14Z","actualFormat":""}`,
+	`{"equalTo":"x","actualFormat":"dd/MM/yyyy"}`,
 	`{"equalTo":"application/json"}`,
 	`{"equalTo":"a","caseInsensitive":true}`,
 	`{"binaryEqualTo":"aGVsbG8="}`,

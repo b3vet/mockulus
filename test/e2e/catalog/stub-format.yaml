@@ -277,13 +277,13 @@ behaviors:
     status: "ok"
   - id: "B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT"
     spec_row: "spec:5.2:content-matchers|before, after, equalToDateTime (+truncateExpected, actualFormat)"
-    spec_hash: "5d9e30aa8c6edff7"
+    spec_hash: "5bcc8923aa5557cf"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
-    impl_milestone: "M1"
+    impl_milestone: "M7"
     summary: "before, after, equalToDateTime (+truncateExpected, actualFormat)"
-    evidence: "422 code 1000 for the date-time matchers, one per matcher and not one per key"
-    evidence_tokens: ["1000", "equalToDateTime"]
+    evidence: "the three matchers compare, with the mode selected by the expected value's type: a zoned expected compares instants and a zoneless one compares wall-clock fields"
+    evidence_tokens: ["equalToDateTime", "before"]
     status: "ok"
   - id: "B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS"
     spec_row: "spec:5.2:content-matchers|equalToJson (+ignoreArrayOrder, ignoreExtraElements)"

@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-truncate-actual-inert-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `truncateActual` is **skipped unless the request's value parsed to a zoned
+# instant**. A zoneless ISO value and a bare date go through untouched, and the
+# criterion then compares them as written.
+#
+# This reads like a bug, and reproducing it is a decision rather than an
+# oversight: the alternative — truncating anyway — makes mockulus match requests
+# WireMock refuses, which is the direction a compatibility layer must not move
+# in. It is also the one inert case that cannot be refused at registration the
+# way the other two are (deviation #50), because whether the value carries an
+# offset is a property of the request, not of the stub.
+#
+# The shape of every stub here is expected-equals-actual, which is what makes
+# the answer readable: a 200 can only mean the truncation did *not* happen,
+# because a truncated actual could not still equal the untruncated value it was
+# compared against. Nothing about the criterion changes between the three; only
+# the form of the value in the request does.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000009-0000-4000-8000-000000000001",
+         "name": "a zoned actual is truncated",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-inert-001/zoned",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "truncateActual": "first day of month"}}},
+         "response": {"status": 200, "body": "zoned",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000009-0000-4000-8000-000000000002",
+         "name": "a zoneless actual is not",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-inert-001/zoneless",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14",
+                                            "truncateActual": "first day of month"}}},
+         "response": {"status": 200, "body": "zoneless",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000009-0000-4000-8000-000000000003",
+         "name": "a date-only actual is not either",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-inert-001/dateonly",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14",
+                                            "truncateActual": "first day of month"}}},
+         "response": {"status": 200, "body": "dateonly",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Truncation applied: the value no longer equals itself, because the one it is
+  # compared against was never reduced.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-inert-001/zoned
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # Truncation skipped: the same criterion, the same reduction asked for, and
+  # the value survives to the comparison intact.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-inert-001/zoneless
+      headers: {X-When: "2021-06-14T12:13:14"}
+    expect: {status: 200, body: "zoneless"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-inert-001/dateonly
+      headers: {X-When: "2021-06-14"}
+    expect: {status: 200, body: "dateonly"}
+
+  # The sharpest form of the same claim: one stub, one criterion, two requests
+  # differing by a single `Z`. The zoned one is truncated to the first of June
+  # and stops matching; the zoneless one is not and does. Nothing but the shape
+  # of the request decides it.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-inert-001/zoneless
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # And the skip is not "truncation never happens on this stub": the zoned stub
+  # above proves the modifier is wired, so a 200 on the zoneless request is the
+  # skip and not a dropped parameter.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-inert-001/dateonly
+      headers: {X-When: "2021-06-15"}
+    expect: {status: 404}

@@ -1,0 +1,187 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-datetime-operand-spellings-001
+behaviors: [B-DEV-DEVIATION-49, B-ERR-10]
+# Mockulus-specific by construction: WireMock answers 201 to every one of these
+# and then fails every request against the stub with no diagnostic, so there is
+# no compatible answer to diff — the whole point is that we refuse where it
+# accepts. Sending a spelling WireMock can act on is parity and is pinned by the
+# wmv-datetime-* cases.
+wm: n/a
+#
+# Deviation #49. WireMock accepts thirteen expected-operand spellings that can
+# never match anything: the value registers, and every request afterwards is a
+# silent non-match. The author gets a stub that looks installed and a mock that
+# never fires, with nothing anywhere to say why.
+#
+# These four are the date-shaped half of that list — each one a value a person
+# would reasonably expect to work, which is exactly why they are dangerous. A
+# colon-less offset is legal ISO-8601 in the RFC-822 style; a bare epoch is what
+# a timestamp header usually carries; a time with no date is what a `Retry-After`
+# style value looks like. All four are refused at registration here, and the
+# detail names the offending spelling so the fix needs no bisection.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/colonless",
+                     "headers": {"X-When": {"before": "2021-06-14T12:13:14+0300"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+      body_regex: '2021-06-14T12:13:14\+0300'
+
+  # Nothing was persisted: a refused registration must not leave a half-stub
+  # behind that a later request could reach.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-operand-spellings-001/colonless
+      headers: {X-When: "2021-06-14T09:13:14Z"}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d7000101-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # A time with no date. WireMock registers it and never matches; there is no
+  # instant it could be compared against.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/time-only",
+                     "headers": {"X-When": {"after": "12:13:14"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/after"}
+      body_regex: '12:13:14'
+
+  # A bare epoch. It is a number, not a date-time — the `actualFormat: unix`
+  # keyword is what reads one, and only on the *actual* side.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/epoch",
+                     "headers": {"X-When": {"before": "1623672794"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+      body_regex: '1623672794'
+
+  # Not a date at all, which is the case a registration-time parse cannot
+  # plausibly be argued into accepting — and WireMock accepts it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000004",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/garbage",
+                     "headers": {"X-When": {"equalToDateTime": "not-a-date"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/equalToDateTime"}
+      body_regex: 'not-a-date'
+
+  # An ISO-shaped value whose fields are impossible. The shape is not the check;
+  # the parse is.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000005",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/impossible",
+                     "headers": {"X-When": {"before": "2021-13-45T99:99:99Z"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+
+  # Surrounding whitespace. There is no operand trimming on either server, so
+  # this is a distinct string from the one it looks like — and on WireMock a
+  # dead one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000006",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/padded",
+                     "headers": {"X-When": {"before": "  2021-06-14T12:13:14Z  "}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+
+  # An unrecognised modifier key folds into the same deviation: it is the same
+  # claim about the same feature — a criterion the author wrote is honoured or
+  # refused, never quietly discarded. `truncateExpectedTo` is not a WireMock
+  # parameter at all; WireMock drops it and the stored mapping reads as though
+  # it had never been written.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000007",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/misspelt",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "truncateExpectedTo": "first day of month"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/truncateExpectedTo"}
+      body_regex: 'truncateExpectedTo'
+
+  # The scope of the refusal, from the other side: the spelling WireMock can act
+  # on is accepted here and behaves identically on both servers. The deviation
+  # is about the dead spellings, not about the matcher.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000101-0000-4000-8000-000000000008",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-operand-spellings-001/live",
+                     "headers": {"X-When": {"before": "2021-06-14T12:13:14+03:00"}}},
+         "response": {"status": 200, "body": "live",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-operand-spellings-001/live
+      headers: {X-When: "2021-06-14T08:00:00Z"}
+    expect: {status: 200, body: "live"}

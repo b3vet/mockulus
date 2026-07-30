@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-placement-queryparameters-001
+behaviors:
+  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
+  - B-REQ-QUERYPARAMETERS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The matchers work on `queryParameters`, and with the same semantics they have
+# on a header rather than merely being accepted there: strictness, and equality
+# by instant rather than by text. A position that compiled the matcher but
+# compared the values some other way — case-folded, string-wise — passes an
+# accepted-here test and fails these.
+#
+# No expected or actual value in this case carries a `+hh:mm` offset, and that is
+# deliberate: `+` in a query string decodes to a space, so an offset written there
+# would be asserting on URL decoding rather than on the matcher. The
+# instant-versus-text claim is made with `Z` values and a zoneless one.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000f-0001-4000-8000-000000000001",
+         "name": "before, on a query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-placement-queryparameters-001/before",
+                     "queryParameters": {"when": {"before": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            when: {before: "2021-06-14T12:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000f-0001-4000-8000-000000000002",
+         "name": "after, on a query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-placement-queryparameters-001/after",
+                     "queryParameters": {"when": {"after": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000f-0001-4000-8000-000000000003",
+         "name": "equalToDateTime, on a query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-placement-queryparameters-001/equal",
+                     "queryParameters": {"when": {"equalToDateTime": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/before?when=2021-06-14T11:00:00Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "before"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/before?when=2021-06-14T13:00:00Z"
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/after?when=2021-06-14T13:00:00Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "after"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/after?when=2021-06-14T11:00:00Z"
+    expect: {status: 404}
+
+  # Strict here too: the boundary satisfies neither direction and satisfies
+  # equality.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/before?when=2021-06-14T12:00:00Z"
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/after?when=2021-06-14T12:00:00Z"
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/equal?when=2021-06-14T12:00:00Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+
+  # And equality by instant rather than by text at this position: a zoneless
+  # actual resolves in the server's zone, which the harness pins to UTC on both
+  # servers, so this value names the operand's instant written differently.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/equal?when=2021-06-14T12:00:00"
+    expect: {status: 200, body: "equal"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-placement-queryparameters-001/equal?when=2021-06-14T12:00:01Z"
+    expect: {status: 404}

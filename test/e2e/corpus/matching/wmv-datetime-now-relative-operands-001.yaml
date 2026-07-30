@@ -1,0 +1,184 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-now-relative-operands-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# The now-relative operand family: `now`, `now <±n> <units>`, and the bare
+# `<±n> <units>` with the keyword left off — which is a real spelling, not a
+# typo, and one an implementation that keys on the word `now` drops.
+#
+# A threshold read from the clock is only assertable where the answer cannot
+# drift, so the actuals are chosen far either side of anything the present will
+# sweep through: the year 2021 and the year 2999 for the un-offset thresholds,
+# and the years 1000 and 1500 for the thousand-year one. The offsets are large
+# for exactly that reason — a `+3 hours` threshold cannot be bracketed by a
+# literal that is still right tomorrow, so the small offsets here are asserted
+# only for the direction they share with `now`, and the large one carries the
+# claim that the offset arithmetic happened at all.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000008-0000-4000-8000-000000000001",
+         "name": "before now",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-now-relative-operands-001/before",
+                     "headers": {"X-When": {"before": "now"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000008-0000-4000-8000-000000000002",
+         "name": "after now",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-now-relative-operands-001/after",
+                     "headers": {"X-When": {"after": "now"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/before
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "before"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/before
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 404}
+
+  # The complement on the same two values. Two criteria that disagree on both
+  # rules out a threshold that matched everything and one that matched nothing.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/after
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 200, body: "after"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/after
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # The keyword is optional: a bare signed offset is a now-relative operand on
+  # its own. An implementation that requires the word `now` refuses this at
+  # registration; one that treats the string as a literal date-time refuses it
+  # too, and either way the 201 below is part of the assertion.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000008-0000-4000-8000-000000000003",
+         "name": "a bare backward offset, keyword omitted",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-now-relative-operands-001/bare-hours",
+                     "headers": {"X-When": {"before": "-3 hours"}}},
+         "response": {"status": 200, "body": "bare-hours",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/bare-hours
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "bare-hours"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/bare-hours
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 404}
+
+  # A bare forward offset, which is the same grammar with the sign left off.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000008-0000-4000-8000-000000000004",
+         "name": "a bare forward offset, keyword and sign omitted",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-now-relative-operands-001/bare-days",
+                     "headers": {"X-When": {"after": "2 days"}}},
+         "response": {"status": 200, "body": "bare-days",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/bare-days
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 200, body: "bare-days"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/bare-days
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # The offset is load-bearing rather than decorative. A thousand years back
+  # puts the threshold in the eleventh century, where two literals can bracket
+  # it and stay right: the year 1500 is after it and the year 1000 is not.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000008-0000-4000-8000-000000000005",
+         "name": "a thousand years back",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-now-relative-operands-001/millennium",
+                     "headers": {"X-When": {"after": "-1000 years"}}},
+         "response": {"status": 200, "body": "millennium",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/millennium
+      headers: {X-When: "1500-01-01T00:00:00Z"}
+    expect: {status: 200, body: "millennium"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/millennium
+      headers: {X-When: "1000-01-01T00:00:00Z"}
+    expect: {status: 404}
+
+  # The same value against the un-offset threshold, which is what turns the pair
+  # above into a claim about the offset: `after now` refuses the year 1500.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/after
+      headers: {X-When: "1500-01-01T00:00:00Z"}
+    expect: {status: 404}
+
+  # And the mirror of that, forward: a thousand years on, the year 2999 is under
+  # the threshold — where `before now` refuses it four steps above.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000008-0000-4000-8000-000000000006",
+         "name": "a thousand years on, with the keyword",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-now-relative-operands-001/forward",
+                     "headers": {"X-When": {"before": "now +1000 years"}}},
+         "response": {"status": 200, "body": "forward",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-now-relative-operands-001/forward
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 200, body: "forward"}

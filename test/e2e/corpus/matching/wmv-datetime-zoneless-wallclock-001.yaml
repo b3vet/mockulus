@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-zoneless-wallclock-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# An expected value with NO zone compares wall-clock fields, and the actual's
+# offset is DISCARDED rather than converted. So `2021-06-14T12:00:00` reports an
+# actual of `13:00:00+03:00` as later, even though that instant — 10:00Z — is two
+# hours *earlier* than any reading of the operand.
+#
+# The `-05:00` step is the one that cannot be explained any other way. Its wall
+# clock reads 11:00 and its instant is 16:00Z; the matcher answers `before`,
+# which is the wall-clock answer and the exact opposite of the instant one. A
+# single implementation that normalises everything to instants passes the zoned
+# case beside this one and fails here, which is why both exist.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0004-0001-4000-8000-000000000001",
+         "name": "before a zoneless expected value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-zoneless-wallclock-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14T12:00:00"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2021-06-14T12:00:00"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0004-0001-4000-8000-000000000002",
+         "name": "after a zoneless expected value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-zoneless-wallclock-001/after",
+                     "headers": {"X-When": {"after": "2021-06-14T12:00:00"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The recorded row. 13:00 beats 12:00 as written, so `after` holds — and the
+  # instant that spelling names is earlier than the operand's, so an
+  # instant-comparing implementation answers `before` here instead.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/after
+      headers: {X-When: "2021-06-14T13:00:00+03:00"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/before
+      headers: {X-When: "2021-06-14T13:00:00+03:00"}
+    expect: {status: 404}
+
+  # The mirror, through a negative offset so the two rows cannot both be an
+  # artifact of the offset's direction. Wall clock 11:00 is before 12:00; the
+  # instant 16:00Z is after it.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/before
+      headers: {X-When: "2021-06-14T11:00:00-05:00"}
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/after
+      headers: {X-When: "2021-06-14T11:00:00-05:00"}
+    expect: {status: 404}
+
+  # The offset is discarded, not converted: an actual whose written hour equals
+  # the operand's is refused by both directions however far its instant is from
+  # the operand's. Converting +09:00 to 03:00Z would put it before 12:00 and
+  # serve the `before` stub.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/before
+      headers: {X-When: "2021-06-14T12:00:00+09:00"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/after
+      headers: {X-When: "2021-06-14T12:00:00+09:00"}
+    expect: {status: 404}
+
+  # The controls with both sides zoneless, where nothing zone-dependent can
+  # happen at all: these are the answers the rows above are being compared to.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/after
+      headers: {X-When: "2021-06-14T13:00:00"}
+    expect: {status: 200, body: "after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/before
+      headers: {X-When: "2021-06-14T11:00:00"}
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-zoneless-wallclock-001/before
+      headers: {X-When: "2021-06-14T12:00:00"}
+    expect: {status: 404}
