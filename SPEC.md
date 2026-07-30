@@ -955,6 +955,7 @@ internal/match/           engine: Snapshot, matching algorithm, ParsedRequest po
 internal/stub/            stub JSON model, validation (422 catalog), compilation to CompiledStub
 internal/matchers/        content matchers (equalTo, contains, regex, json…) — pure functions
 internal/jsonpath/        JSONPath evaluator (definite/indefinite paths, §6.7)
+internal/jsonschemax/     JSON Schema seam: draft selection, format policy, $ref scope (§5.2)
 internal/regexx/          RE2/regexp2 seam, timeouts
 internal/handlebars/      Handlebars subset: parser + evaluator
 internal/javatime/        Java date patterns and offset expressions → Go time (§10.3, §5.2)
@@ -973,7 +974,7 @@ test/load/                k6 scenarios, compose rigs (§16)
 deploy/chart/  deploy/manifests/  
 ```
 
-**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), `go.opentelemetry.io/otel` + `otel/trace` + `otel/sdk` + the OTLP/HTTP trace exporter (§14.3 — the API half was already in the module graph transitively, and the exporter is only linked in, never started, unless `tracing.enabled`), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
+**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), `go.opentelemetry.io/otel` + `otel/trace` + `otel/sdk` + the OTLP/HTTP trace exporter (§14.3 — the API half was already in the module graph transitively, and the exporter is only linked in, never started, unless `tracing.enabled`), `santhosh-tekuri/jsonschema/v6` (§5.2 `matchesJsonSchema`, behind the `internal/jsonschemax` seam; it brings `golang.org/x/text` and `dlclark/regexp2`, the latter already shipped for §6.6, so a schema's `pattern` is evaluated by the engine `matches` already uses), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
 
 Interfaces kept narrow and defined **at the consumer** (Go idiom); `memory` store doubles as the test fake — no mock-generation tooling (fitting, given the project name).
 
