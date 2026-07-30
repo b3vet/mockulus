@@ -844,7 +844,23 @@ mockulus_trace_export_failures_total                             counter   # §1
 - **Transport**: OTLP/HTTP only, to `tracing.endpoint` (`host:port`; `tracing.insecure` chooses http over https, and an endpoint carrying a scheme is refused at startup rather than reinterpreted). Export is batched on a background processor, never on the request path (§16.3 rule 3). A collector that refuses or cannot be reached drops the batch and increments `mockulus_trace_export_failures_total` (§14.1), with the reason logged at most once a minute — silence is what a working collector looks like, so an outage must not also be silent.
 - **Sampling**: `ParentBased(TraceIDRatioBased(tracing.sample_ratio))`. A request arriving with W3C trace context follows its caller's decision, so the spans of a mock always appear inside the trace of the test that drove it; the ratio (default `0.1`) governs only traces this pod starts itself, which is what keeps flipping the switch on a busy deployment from becoming an export storm.
 - **Propagation**: W3C `tracecontext` only. Baggage is not propagated — nothing here reads it.
-- **Spans**: one server span per mock request (`mock <METHOD>`) and one per admin request (`admin <endpoint group>`). Mock spans carry the match outcome, the serving stub's id and name, and the snapshot epoch; admin spans cover authentication, so a 401 is a span rather than a gap. `/__admin` served on the mock port is excluded from mock spans, as it is from the mock-port metrics (§14.1). Span names are a fixed vocabulary: an unrecognised request method is reported as `_OTHER` with the original carried as an attribute, and admin spans are named by endpoint group, so mock traffic can no more mint span names than it can mint metric series. No span name or attribute carries a stub body or header.
+- **Spans**: one server span per mock request (`mock <METHOD>`) and one per admin request (`admin <endpoint group>`), with the serve-phase children and background spans of §14.4. Mock spans carry the match outcome, the serving stub's id and name, and the snapshot epoch; admin spans cover authentication, so a 401 is a span rather than a gap. `/__admin` served on the mock port is excluded from mock spans, as it is from the mock-port metrics (§14.1). Span names are a fixed vocabulary: an unrecognised request method is reported as `_OTHER` with the original carried as an attribute, and admin spans are named by endpoint group, so mock traffic can no more mint span names than it can mint metric series. No span name or attribute carries a stub body or header.
+
+### 14.4 Span model & correlation
+
+The children of a serve span exist to answer where a request's time went, and they follow the pay-per-use rule the phases themselves follow: a span appears only when the phase it measures ran.
+
+| Span | Kind | When | Carries |
+|---|---|---|---|
+| `match` | internal | every served request | `mockulus.candidates` — the count the §14.1 histogram records, which is what turns "matching was slow" into "matching evaluated two thousand stubs" |
+| `scenario.read` | client | scenario-member stubs only (§9.2) | `mockulus.scenario.name` |
+| `scenario.transition` | client | a served stub with `newScenarioState` (§9.3) | `mockulus.scenario.name` |
+| `template.render` | internal | a templated stub with templating active (§10.1) | render failure marks the span |
+| `delay` | internal | only when the composed delay is above zero (§12.4) | `mockulus.delay_ms` — a trace must distinguish the time a stub was *told* to wait from time something actually took, because a duration alone cannot and only one of the two is a fault |
+
+Two background spans are **roots rather than children**, deliberately. `snapshot.rebuild` (trigger, epoch, stub count) and `journal.flush` (batch size) are shared work: a rebuild is coalesced across every write that triggered it and outlives all of them, and a journal batch holds entries from many requests and often many traces. Attaching either to one caller's trace would bill the whole cluster's convergence, or an unrelated request's journal write, to whoever happened to arrive first.
+
+**Correlation.** A journal entry gains a `traceId` member when the request that produced it was sampled — captured when the entry is built, since it crosses a channel to a background writer by which point the span is over (§11.1). It is additive, so §5.6's subset diffing does not see it. The sampled access-log line (§14.2) gains a `trace_id` field on the same condition. Both are absent, not empty, when there is no sampled span, so a deployment that is not tracing keeps exactly the journal document and the log line it had.
 
 ---
 

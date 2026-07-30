@@ -143,19 +143,15 @@ tests:
       look at — the case has to hold the collector open, drive traffic, and find
       it still empty, which is an observation a YAML expectation has no shape
       for.
-  - name: TestTracingJoinsCallerTraceContext
+  - name: TestTracingSamplingFollowsTheCallerNotTheRatio
     behaviors: [B-CFG-TRACING-SAMPLE-RATIO]
     why: >-
-      The observable is which trace the exported span belongs to. That answer
-      lives in the span's own trace and parent ids at the collector, so the case
-      must send a traceparent of its own choosing and then read the binary ids
-      back out of an OTLP payload.
-  - name: TestTracingUnsampledRootProducesNoSpans
-    behaviors: [B-CFG-TRACING-SAMPLE-RATIO]
-    why: >-
-      It is the negative half of the sampling decision, and negatives about a
-      second output channel are exactly what a response-shaped expectation
-      cannot state.
+      Both halves of the decision are asserted from one instance, where the only
+      difference between the two requests is a traceparent header. The answer
+      lives in the exported spans' own trace and parent ids, so the case has to
+      send a header of its own choosing and read the binary ids back out of an
+      OTLP payload — and it has to count the spans, because the claim is that
+      exactly one of the two requests produced one.
   - name: TestTracingSendsConfiguredHeadersAndServiceName
     behaviors: [B-CFG-TRACING-HEADERS, B-CFG-TRACING-SERVICE-NAME]
     why: >-
@@ -187,3 +183,25 @@ tests:
       guards against is a TLS handshake against a listener that has none. Both
       the choice and its consequence happen on a connection mockulus opens to
       somewhere else, so nothing a corpus case can send or receive touches it.
+  - name: TestTracingRecordsThePhasesThatRanAndOnlyThose
+    behaviors: [B-PROSE-TRACING-SPAN-MODEL]
+    why: >-
+      The claim is about the shape of a tree that exists only at a collector:
+      which phases became spans, that each is attached to the request that
+      caused it, and that the phases a stub did not use produced nothing. A
+      corpus case sees two responses, both byte-identical whether the trees
+      underneath them are right or empty. One instance serves both stubs so the
+      absence is proved on a process that demonstrably knows how to produce the
+      spans in question.
+  - name: TestSnapshotRebuildIsATraceOfItsOwn
+    behaviors: [B-PROSE-TRACING-BACKGROUND-ROOT]
+    why: >-
+      What is asserted is the absence of a parent, and that a background span
+      did not join the trace of the admin write that triggered it. Both are
+      properties of exported span metadata, which no HTTP expectation reaches.
+  - name: TestJournalEntryCarriesTheTraceID
+    behaviors: [B-PROSE-TRACING-CORRELATION]
+    why: >-
+      The field only appears when a sampled span existed, so proving it means
+      driving a traced request and then reading the journal — two surfaces, one
+      of which has to be configured as a collector first.

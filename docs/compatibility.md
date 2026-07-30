@@ -137,11 +137,11 @@ what makes the Evidence column worth reading.
 | Deliberate deviations from WireMock | 48 |
 | Catalogued behaviors in total | 220 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
-| Behaviors stated in prose rather than a table | 3 |
+| Behaviors stated in prose rather than a table | 6 |
 | E2E corpus cases | 537 |
 | … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 353 |
 | … `wm: n/a` — expectations from the spec | 184 |
-| Go-native cases (raw socket, process lifecycle) | 25 |
+| Go-native cases (raw socket, process lifecycle) | 27 |
 
 Milestone cursor `M7`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
 verified cases as a v1.0 release criterion.
@@ -596,7 +596,7 @@ Precedence is env var > YAML file > default; the env spelling is `MOCKULUS_` plu
 | `tracing.endpoint` | — | 3 · n/a (3 Go-native) | `B-CFG-TRACING-ENDPOINT` | OTLP/HTTP collector as `host:port` (e.g. `otel-collector:4318`); required when enabled |
 | `tracing.insecure` | `false` | 2 · n/a (2 Go-native) | `B-CFG-TRACING-INSECURE` | Send over plain HTTP rather than HTTPS |
 | `tracing.headers` | — | 1 · n/a (1 Go-native) | `B-CFG-TRACING-HEADERS` | Exporter headers as `k=v,k=v` (e.g. an ingestion token) |
-| `tracing.sample_ratio` | `0.1` | 2 · n/a (2 Go-native) | `B-CFG-TRACING-SAMPLE-RATIO` | Sampling ratio for traces this pod starts itself (0–1); a caller's decision always wins |
+| `tracing.sample_ratio` | `0.1` | 1 · n/a (1 Go-native) | `B-CFG-TRACING-SAMPLE-RATIO` | Sampling ratio for traces this pod starts itself (0–1); a caller's decision always wins |
 | `tracing.service_name` | `mockulus` | 1 · n/a (1 Go-native) | `B-CFG-TRACING-SERVICE-NAME` | `service.name` reported on exported spans |
 
 Rows marked ○ have no distinct observable of their own — a tuning knob whose
@@ -640,7 +640,7 @@ Prometheus exposition on the admin port's `/metrics`. Low-cardinality by design:
 
 ## Behaviors stated in prose
 
-3 contracts are stated as prose rather than as a table, so they cannot be derived
+6 contracts are stated as prose rather than as a table, so they cannot be derived
 mechanically the way every row above was. They are catalogued by hand against a hash
 of the section they encode: editing that prose fails the gate until a person re-reads
 it and re-syncs the entry. All three are the distributed form of something a
@@ -651,5 +651,8 @@ single-process server gets for free, which is why none has an oracle.
 | Epoch polling propagates stub changes to every replica, level-triggered and coalesced, over a bulk read consistent with every write the epoch accounts for | [§8](../SPEC.md#8-cluster-synchronization) | 4 · n/a | `B-PROSE-SYNC-PROPAGATION` |
 | Scenario state is distributed, starts at Started, gates matching and transitions under CAS | [§9](../SPEC.md#9-scenarios-stateful-mocks) | 1 · n/a | `B-PROSE-SCENARIO-SEMANTICS` |
 | Journal entries become visible to verification eventually, and never block the request path | [§11](../SPEC.md#11-request-journal--verification) | 1 · n/a | `B-PROSE-JOURNAL-CONSISTENCY` |
+| A served request's phases become child spans of its server span, and only when the phase ran | [§14](../SPEC.md#144-span-model--correlation) | 1 · n/a (1 Go-native) | `B-PROSE-TRACING-SPAN-MODEL` |
+| Background work roots its own trace rather than joining the request that triggered it | [§14](../SPEC.md#144-span-model--correlation) | 1 · n/a (1 Go-native) | `B-PROSE-TRACING-BACKGROUND-ROOT` |
+| A journal entry carries the trace id of the request it records, when that request was sampled | [§14](../SPEC.md#144-span-model--correlation) | 1 · n/a (1 Go-native) | `B-PROSE-TRACING-CORRELATION` |
 
 <!-- END GENERATED MATRIX -->

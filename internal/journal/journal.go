@@ -31,6 +31,7 @@ import (
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/store"
 	"github.com/b3vet/mockulus/internal/stub"
+	"github.com/b3vet/mockulus/internal/tracing"
 )
 
 // Config carries the journal's tuning.
@@ -53,6 +54,8 @@ type Writer struct {
 	store   store.JournalStore
 	log     *slog.Logger
 	metrics *metrics.Metrics
+	// tracer is nil unless tracing is on; flushing then spans each batch.
+	tracer *tracing.Tracer
 
 	queue chan *Entry
 
@@ -66,12 +69,14 @@ type Writer struct {
 }
 
 // NewWriter creates the writer. It does nothing until Start is called.
-func NewWriter(cfg Config, st store.JournalStore, log *slog.Logger, m *metrics.Metrics) *Writer {
+func NewWriter(cfg Config, st store.JournalStore, log *slog.Logger, m *metrics.Metrics,
+	tracer *tracing.Tracer) *Writer {
 	return &Writer{
 		cfg:     cfg,
 		store:   st,
 		log:     log,
 		metrics: m,
+		tracer:  tracer,
 		queue:   make(chan *Entry, cfg.BufferEntries),
 		stop:    make(chan struct{}),
 	}
@@ -102,8 +107,8 @@ func (w *Writer) Stop() {
 // It never blocks and never fails the request: a full queue drops the entry and
 // increments the drop counter. Blocking the hot path to record what happened on
 // the hot path is a self-inflicted outage.
-func (w *Writer) Record(r *http.Request, body []byte, matched *stub.CompiledStub, status int) {
-	entry := NewEntry(w.cfg, r, body, matched, status)
+func (w *Writer) Record(r *http.Request, body []byte, matched *stub.CompiledStub, status int, traceID string) {
+	entry := NewEntry(w.cfg, r, body, matched, status, traceID)
 	if entry == nil {
 		return
 	}
@@ -200,7 +205,19 @@ func (w *Writer) flush(batch []*Entry) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// A root span. The batch holds entries from many requests — often from many
+	// traces — so it belongs to none of them; what it answers is whether the
+	// journal is keeping up, which is a property of this pod rather than of any
+	// one request.
+	var span tracing.Span
+	if w.tracer != nil {
+		ctx, span = w.tracer.StartRoot(ctx, "journal.flush",
+			tracing.Int("mockulus.journal.batch", len(entries)))
+		defer span.End()
+	}
+
 	if err := w.store.AppendJournal(ctx, entries); err != nil {
+		span.SetError(err)
 		w.metrics.JournalDropped.Add(float64(len(entries)))
 		w.log.Warn("journal batch failed; entries dropped",
 			"count", len(entries), "error", err)
@@ -227,7 +244,7 @@ type Entry struct {
 // (SPEC §11.2). Bodies are capped and the truncation is flagged rather than
 // silent: a verification that matched a truncated body would be reporting
 // something that did not happen.
-func NewEntry(cfg Config, r *http.Request, body []byte, matched *stub.CompiledStub, status int) *Entry {
+func NewEntry(cfg Config, r *http.Request, body []byte, matched *stub.CompiledStub, status int, traceID string) *Entry {
 	now := time.Now().UTC()
 
 	// One identifier, used both as the serve event's `id` and as the store key.
@@ -267,6 +284,13 @@ func NewEntry(cfg Config, r *http.Request, body []byte, matched *stub.CompiledSt
 			"id":   matched.ID,
 			"name": matched.Name,
 		}
+	}
+	// An additive field, and only when there is a sampled span to point at. It
+	// is what turns a journal entry into the entry point of a trace: WireMock
+	// has no equivalent, and §5.6 compares responses by subset, so an extra
+	// member here is invisible to the differential gate.
+	if traceID != "" {
+		event["traceId"] = traceID
 	}
 
 	payload, err := json.Marshal(event)

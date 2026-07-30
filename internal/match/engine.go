@@ -23,7 +23,12 @@ import (
 // spanMock names the root span of a served mock request. Admin traffic reaching
 // this port never gets here — the router splits it off first — which is the
 // same exclusion the mock-port metrics make (SPEC §14.1).
-const spanMock = "mock"
+const (
+	spanMock               = "mock"
+	spanMatch              = "match"
+	spanScenarioTransition = "scenario.transition"
+	spanSnapshotRebuild    = "snapshot.rebuild"
+)
 
 // The unmatched-request bodies mirror WireMock's shape and Content-Type, with
 // one deliberate change: mockulus names itself rather than claiming to be
@@ -74,7 +79,7 @@ type Engine struct {
 // already been answered by the time it is called, and the journal's whole
 // design is that recording cannot slow serving down (SPEC §11.1).
 type Recorder interface {
-	Record(r *http.Request, body []byte, matched *stub.CompiledStub, status int)
+	Record(r *http.Request, body []byte, matched *stub.CompiledStub, status int, traceID string)
 }
 
 // NewEngine returns an engine serving an empty snapshot.
@@ -119,9 +124,36 @@ func (e *Engine) transition(ctx context.Context, ref *stub.ScenarioRef) {
 	if t == nil {
 		return
 	}
-	if err := (*t).Transition(ctx, ref.Name, ref.RequiredState, ref.NewState); err != nil {
+	// A client span: this is a CAS round-trip to the store, and one of the two
+	// places the request path is allowed to do I/O at all (P1).
+	span := e.clientChild(ctx, spanScenarioTransition,
+		tracing.String("mockulus.scenario.name", ref.Name))
+	err := (*t).Transition(ctx, ref.Name, ref.RequiredState, ref.NewState)
+	if err != nil {
+		span.SetError(err)
 		e.metrics.StoreErrors.WithLabelValues("scenario_transition").Inc()
 	}
+	span.End()
+}
+
+// child and clientChild start a serve-phase span, or return the no-op Span when
+// tracing is off. Both cost one atomic load and a branch on the default path.
+func (e *Engine) child(ctx context.Context, name string, attrs ...tracing.Attr) tracing.Span {
+	t := e.tracer.Load()
+	if t == nil {
+		return tracing.Span{}
+	}
+	_, span := t.StartInternal(ctx, name, attrs...)
+	return span
+}
+
+func (e *Engine) clientChild(ctx context.Context, name string, attrs ...tracing.Attr) tracing.Span {
+	t := e.tracer.Load()
+	if t == nil {
+		return tracing.Span{}
+	}
+	_, span := t.StartClient(ctx, name, attrs...)
+	return span
 }
 
 // ServeHTTP is the mock-port handler: read the body, one atomic load, one
@@ -163,7 +195,15 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	candidates := 0
+	matchSpan := e.child(r.Context(), spanMatch)
 	cs := snap.Match(r.Context(), pr, gate, &candidates)
+	if matchSpan.Recording() {
+		// The candidate count is the number the metric histogram records, and
+		// it is what turns "matching was slow" into "matching evaluated two
+		// thousand stubs".
+		matchSpan.SetAttributes(tracing.Int("mockulus.candidates", candidates))
+	}
+	matchSpan.End()
 
 	if err := pr.ScenarioError(); err != nil {
 		// A gated stub whose state could not be read is not a stub that failed
@@ -191,6 +231,9 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusNotFound
 	if cs != nil {
 		opts := response.Options{WriteSlack: e.cfg.WriteSlack.D(), Settings: snap.Settings}
+		if t := e.tracer.Load(); t != nil {
+			opts.Tracer, opts.Ctx = t, r.Context()
+		}
 		if cs.Response.Templated && e.renderer != nil {
 			// The context is built only for a stub that actually templates, so
 			// an ordinary stub never pays for assembling the request model.
@@ -234,11 +277,14 @@ func (e *Engine) finish(r *http.Request, body []byte, cs *stub.CompiledStub,
 	}
 
 	if rec := e.recorder.Load(); rec != nil {
-		(*rec).Record(r, body, cs, status)
+		// The trace id is captured here rather than read at flush time: the
+		// entry crosses a channel to a background writer, by which point the
+		// span it belongs to is over and its context is gone (SPEC §11.1).
+		(*rec).Record(r, body, cs, status, span.TraceID())
 	}
 
 	took := time.Since(start)
-	e.accessLog(r, cs, status, took)
+	e.accessLog(r, cs, status, took, span.TraceID())
 	e.observe(cs != nil, status, candidates, took)
 }
 
@@ -248,7 +294,7 @@ func (e *Engine) finish(r *http.Request, body []byte, cs *stub.CompiledStub,
 // serving the request, so log.request_sample_n keeps the feature usable under
 // load instead of making it a switch nobody dares flip. Bodies and headers are
 // never logged — teams put real credentials in their mocks (SPEC §14.2).
-func (e *Engine) accessLog(r *http.Request, cs *stub.CompiledStub, status int, took time.Duration) {
+func (e *Engine) accessLog(r *http.Request, cs *stub.CompiledStub, status int, took time.Duration, traceID string) {
 	if !e.cfg.Log.Requests {
 		return
 	}
@@ -261,14 +307,21 @@ func (e *Engine) accessLog(r *http.Request, cs *stub.CompiledStub, status int, t
 	if cs != nil {
 		stubID = cs.ID
 	}
-	e.log.Info("request served",
+	attrs := []any{
 		"method", r.Method,
 		"path", r.URL.Path,
 		"status", status,
 		"matched", cs != nil,
 		"stub", stubID,
 		"took_us", took.Microseconds(),
-		"sampled_of", e.cfg.Log.RequestSampleN)
+		"sampled_of", e.cfg.Log.RequestSampleN,
+	}
+	// Present only when there is a sampled span to correlate against, so a
+	// deployment without tracing keeps the line it has always had.
+	if traceID != "" {
+		attrs = append(attrs, "trace_id", traceID)
+	}
+	e.log.Info("request served", attrs...)
 }
 
 // readBody reads the request body under the configured cap. Matching needs the

@@ -15,6 +15,7 @@ import (
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/store"
 	"github.com/b3vet/mockulus/internal/stub"
+	"github.com/b3vet/mockulus/internal/tracing"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
@@ -36,6 +37,9 @@ type Builder struct {
 	metrics  *metrics.Metrics
 	stubOpts stub.Options
 	cache    *compileCache
+	// tracer is nil unless tracing is on. A rebuild is off the request path, so
+	// the span here is about cost and convergence rather than latency.
+	tracer *tracing.Tracer
 
 	// mu serialises rebuilds against each other and against splices, which is
 	// also what gives an admin write read-your-writes without any coalescing
@@ -88,14 +92,30 @@ func (b *Builder) Rebuild(ctx context.Context, trigger string) error {
 	return b.rebuildOnce(ctx, trigger)
 }
 
+// SetTracer installs the tracer used for rebuild spans.
+func (b *Builder) SetTracer(t *tracing.Tracer) { b.tracer = t }
+
 func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 	start := time.Now()
+
+	// A root span rather than a child. A rebuild triggered by an admin write is
+	// not part of serving that write — it outlives the request, it is shared
+	// with every other write coalesced into it, and attaching it to one caller's
+	// trace would attribute the whole cluster's convergence cost to whoever
+	// happened to arrive first.
+	var span tracing.Span
+	if b.tracer != nil {
+		_, span = b.tracer.StartRoot(ctx, spanSnapshotRebuild,
+			tracing.String("mockulus.reload.trigger", trigger))
+		defer span.End()
+	}
 
 	stored, files, epoch, err := b.store.LoadAll(ctx)
 	if err != nil {
 		b.metrics.SnapshotReloadFailures.Inc()
 		b.log.Error("snapshot reload failed; keeping previous snapshot",
 			"trigger", trigger, "error", err)
+		span.SetError(err)
 		return fmt.Errorf("load store state: %w", err)
 	}
 
@@ -104,6 +124,7 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 		b.metrics.SnapshotReloadFailures.Inc()
 		b.log.Error("settings reload failed; keeping previous snapshot",
 			"trigger", trigger, "error", err)
+		span.SetError(err)
 		return fmt.Errorf("load settings: %w", err)
 	}
 
@@ -133,6 +154,12 @@ func (b *Builder) rebuildOnce(ctx context.Context, trigger string) error {
 	// selection, so they belong to the snapshot without belonging to the ordering
 	// and indexing BuildSnapshot exists to do.
 	snapshot := BuildSnapshot(compiled, epoch)
+	if span.Recording() {
+		span.SetAttributes(
+			tracing.Int64("mockulus.snapshot.epoch", int64(epoch)),
+			tracing.Int("mockulus.snapshot.stubs", len(compiled)),
+		)
+	}
 	snapshot.Settings = settings
 	b.engine.Swap(snapshot)
 
