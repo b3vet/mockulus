@@ -951,6 +951,7 @@ internal/matchers/        content matchers (equalTo, contains, regex, json…) �
 internal/jsonpath/        JSONPath evaluator (definite/indefinite paths, §6.7)
 internal/regexx/          RE2/regexp2 seam, timeouts
 internal/handlebars/      Handlebars subset: parser + evaluator
+internal/javatime/        Java date patterns and offset expressions → Go time (§10.3, §5.2)
 internal/template/        WM helper set, request model binding, caching
 internal/scenario/        state client (CAS logic) + admin service
 internal/journal/         entry model, batch writer, query service

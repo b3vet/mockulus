@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/b3vet/mockulus/internal/javatime"
 )
 
 // The helpers of SPEC §10.3 at their boundaries. The E2E corpus renders each of
@@ -609,8 +611,8 @@ func TestAFormatPatternWithAnUnclosedQuoteKeepsTheTextAfterIt(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		if got := javaToGoLayout(c.pattern); got != c.want {
-			t.Errorf("javaToGoLayout(%q) = %q, want %q (%s)", c.pattern, got, c.want, c.why)
+		if got := javatime.Layout(c.pattern); got != c.want {
+			t.Errorf("javatime.Layout(%q) = %q, want %q (%s)", c.pattern, got, c.want, c.why)
 		}
 	}
 
