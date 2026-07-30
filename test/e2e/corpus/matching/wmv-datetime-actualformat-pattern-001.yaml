@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-actualformat-pattern-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `actualFormat` names the Java pattern the *request's* value is read with. The
+# claim that matters and is easy to get wrong is that it **replaces** ISO-8601
+# parsing rather than adding to it: setting a pattern makes an ISO timestamp
+# stop matching. An implementation that tries the pattern and falls back to ISO
+# passes the first two steps below and fails the third, which is why the third
+# one is here.
+#
+# The two stubs are a matched pair — same criterion, same expected instant, one
+# with the pattern and one without — pointed at the same two values. Each value
+# matches exactly one of them, so neither stub can be reading both formats.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000004-0000-4000-8000-000000000001",
+         "name": "a day/month/year pattern",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-pattern-001/pattern",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T00:00:00",
+                                            "actualFormat": "dd/MM/yyyy"}}},
+         "response": {"status": 200, "body": "pattern",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000004-0000-4000-8000-000000000002",
+         "name": "the same criterion with no actualFormat",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-pattern-001/iso",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T00:00:00"}}},
+         "response": {"status": 200, "body": "iso",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The pattern drives the parse: a value no ISO reader would accept compares
+  # correctly.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/pattern
+      headers: {X-When: "14/06/2021"}
+    expect: {status: 200, body: "pattern"}
+
+  # …and still compares. A pattern that parsed but did not compare would answer
+  # 200 here too.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/pattern
+      headers: {X-When: "15/06/2021"}
+    expect: {status: 404}
+
+  # The step the whole case exists for: the pattern REPLACES ISO-8601 parsing.
+  # This value names the very instant the criterion asks for, and is refused
+  # because it is not written the way the stub said it would be.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/pattern
+      headers: {X-When: "2021-06-14T00:00:00"}
+    expect: {status: 404}
+
+  # A bare ISO date is refused for the same reason, which rules out "any format
+  # that resolves to the right day" as the rule.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/pattern
+      headers: {X-When: "2021-06-14"}
+    expect: {status: 404}
+
+  # The control, from the other side: with no `actualFormat` the ISO value is the
+  # one that matches and the patterned value is the one that does not.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/iso
+      headers: {X-When: "2021-06-14T00:00:00"}
+    expect: {status: 200, body: "iso"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/iso
+      headers: {X-When: "14/06/2021"}
+    expect: {status: 404}
+
+  # `actualFormat` is a property of the leaf matcher, not of the matcher key, so
+  # it drives `before` exactly as it drives equality — and here the comparison is
+  # ordered, which a parse that silently produced the epoch would get wrong in a
+  # way equality alone cannot see.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000004-0000-4000-8000-000000000003",
+         "name": "an ordered comparison under the same pattern",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-pattern-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14T00:00:00",
+                                            "actualFormat": "dd/MM/yyyy"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/before
+      headers: {X-When: "13/06/2021"}
+    expect: {status: 200, body: "before"}
+
+  # `before` is strict, so the day the threshold names is not under it.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-pattern-001/before
+      headers: {X-When: "14/06/2021"}
+    expect: {status: 404}

@@ -107,31 +107,67 @@ func TestPaddedHourParsesUnpaddedInput(t *testing.T) {
 	}
 }
 
-// TestUnpaddedLettersAreNotTranslatedYet pins a known gap so that closing it is
-// a deliberate change and not a surprise.
+// TestUnpaddedLettersTranslate covers the field letters Java writes without
+// padding.
 //
-// Java's unpadded `M`, `m` and `s` have no entry in the table, so they pass
-// through as literal text: `d/M/yyyy` becomes `2/M/2006`, which renders a
-// literal "M" where the month belongs and cannot parse "14/6/2021" at all. The
-// table was written for the patterns `{{now format=...}}` is used with, all of
-// which pad, and nothing has needed the unpadded forms.
-//
-// It matters for `actualFormat`, where the pattern comes from a stub author
-// rather than from this repo, so the date-time matchers close it. Until then the
-// gap is asserted rather than left to be discovered: a caller reading this test
-// learns the shape of the problem, and a caller who fixes it will see this test
-// fail and know to state the new behaviour instead of deleting the old.
-func TestUnpaddedLettersAreNotTranslatedYet(t *testing.T) {
-	if got := Layout("d/M/yyyy"); got != "2/M/2006" {
-		t.Errorf("Layout(d/M/yyyy) = %q; the gap this pins has moved, so state the new behaviour here", got)
+// They were absent while this table only ever rendered `{{now format=...}}`,
+// whose patterns all pad, and an absent letter passes through as literal text
+// rather than failing — so `d/M/yyyy` became `2/M/2006`, rendered an "M" where
+// the month belongs, and could not parse "14/6/2021" at all. `actualFormat`
+// takes its pattern from a stub author instead of from this repo, so the gap
+// became reachable and is closed here.
+func TestUnpaddedLettersTranslate(t *testing.T) {
+	cases := map[string]string{
+		"d/M/yyyy":    "2/1/2006",
+		"yyyy-M-d":    "2006-1-2",
+		"H:m:s":       "15:4:5",
+		"h:m a":       "3:4 PM",
+		"yyyy-MM-dd":  "2006-01-02",
+		"yyyy-MMM-dd": "2006-Jan-02",
 	}
-	// The consequence, spelled out: the layout cannot read an unpadded month.
-	if _, err := time.Parse(Layout("d/M/yyyy"), "14/6/2021"); err == nil {
-		t.Error("an unpadded month now parses, so the gap is closed and this test should assert that instead")
+	for pattern, want := range cases {
+		if got := Layout(pattern); got != want {
+			t.Errorf("Layout(%q) = %q, want %q", pattern, got, want)
+		}
 	}
-	// The padded spelling is unaffected, which is why nothing has noticed.
+
+	// The consequence, which is the reason the letters were added: an unpadded
+	// date now parses.
+	for _, in := range []string{"14/6/2021", "4/6/2021"} {
+		if _, err := time.Parse(Layout("d/M/yyyy"), in); err != nil {
+			t.Errorf("Layout(d/M/yyyy) should parse %q: %v", in, err)
+		}
+	}
+	// A doubled letter must not be broken by the single-letter entries sitting
+	// beside it in the table, which is what the longest-first scan guarantees.
 	if _, err := time.Parse(Layout("dd/MM/yyyy"), "14/06/2021"); err != nil {
 		t.Errorf("the padded spelling must keep working: %v", err)
+	}
+}
+
+// TestTranslateCountsRecognisedFields is what lets a caller refuse a pattern
+// that cannot resolve an instant.
+//
+// WireMock validates only that a pattern compiles, so `qqqq` and the empty
+// string register there and then match nothing ever. A zero count is how this
+// repo tells those apart from a pattern that is merely punctuation-heavy.
+func TestTranslateCountsRecognisedFields(t *testing.T) {
+	withFields := map[string]int{
+		"yyyy":       1,
+		"dd/MM/yyyy": 3,
+		"d/M/yyyy":   3,
+	}
+	for pattern, want := range withFields {
+		if _, got := Translate(pattern); got != want {
+			t.Errorf("Translate(%q) recognised %d fields, want %d", pattern, got, want)
+		}
+	}
+
+	for _, pattern := range []string{"", "qqqq", "'yyyy'", "///", "!!"} {
+		if _, got := Translate(pattern); got != 0 {
+			t.Errorf("Translate(%q) recognised %d fields, want 0 — it resolves no instant",
+				pattern, got)
+		}
 	}
 }
 

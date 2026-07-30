@@ -272,6 +272,10 @@ func diffBodies(theirs, ours *NormalizedResponse, ignore []string, mockPort bool
 			theirs.Status == http.StatusNotFound && ours.Status == http.StatusNotFound {
 			return nil
 		}
+		if entry == IgnoreRegisteredMapping && !mockPort &&
+			theirs.Status == http.StatusCreated && ours.Status == http.StatusCreated {
+			return nil
+		}
 		if entry == CompareListingByIdentity {
 			if diffs, isListing := diffListings(theirs.Body, ours.Body); isListing {
 				return diffs
@@ -326,6 +330,22 @@ const IgnoreUnmatchedBody = "$unmatched-body"
 // otherwise use IgnoreUnmatchedBody, which keeps the matched bodies under
 // comparison. Status and headers are still compared either way.
 const IgnoreWholeBody = "$body"
+
+// IgnoreRegisteredMapping skips body comparison on the response that echoes a
+// newly created stub, and only there.
+//
+// That echo is the one admin body the two servers are known to spell
+// differently, and deliberately so: WireMock normalises parts of the document on
+// the way out — a bare `now` operand becomes `now +0 seconds`, a truncation value
+// becomes its lowercase-with-spaces form — while mockulus returns what was
+// registered (deviation #41). Neither difference reaches a matching decision;
+// both servers match identically on every one of those stubs.
+//
+// It is narrow for the reason IgnoreUnmatchedBody is: the blunt $body would also
+// stop comparing the served responses, which is what compatibility actually
+// means. Mappings create is the only admin endpoint that answers 201 with a body,
+// so the status alone identifies it.
+const IgnoreRegisteredMapping = "$registered-mapping"
 
 // CompareListingByIdentity compares a deployment-global listing entry by entry
 // instead of position by position.

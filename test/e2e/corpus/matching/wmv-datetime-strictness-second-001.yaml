@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-strictness-second-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `before` and `after` are strict: an actual exactly equal to the expected value
+# satisfies neither. That is the one property of these two matchers a reader is
+# most likely to assume the other way round, and it is not observable from a
+# single non-matching request — a matcher that never matched at all would answer
+# the same 404. So the boundary is probed from three sides at once, with
+# `equalToDateTime` on the same operand as the falsifier: it matches the value
+# both of the others refuse, which proves the double refusal is strictness and
+# not a parse failure on the operand.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0001-0001-4000-8000-000000000001",
+         "name": "before an ISO instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-strictness-second-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2021-06-14T12:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0001-0001-4000-8000-000000000002",
+         "name": "after the same instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-strictness-second-001/after",
+                     "headers": {"X-When": {"after": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0001-0001-4000-8000-000000000003",
+         "name": "equalToDateTime on the same instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-strictness-second-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The boundary itself. Neither direction holds, and the third matcher does —
+  # so the operand parsed and the comparison ran.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/before
+      headers: {X-When: "2021-06-14T12:00:00Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/after
+      headers: {X-When: "2021-06-14T12:00:00Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/equal
+      headers: {X-When: "2021-06-14T12:00:00Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+
+  # One second earlier: `before` holds, the other two do not.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/before
+      headers: {X-When: "2021-06-14T11:59:59Z"}
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/after
+      headers: {X-When: "2021-06-14T11:59:59Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/equal
+      headers: {X-When: "2021-06-14T11:59:59Z"}
+    expect: {status: 404}
+
+  # One second later: the mirror image. A matcher that answered by comparing the
+  # two strings, or that had the two directions the wrong way round, breaks on
+  # exactly one of these two triples rather than on both.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/before
+      headers: {X-When: "2021-06-14T12:00:01Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/after
+      headers: {X-When: "2021-06-14T12:00:01Z"}
+    expect: {status: 200, body: "after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-strictness-second-001/equal
+      headers: {X-When: "2021-06-14T12:00:01Z"}
+    expect: {status: 404}

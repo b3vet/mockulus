@@ -1075,9 +1075,6 @@ func TestDeferredMatchersAreRejectedByName(t *testing.T) {
 		`{"matchesXPath":"//a"}`:                  "matchesXPath",
 		`{"equalToXml":"<a/>"}`:                   "equalToXml",
 		`{"matchesJsonSchema":{"type":"object"}}`: "matchesJsonSchema",
-		`{"before":"2026-01-01T00:00:00Z"}`:       "before",
-		`{"after":"2026-01-01T00:00:00Z"}`:        "after",
-		`{"equalToDateTime":"2026-01-01"}`:        "equalToDateTime",
 		`{"hasExactly":[{"equalTo":"a"}]}`:        "hasExactly",
 		`{"includes":[{"equalTo":"a"}]}`:          "includes",
 	}

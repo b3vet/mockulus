@@ -2,7 +2,6 @@
 id: errors-unsupported-matchers-001
 behaviors:
   - B-ERR-1000
-  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
   - B-MATCH-MATCHESJSONSCHEMA
   - B-MATCH-EQUALTOXML-MATCHESXPATH
   - B-DEV-DEVIATION-14
@@ -10,39 +9,6 @@ behaviors:
 # the 422 is the deviation.
 wm: n/a
 steps:
-  # The three date-time matchers are refused individually, so the 422 says which
-  # of them a stub is waiting on. `truncateExpected` rides along as a modifier
-  # and must not be reported as a matcher in its own right — one problem per
-  # deferred matcher, not one per key. The name is the one WireMock 3.13.2
-  # actually accepts, established by round trip: it drops an unrecognised key
-  # silently, so a modifier spelled wrongly here would test nothing.
-  - admin:
-      method: POST
-      path: /__admin/mappings
-      body: |
-        {"id": "e770e770-0000-4000-8000-000000000030",
-         "request": {"method": "POST", "urlPath": "/e2e/errors-unsupported-matchers-001/dt",
-                     "bodyPatterns": [{"before": "2030-01-01T00:00:00Z"},
-                                      {"after": "2020-01-01T00:00:00Z"},
-                                      {"equalToDateTime": "2021-06-01T00:00:00Z",
-                                       "truncateExpected": "first day of month"}]},
-         "response": {"status": 200}}
-    expect:
-      status: 422
-      body_json_subset:
-        errors:
-          - code: 1000
-            title: "Unsupported feature"
-            source: {pointer: "/request/bodyPatterns/0/before"}
-          - code: 1000
-            source: {pointer: "/request/bodyPatterns/1/after"}
-          - code: 1000
-            source: {pointer: "/request/bodyPatterns/2/equalToDateTime"}
-      body_regex: 'the equalToDateTime matcher is not supported in mockulus v1.*ROADMAP\.md'
-
-  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000030}
-    expect: {status: 404}
-
   # matchesJsonSchema is deferred; a stub using it would otherwise register and
   # then match bodies the schema was written to exclude.
   - admin:

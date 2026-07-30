@@ -164,3 +164,29 @@ func TestUnusableOffsetsAreStillRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestParseOffsetStrictRequiresThePlural pins the difference between WireMock's
+// two offset readers. The `now` helper takes `1 month`; a date-time matcher's
+// operand does not, because the unit goes through an enum lookup there.
+func TestParseOffsetStrictRequiresThePlural(t *testing.T) {
+	for _, spec := range []string{"1 month", "-2 year", "3 day", "1 hour"} {
+		if _, err := ParseOffsetStrict(spec); err == nil {
+			t.Errorf("offset %q was accepted by the strict reader, want a refusal", spec)
+		}
+		// The lenient reader still takes it, which is what the template needs.
+		if _, err := ParseOffset(spec); err != nil {
+			t.Errorf("offset %q must stay acceptable to the helper: %v", spec, err)
+		}
+	}
+
+	for _, spec := range []string{"1 months", "-2 years", "0 seconds", "12 hours"} {
+		if _, err := ParseOffsetStrict(spec); err != nil {
+			t.Errorf("offset %q was refused by the strict reader (%v), want it accepted", spec, err)
+		}
+	}
+
+	// An unknown unit is still an unknown unit, plural or not.
+	if _, err := ParseOffsetStrict("3 fortnights"); err == nil {
+		t.Error("an unknown plural unit must still be refused")
+	}
+}

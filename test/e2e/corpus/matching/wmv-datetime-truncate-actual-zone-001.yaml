@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-truncate-actual-zone-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Truncation is **zone-preserving**: an actual carrying `+03:00` is reduced in
+# its own offset, not converted to UTC first. `2021-06-14T02:13:14+03:00`
+# truncated to the first hour of its day is the local midnight of 14 June in
+# Istanbul — 2021-06-13T21:00:00Z — and not the UTC midnight of the 14th.
+#
+# The distinction is invisible at UTC, which is where every other case in this
+# family sits, and it is the difference between "start of the day the client
+# meant" and "start of a day three hours off". The two stubs name the two
+# candidate answers, so exactly one of them can hold.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d700000a-0000-4000-8000-000000000001",
+         "name": "midnight in the value's own offset",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-zone-001/local",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-13T21:00:00Z",
+                                            "truncateActual": "first hour of day"}}},
+         "response": {"status": 200, "body": "local",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d700000a-0000-4000-8000-000000000002",
+         "name": "midnight after converting to UTC first",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-zone-001/utc",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T00:00:00Z",
+                                            "truncateActual": "first hour of day"}}},
+         "response": {"status": 200, "body": "utc",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-zone-001/local
+      headers: {X-When: "2021-06-14T02:13:14+03:00"}
+    expect: {status: 200, body: "local"}
+
+  # The convert-then-truncate reading. An offset-blind implementation answers
+  # 200 here and 404 above, so the two steps together decide it.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-zone-001/utc
+      headers: {X-When: "2021-06-14T02:13:14+03:00"}
+    expect: {status: 404}
+
+  # The control that fixes the offset as the cause: the same wall-clock reading
+  # written at UTC truncates to the UTC midnight, so the two stubs swap answers.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-zone-001/utc
+      headers: {X-When: "2021-06-14T02:13:14Z"}
+    expect: {status: 200, body: "utc"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-zone-001/local
+      headers: {X-When: "2021-06-14T02:13:14Z"}
+    expect: {status: 404}
+
+  # A negative offset, so the rule is not "add the offset back" but "keep the
+  # value's own zone". 2021-06-14T20:13:14-05:00 is 14 June in New York, whose
+  # local midnight is 2021-06-14T05:00:00Z — a *later* instant than the UTC
+  # midnight, where the Istanbul value's was earlier.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d700000a-0000-4000-8000-000000000003",
+         "name": "the same rule at a negative offset",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-zone-001/west",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T05:00:00Z",
+                                            "truncateActual": "first hour of day"}}},
+         "response": {"status": 200, "body": "west",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-zone-001/west
+      headers: {X-When: "2021-06-14T20:13:14-05:00"}
+    expect: {status: 200, body: "west"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-zone-001/utc
+      headers: {X-When: "2021-06-14T20:13:14-05:00"}
+    expect: {status: 404}

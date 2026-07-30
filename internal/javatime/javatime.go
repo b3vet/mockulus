@@ -11,13 +11,12 @@
 // implementation of either would be a place for the two to drift, which is the
 // reasoning `SplitQuery` and `DecodeBase64` are already shared under.
 //
-// Rendering and parsing are not symmetric, and the table below was originally
-// written for rendering alone. Go's `15` pads on output but accepts an unpadded
-// hour on input, so it serves both; the unpadded Java letters `M`, `m` and `s`
-// are *not* translated and pass through as literal text, which is a gap a
-// parsing caller has to know about. It is documented in the table and pinned by
-// TestUnpaddedLettersAreNotTranslatedYet so that closing it is a deliberate
-// change rather than a surprise.
+// Rendering and parsing are not quite symmetric. Go's `15` pads on output but
+// accepts an unpadded hour on input, so one entry serves both directions and
+// Java's `H` needs no separate mapping. Everything else does map both ways, and
+// TestLayoutRoundTripsWhatItRenders is what holds that: a layout that formats
+// correctly and cannot read its own output back would pass every rendering test
+// and fail every match.
 package javatime
 
 import (
@@ -83,6 +82,24 @@ func ParseOffset(spec string) (Offset, error) {
 	}
 }
 
+// ParseOffsetStrict is ParseOffset under the stricter rule WireMock applies on
+// its matcher side: the unit must be written in the plural.
+//
+// The two spellings really are governed differently there. A template offset is
+// read by the `now` helper, which takes `1 month`; a date-time matcher's operand
+// goes through a `DateTimeUnit` enum lookup that answers
+// `No enum constant …DateTimeUnit.DAY` for the singular. Rather than pick one and
+// be wrong on one side, the lenient reading stays with the helper and the strict
+// one is named here — and both share the unit table below, so a new unit cannot
+// reach one caller and miss the other.
+func ParseOffsetStrict(spec string) (Offset, error) {
+	fields := strings.Split(strings.TrimSpace(spec), " ")
+	if len(fields) == 2 && !strings.HasSuffix(strings.ToLower(fields[1]), "s") {
+		return Offset{}, fmt.Errorf("offset unit %q must be written in the plural", fields[1])
+	}
+	return ParseOffset(spec)
+}
+
 // AddMonths moves an instant by whole calendar months, keeping the time of day
 // and the day of the month wherever the month it lands on is long enough to
 // hold it.
@@ -117,17 +134,22 @@ func daysInMonth(year int, month time.Month) int {
 // javaPatternOrder is the translation table, longest pattern first: a naive
 // replacement would turn "yyyy" into four copies of the "yy" replacement.
 //
-// The unpadded Java letters `M`, `m` and `s` are deliberately absent and pass
-// through as literal text — see the package comment and
-// TestUnpaddedLettersAreNotTranslatedYet.
+// A letter absent from this table passes through as literal text rather than
+// failing, so an omission is silent — which is why the unpadded forms are here
+// beside the padded ones, and why Translate reports a field count a caller can
+// refuse on.
 var javaPatternOrder = []struct{ java, golang string }{
 	{"yyyy", "2006"}, {"yy", "06"},
-	{"MMMM", "January"}, {"MMM", "Jan"}, {"MM", "01"},
+	{"MMMM", "January"}, {"MMM", "Jan"}, {"MM", "01"}, {"M", "1"},
 	{"dd", "02"}, {"d", "2"},
-	{"HH", "15"},
-	{"hh", "03"},
-	{"mm", "04"},
-	{"ss", "05"},
+	// Go has no unpadded 24-hour hour, and does not need one: "15" pads on
+	// output but accepts an unpadded hour on input, which is the only direction
+	// `actualFormat` uses. A rendering caller asking for Java's `H` gets the
+	// padded form, and no template in the corpus asks for one.
+	{"HH", "15"}, {"H", "15"},
+	{"hh", "03"}, {"h", "3"},
+	{"mm", "04"}, {"m", "4"},
+	{"ss", "05"}, {"s", "5"},
 	{"SSS", "000"},
 	// "Z07:00" rather than "-07:00" because Java's XXX writes a bare "Z" at a
 	// zero offset and a numeric offset everywhere else, and Go's layout has the
@@ -148,6 +170,18 @@ var javaPatternOrder = []struct{ java, golang string }{
 // which is what lets a pattern's punctuation survive — and is also why an
 // untranslated field letter becomes literal text rather than an error.
 func Layout(pattern string) string {
+	layout, _ := Translate(pattern)
+	return layout
+}
+
+// Translate reports the Go layout and how many pattern fields it recognised.
+//
+// The count is what lets a caller refuse a pattern that cannot resolve an
+// instant. WireMock validates only that a pattern compiles, so `qqqq` and the
+// empty string register there and then never match anything; a count of zero is
+// how this repo tells that apart from a pattern that merely has punctuation in
+// it (SPEC §5.2).
+func Translate(pattern string) (layout string, fields int) {
 	var sb strings.Builder
 	for i := 0; i < len(pattern); {
 		// A quoted run is literal text, which is how templates write the T and
@@ -172,10 +206,12 @@ func Layout(pattern string) string {
 				break
 			}
 		}
-		if !matched {
-			sb.WriteByte(pattern[i])
-			i++
+		if matched {
+			fields++
+			continue
 		}
+		sb.WriteByte(pattern[i])
+		i++
 	}
-	return sb.String()
+	return sb.String(), fields
 }

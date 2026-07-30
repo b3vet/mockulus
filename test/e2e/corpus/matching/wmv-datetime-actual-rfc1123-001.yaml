@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-actual-rfc1123-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# An RFC 1123 date parses on the ACTUAL side too, with no `actualFormat`. That
+# matters more here than in the operand grammar: it is the spelling HTTP puts in
+# `Date`, `Expires` and `If-Modified-Since`, so a header matcher that could not
+# read it would be unable to compare the dates a real client actually sends.
+#
+# The assertions pin where it lands rather than that it merely matched something.
+# `equalToDateTime` against the ISO instant is the sharp one — an accept-anything
+# parse would not agree to the second — and the `/too-early` step is its
+# falsifier, since a value that matched everything would be served there too.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000b-0001-4000-8000-000000000001",
+         "name": "equalToDateTime against the ISO instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-rfc1123-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {equalToDateTime: "2021-06-14T12:13:14Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000b-0001-4000-8000-000000000002",
+         "name": "before one second past the instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-rfc1123-001/just-after",
+                     "headers": {"X-When": {"before": "2021-06-14T12:13:15Z"}}},
+         "response": {"status": 200, "body": "just-after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000b-0001-4000-8000-000000000003",
+         "name": "before one second short of the instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-rfc1123-001/too-early",
+                     "headers": {"X-When": {"before": "2021-06-14T12:13:13Z"}}},
+         "response": {"status": 200, "body": "too-early",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000b-0001-4000-8000-000000000004",
+         "name": "after one second short of the instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-rfc1123-001/just-before",
+                     "headers": {"X-When": {"after": "2021-06-14T12:13:13Z"}}},
+         "response": {"status": 200, "body": "just-before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # It parsed, and to the exact second: it compares equal to the ISO instant.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-rfc1123-001/equal
+      headers: {X-When: "Mon, 14 Jun 2021 12:13:14 GMT"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+
+  # And it is ordered where that instant sits: inside the second-wide window and
+  # outside the bound one second short of it.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-rfc1123-001/just-after
+      headers: {X-When: "Mon, 14 Jun 2021 12:13:14 GMT"}
+    expect: {status: 200, body: "just-after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-rfc1123-001/just-before
+      headers: {X-When: "Mon, 14 Jun 2021 12:13:14 GMT"}
+    expect: {status: 200, body: "just-before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-rfc1123-001/too-early
+      headers: {X-When: "Mon, 14 Jun 2021 12:13:14 GMT"}
+    expect: {status: 404}
+
+  # A different RFC 1123 second is not equal to the operand, so the 200 above is
+  # about the value and not about the spelling.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-rfc1123-001/equal
+      headers: {X-When: "Mon, 14 Jun 2021 12:13:15 GMT"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-rfc1123-001/too-early
+      headers: {X-When: "Mon, 14 Jun 2021 12:13:12 GMT"}
+    expect: {status: 200, body: "too-early"}

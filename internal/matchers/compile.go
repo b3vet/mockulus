@@ -114,9 +114,6 @@ type JSONPathCompiler func(expr string) (JSONPathEvaluator, error)
 // are named individually so the 422 tells a team exactly which roadmap item
 // they are waiting on, rather than a generic refusal.
 var deferredMatchers = map[string]string{
-	"before":            "the before date-time matcher",
-	"after":             "the after date-time matcher",
-	"equalToDateTime":   "the equalToDateTime matcher",
 	"matchesJsonSchema": "matchesJsonSchema",
 	"equalToXml":        "equalToXml (XML matching)",
 	"matchesXPath":      "matchesXPath (XPath matching)",
@@ -141,10 +138,35 @@ var modifierKeys = map[string]bool{
 	"caseInsensitive":     true,
 	"ignoreArrayOrder":    true,
 	"ignoreExtraElements": true,
+}
+
+// temporalMatcherKeys are the three date-time matchers.
+var temporalMatcherKeys = map[string]bool{
+	"before": true, "after": true, "equalToDateTime": true,
+}
+
+// temporalModifierKeys ride along with a date-time matcher — and only with one.
+//
+// WireMock accepts every one of them anywhere and silently drops it: as a
+// sibling of `and`/`or`/`not` the format never reaches the leaves that would use
+// it, and on `equalTo` or `contains` a date pattern means nothing at all. Both
+// register there and do nothing, which is the accept-and-ignore failure P3
+// forbids, so both are refused here (§5.5).
+var temporalModifierKeys = map[string]bool{
 	"truncateExpected":    true,
 	"truncateActual":      true,
 	"applyTruncationLast": true,
 	"actualFormat":        true,
+}
+
+// hasTemporalMatcher reports whether a matcher document carries one of the three.
+func hasTemporalMatcher(doc map[string]json.RawMessage) bool {
+	for key := range doc {
+		if temporalMatcherKeys[key] {
+			return true
+		}
+	}
+	return false
 }
 
 // Compile builds a matcher from one matcher document.
@@ -185,6 +207,16 @@ func Compile(raw json.RawMessage, pointer string, opts Options) (Matcher, []Prob
 		value := doc[key]
 
 		if modifierKeys[key] {
+			continue
+		}
+		if temporalModifierKeys[key] {
+			if !hasTemporalMatcher(doc) {
+				problems = append(problems, Problem{
+					Pointer: pointer + "/" + key,
+					Detail: key + " only applies to a before, after or equalToDateTime matcher; " +
+						"on a combinator it must be repeated inside each leaf",
+				})
+			}
 			continue
 		}
 		if feature, deferred := deferredMatchers[key]; deferred {
@@ -281,6 +313,27 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 			return fail("binaryEqualTo operand is not valid base64: " + err.Error())
 		}
 		return &BinaryEqualTo{Expected: decoded, Source: s}, nil
+
+	case "before", "after", "equalToDateTime":
+		var operand string
+		if err := json.Unmarshal(value, &operand); err != nil {
+			return fail(key + " takes a date-time string")
+		}
+		spec := TemporalSpec{
+			Expected:            operand,
+			TruncateExpected:    stringField(doc, "truncateExpected"),
+			TruncateActual:      stringField(doc, "truncateActual"),
+			ActualFormat:        stringField(doc, "actualFormat"),
+			ApplyTruncLast:      boolField(doc, "applyTruncationLast"),
+			HasTruncateExpected: hasKey(doc, "truncateExpected"),
+			HasTruncateActual:   hasKey(doc, "truncateActual"),
+			HasActualFormat:     hasKey(doc, "actualFormat"),
+		}
+		m, err := CompileTemporal(key, spec)
+		if err != nil {
+			return fail(err.Error())
+		}
+		return m, nil
 
 	case "contains", "doesNotContain":
 		var s string
@@ -521,4 +574,27 @@ func sortedKeys(m map[string]json.RawMessage) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// stringField reads a modifier's string value, answering "" when the key is
+// absent or is not a string. A present-but-wrong-typed value is caught by the
+// matcher's own validation, which can say what the key should have held.
+func stringField(doc map[string]json.RawMessage, key string) string {
+	raw, ok := doc[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// hasKey reports whether a modifier was written at all, which is not the same as
+// its value being non-empty: WireMock refuses `truncateActual: ""` and ignores an
+// absent key, and only the document can tell the two apart.
+func hasKey(doc map[string]json.RawMessage, key string) bool {
+	_, ok := doc[key]
+	return ok
 }

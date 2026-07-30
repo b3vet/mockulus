@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-actual-empty-absent-001
+behaviors:
+  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
+  - B-REQ-HEADERS
+  - B-REQ-QUERYPARAMETERS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The two ways there is nothing to compare, and both are ordinary non-matches.
+#
+# ABSENCE is not special-cased. `before: 2030-01-01T00:00:00Z` accepts every
+# instant this century, so it is tempting to read it as a criterion a request
+# without the header cannot fail — and it fails it. A temporal matcher is a value
+# criterion like `equalTo`, and a missing value satisfies no value criterion.
+#
+# An EMPTY value is asserted through a query parameter rather than a header,
+# because the runner treats an empty header value in a case as "send no such
+# header" and the two questions would collapse into one. `?when=` is
+# present-with-empty-string on both servers, which makes it the position where
+# the empty case is actually expressible.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000d-0001-4000-8000-000000000001",
+         "name": "a header criterion satisfied by every readable instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-empty-absent-001/header",
+                     "headers": {"X-When": {"before": "2030-01-01T00:00:00Z"}}},
+         "response": {"status": 200, "body": "header",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2030-01-01T00:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000d-0001-4000-8000-000000000002",
+         "name": "the same criterion on a query parameter",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-empty-absent-001/query",
+                     "queryParameters": {"when": {"before": "2030-01-01T00:00:00Z"}}},
+         "response": {"status": 200, "body": "query",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          queryParameters:
+            when: {before: "2030-01-01T00:00:00Z"}
+
+  # The control on each position.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-empty-absent-001/header
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "header"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-actual-empty-absent-001/query?when=2021-06-14T12:13:14Z"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "query"}
+
+  # No header at all: a non-match, not a pass.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-empty-absent-001/header
+    expect: {status: 404}
+
+  # No parameter at all: the same answer at the other position.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-empty-absent-001/query
+    expect: {status: 404}
+
+  # Present and empty. This is a different situation from the one above — the
+  # parameter is there and its value is the empty string — and it produces the
+  # same 404, because the empty string is not a date.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-actual-empty-absent-001/query?when="
+    expect: {status: 404}
+
+  # And a repeated parameter whose only readable value satisfies the criterion is
+  # still a match, which is what shows the empty value above was evaluated and
+  # rejected rather than making the whole criterion unevaluable.
+  - request:
+      method: GET
+      path: "/e2e/wmv-datetime-actual-empty-absent-001/query?when=&when=2021-06-14T12:13:14Z"
+    expect: {status: 200, body: "query"}

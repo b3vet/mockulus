@@ -45,8 +45,39 @@ supported feature is a minor.
   timestamp. Both are absent rather than empty otherwise, so a deployment that is
   not tracing keeps the document and the log line it had.
 
+- The date-time matchers `before`, `after` and `equalToDateTime`, with their
+  modifiers `truncateExpected`, `truncateActual`, `applyTruncationLast` and
+  `actualFormat`. A 422 becomes a supported feature, which is the only direction
+  the compatibility promise allows.
+
+  The rule worth knowing before writing one: **the expected value's type decides
+  what is compared.** An expected carrying a zone compares instants — the
+  request's offset is honoured and a zoneless request value is read in the pod's
+  timezone. An expected with no zone compares wall-clock readings and the
+  request's offset is discarded rather than converted, so
+  `after: "2021-06-14T12:00:00"` reports `2021-06-14T13:00:00+03:00` as later
+  even though that instant is two hours earlier. That is WireMock's behaviour,
+  established by probing it rather than by assuming, and an implementation that
+  normalises everything to instants reproduces half of it and silently breaks the
+  rest.
+
+  `before` and `after` are strict; equality is instant-valued and exact to the
+  nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
+  `unix` means epoch seconds while `epoch` means milliseconds.
+
 ### Changed
 
+- **Three modifier names that do not exist were removed from the stub format.**
+  `truncateExpectedTo`, `truncateActualTo` and `expectedOffset` were named in the
+  spec, in the roadmap and in the shipped allowlist, and WireMock has none of
+  them. The effect was inverted: every real modifier was reported as an unknown
+  matcher, and the three invented ones passed without comment. WireMock drops an
+  unrecognised key silently, so registering successfully never proved a name
+  existed — only reading the stub back does.
+- SPEC §5.6 no longer promises a `runner --record-wm` flag. It was never built,
+  and the section had no catalog entry of any kind, which is how the claim
+  survived a whole release; the section is now pinned like §8, §9 and §11 so the
+  rest of it cannot go the same way.
 - The match path carries a context. The scenario state read of §9.2 — the one
   piece of I/O it is allowed to do — used to invent a `context.Background()` at
   the call site, so a client that hung up still had its read run to the full

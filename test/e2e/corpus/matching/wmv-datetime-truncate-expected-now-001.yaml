@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-truncate-expected-now-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# `truncateExpected` reduces the *threshold*, and it applies only where the
+# threshold is resolved from the clock: on a literal expected value it does
+# nothing at all, and mockulus refuses that combination outright (deviation #50,
+# pinned by deviation-datetime-inert-truncation-001). This case is the other
+# half — the combination that is legal, and what it does.
+#
+# **Why the assertions are shaped the way they are.** Every threshold derived
+# from `now` moves with the wall clock, and truncation moves it by less than one
+# period, so no literal value written into a corpus file can sit in the gap
+# between the truncated and the untruncated threshold for longer than the period
+# lasts. A case built on such a value would pass today and start failing on the
+# first of some month — the worst failure a regression gate can have, because it
+# names an innocent commit. So the actuals here are chosen far enough either
+# side that the answer cannot drift, and what is asserted is that the truncated
+# threshold is still a threshold: accepted where a literal one is refused, and
+# strict, ordered and directional afterwards. The arithmetic of each truncation
+# value is pinned exactly, against fixed instants, by the two
+# wmv-datetime-truncate-actual-* cases.
+#
+# The offset stub at the end is the one place the modifiers can be caught
+# working together on a stable answer: a whole-year offset is large enough to
+# carry the threshold clear of the moving present, and the actuals bracket it
+# from both sides.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000007-0000-4000-8000-000000000001",
+         "name": "after a truncated now",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-expected-now-001/after",
+                     "headers": {"X-When": {"after": "now",
+                                            "truncateExpected": "first day of month"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000007-0000-4000-8000-000000000002",
+         "name": "before a truncated now",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-expected-now-001/before",
+                     "headers": {"X-When": {"before": "now",
+                                            "truncateExpected": "first day of month"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The truncated threshold is still a threshold, and the two directions are
+  # complements of each other on the same pair of values — which a criterion
+  # that had quietly become unsatisfiable, or one that matched everything, could
+  # not be.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/after
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 200, body: "after"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/after
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/before
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "before"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/before
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 404}
+
+  # `applyTruncationLast` chooses whether the offset is measured from the
+  # truncated instant or the truncation applied to the offset one. With no
+  # offset in the operand the two orders coincide, so what this stub asserts is
+  # that the flag is accepted beside `truncateExpected` and changes nothing it
+  # should not — the order itself is only observable against a clock, and is
+  # covered by the package's own tests rather than by a corpus case that would
+  # depend on today's date.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000007-0000-4000-8000-000000000003",
+         "name": "applyTruncationLast beside a truncated now",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-expected-now-001/order",
+                     "headers": {"X-When": {"after": "now",
+                                            "truncateExpected": "first day of month",
+                                            "applyTruncationLast": true}}},
+         "response": {"status": 200, "body": "order",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/order
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 200, body: "order"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/order
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # Truncation beside an offset. The offset is written into the expected value —
+  # there is no offset parameter — and a thousand years is enough to carry the
+  # threshold out of the range the present sweeps through, so the two actuals
+  # bracket it stably: one after Jan 1 of a millennium ago and one before it.
+  # Read against the `/after` stub above, which refuses the year 1500, this is
+  # also the proof that the offset reached the comparison at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000007-0000-4000-8000-000000000004",
+         "name": "a truncated, offset now",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-expected-now-001/offset",
+                     "headers": {"X-When": {"after": "now -1000 years",
+                                            "truncateExpected": "first day of year"}}},
+         "response": {"status": 200, "body": "offset",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/offset
+      headers: {X-When: "1500-01-01T00:00:00Z"}
+    expect: {status: 200, body: "offset"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/offset
+      headers: {X-When: "1000-01-01T00:00:00Z"}
+    expect: {status: 404}
+
+  # The same value under the un-offset threshold, which is what makes the two
+  # steps above a claim about the offset rather than about the year 1500.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-expected-now-001/after
+      headers: {X-When: "1500-01-01T00:00:00Z"}
+    expect: {status: 404}

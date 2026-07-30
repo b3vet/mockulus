@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-truncation-spellings-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# A truncation value may be written `FIRST_DAY_OF_MONTH` or `first day of
+# month`, and the two mean the same thing. The vocabulary is documented in the
+# spaced form and WireMock's own mappings echo it that way, but the constant
+# names are what a Java author reaches for and what a mappings file exported
+# from an older tool carries — so both spellings have to arrive at the same
+# matcher, and a stub written either way has to be portable.
+#
+# The two stubs are identical apart from the spelling, and they are pointed at
+# the same request, so any difference in how the value is read shows up as one
+# answering 200 and the other 404.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000003-0000-4000-8000-000000000001",
+         "name": "the constant spelling",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncation-spellings-001/upper",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-01T00:00:00Z",
+                                            "truncateActual": "FIRST_DAY_OF_MONTH"}}},
+         "response": {"status": 200, "body": "upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000003-0000-4000-8000-000000000002",
+         "name": "the spaced spelling",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncation-spellings-001/spaced",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-01T00:00:00Z",
+                                            "truncateActual": "first day of month"}}},
+         "response": {"status": 200, "body": "spaced",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncation-spellings-001/upper
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "upper"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncation-spellings-001/spaced
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "spaced"}
+
+  # Neither spelling widens the criterion: an actual in a different month is
+  # refused under both, so the two stubs agree on the negative as well.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncation-spellings-001/upper
+      headers: {X-When: "2021-07-14T12:13:14Z"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncation-spellings-001/spaced
+      headers: {X-When: "2021-07-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # The same tolerance on `truncateExpected`, which reaches the vocabulary by a
+  # different route — the expected value is resolved against the clock rather
+  # than parsed from the request, so a spelling read in one place and not the
+  # other would only show here.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000003-0000-4000-8000-000000000003",
+         "name": "the constant spelling on the expected side",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncation-spellings-001/expected-upper",
+                     "headers": {"X-When": {"after": "now",
+                                            "truncateExpected": "FIRST_DAY_OF_MONTH"}}},
+         "response": {"status": 200, "body": "expected-upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncation-spellings-001/expected-upper
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 200, body: "expected-upper"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncation-spellings-001/expected-upper
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}

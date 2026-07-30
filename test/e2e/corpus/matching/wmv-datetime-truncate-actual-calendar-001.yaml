@@ -1,0 +1,180 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-truncate-actual-calendar-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The six calendar truncations, each pinned to the exact instant it produces
+# from one actual — `2021-06-14T12:13:14Z`. Two of them are counter-intuitive
+# and are here for that reason:
+#
+#   * `last day of month` names a *day*, not the end of one, so it lands on
+#     2021-06-30T00:00:00Z and not on 23:59:59. An implementation that reads it
+#     as "the last instant of the month" fails that step and passes every other.
+#   * `first day of next month` and `first day of next year` move the value
+#     *forward*, which is the only direction a truncation is not expected to go.
+#
+# June is chosen so that the month's length (30) differs from the length of the
+# months either side, which a `last day of month` computed by adding a constant
+# would get wrong.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000002-0000-4000-8000-000000000001",
+         "name": "first day of month",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-calendar-001/month",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-01T00:00:00Z",
+                                            "truncateActual": "first day of month"}}},
+         "response": {"status": 200, "body": "month",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000002-0000-4000-8000-000000000002",
+         "name": "first day of next month",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-calendar-001/next-month",
+                     "headers": {"X-When": {"equalToDateTime": "2021-07-01T00:00:00Z",
+                                            "truncateActual": "first day of next month"}}},
+         "response": {"status": 200, "body": "next-month",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000002-0000-4000-8000-000000000003",
+         "name": "last day of month is that day at midnight",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-calendar-001/last-month",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-30T00:00:00Z",
+                                            "truncateActual": "last day of month"}}},
+         "response": {"status": 200, "body": "last-month",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000002-0000-4000-8000-000000000004",
+         "name": "first day of year",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-calendar-001/year",
+                     "headers": {"X-When": {"equalToDateTime": "2021-01-01T00:00:00Z",
+                                            "truncateActual": "first day of year"}}},
+         "response": {"status": 200, "body": "year",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000002-0000-4000-8000-000000000005",
+         "name": "first day of next year",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-calendar-001/next-year",
+                     "headers": {"X-When": {"equalToDateTime": "2022-01-01T00:00:00Z",
+                                            "truncateActual": "first day of next year"}}},
+         "response": {"status": 200, "body": "next-year",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000002-0000-4000-8000-000000000006",
+         "name": "last day of year is that day at midnight",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-calendar-001/last-year",
+                     "headers": {"X-When": {"equalToDateTime": "2021-12-31T00:00:00Z",
+                                            "truncateActual": "last day of year"}}},
+         "response": {"status": 200, "body": "last-year",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/month
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "month"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/next-month
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "next-month"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/last-month
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "last-month"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/year
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "year"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/next-year
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "next-year"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/last-year
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "last-year"}
+
+  # `last day of month` is the whole day's worth of instants collapsed onto its
+  # midnight, so the *last* instant of June is refused by the criterion that
+  # names the last *day* of June — the distinction the value's name hides.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000002-0000-4000-8000-000000000007",
+         "name": "the end of the month is not the last day of the month",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-calendar-001/end-of-month",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-30T23:59:59Z",
+                                            "truncateActual": "last day of month"}}},
+         "response": {"status": 200, "body": "end-of-month",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/end-of-month
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # A different month truncates to a different first day: the modifier is a
+  # function of the value, not a constant folded in at registration.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/month
+      headers: {X-When: "2021-07-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # …and a different year to a different first day of year, which the month-level
+  # criterion above could not have told apart on its own.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-calendar-001/year
+      headers: {X-When: "2022-06-14T12:13:14Z"}
+    expect: {status: 404}

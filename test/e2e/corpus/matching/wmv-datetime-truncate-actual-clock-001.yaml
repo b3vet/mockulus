@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-truncate-actual-clock-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `truncateActual` reduces the request's value before the comparison, and the
+# only way to say *which* reduction happened is to name the instant it must land
+# on exactly. So every stub here is an `equalToDateTime` against the predicted
+# truncation of one single actual — `2021-06-14T12:13:14Z` — which makes each
+# 200 a claim about a specific instant rather than about "something coarser".
+#
+# The three sub-day values are together because they are the ones a naive
+# implementation gets wrong in the same way: truncating to the *unit named* and
+# leaving the finer fields alone. `first minute of hour` must zero the seconds as
+# well as the minutes, and `first hour of day` the minutes and seconds too; a
+# per-field implementation answers 12:00:14 and 12:13:14 here and fails both.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000001-0000-4000-8000-000000000001",
+         "name": "first second of minute",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-clock-001/second",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:00Z",
+                                            "truncateActual": "first second of minute"}}},
+         "response": {"status": 200, "body": "second",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000001-0000-4000-8000-000000000002",
+         "name": "first minute of hour",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-clock-001/minute",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:00:00Z",
+                                            "truncateActual": "first minute of hour"}}},
+         "response": {"status": 200, "body": "minute",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000001-0000-4000-8000-000000000003",
+         "name": "first hour of day",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-clock-001/hour",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T00:00:00Z",
+                                            "truncateActual": "first hour of day"}}},
+         "response": {"status": 200, "body": "hour",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The falsifier for all three: the same criterion without the modifier. If
+  # `truncateActual` were being dropped, this stub and the `minute` stub would
+  # answer alike — and this one is the answer a dropped modifier gives.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000001-0000-4000-8000-000000000004",
+         "name": "no truncation at all",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-clock-001/plain",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "plain",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-clock-001/second
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "second"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-clock-001/minute
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "minute"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-clock-001/hour
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "hour"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-clock-001/plain
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # Truncation coarsens the comparison; it does not abolish it. An actual one
+  # hour later truncates to 13:00:00Z, which is not the 12:00:00Z the criterion
+  # names, so the stub that matched a moment ago must refuse this one.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-clock-001/minute
+      headers: {X-When: "2021-06-14T13:13:14Z"}
+    expect: {status: 404}
+
+  # And the finer value is still load-bearing under the finer truncation: one
+  # minute later is a different first-second-of-minute.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-clock-001/second
+      headers: {X-When: "2021-06-14T12:14:14Z"}
+    expect: {status: 404}
+
+  # A `before` on the truncated value pins the direction as well as the instant:
+  # the truncation moved the actual *earlier*, so a threshold between the
+  # truncated and the untruncated value holds only if the reduction happened.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000001-0000-4000-8000-000000000005",
+         "name": "before a threshold only the truncated actual is under",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-truncate-actual-clock-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14T12:05:00Z",
+                                            "truncateActual": "first minute of hour"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-truncate-actual-clock-001/before
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "before"}

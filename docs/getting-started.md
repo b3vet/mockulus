@@ -318,9 +318,9 @@ $ curl -s http://localhost:8080/__admin/recordings/status
 
 ### What is not here
 
-Absent from v1 entirely, and rejected on sight: XML and XPath matching (`equalToXml`,
-`matchesXPath`), JSON Schema matching (`matchesJsonSchema`), date/time matchers (`before`, `after`,
-`equalToDateTime`), multipart matching, proxying (`proxyBaseUrl`), record and playback, webhooks
+Absent entirely, and rejected on sight: XML and XPath matching (`equalToXml`,
+`matchesXPath`), JSON Schema matching (`matchesJsonSchema`),
+multipart matching, proxying (`proxyBaseUrl`), record and playback, webhooks
 (`postServeActions`), custom matchers, gRPC, browser proxying, Java-class extensions, and an admin
 UI. The full field-by-field matrix is [SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix);
 the endpoint matrix is [§5.1](../SPEC.md#51-admin-api-endpoint-matrix).
