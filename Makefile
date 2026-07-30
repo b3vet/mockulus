@@ -28,6 +28,47 @@ build: ## Build the mockulus binary into bin/
 run: ## Run mockulus locally with text logs
 	MOCKULUS_LOG_FORMAT=text $(GO) run ./cmd/mockulus
 
+# The JavaScript side of the tree: the admin UI in ui/, which vite builds into
+# internal/adminui/dist for go:embed to pick up.
+#
+# `build` above deliberately does not depend on `ui-build`, and neither does
+# `test`. Node is not a build dependency of mockulus: the repo commits
+# internal/adminui/dist/.gitkeep as a placeholder, and when index.html is
+# absent the handler serves a "built without UI" notice instead. That is what
+# lets someone clone this repo, run `make build`, and get a working server
+# without first installing a toolchain they never asked for. Wiring ui-build in
+# as a prerequisite would take that away from every Go-only contributor in
+# exchange for convenience the people who need the UI can get by typing
+# `make ui-build build`.
+#
+# The guarantee that shipped artifacts do carry the UI is therefore enforced
+# where artifacts are actually produced, not here: the Dockerfile builds it in
+# its own Node stage, .goreleaser.yaml runs ui-build as a before-hook, and the
+# CI lanes that gate a binary against the corpus build it first. A missing UI
+# in a release is a broken release; a missing UI in a local `go build` is a
+# Tuesday.
+PNPM ?= pnpm
+
+# --frozen-lockfile is left off on purpose. pnpm applies it by default when CI
+# is set, so the pipelines get the reproducible install for free, while someone
+# who is halfway through editing ui/package.json is not stopped by a lockfile
+# they have not finished updating yet.
+.PHONY: ui-build
+ui-build: ## Build the admin UI into internal/adminui/dist (needs Node and pnpm)
+	$(PNPM) install
+	$(PNPM) run build
+
+.PHONY: ui-dev
+ui-dev: ## Serve the admin UI from vite, proxying the API to a local `make run`
+	$(PNPM) install
+	$(PNPM) run dev
+
+.PHONY: ui-check
+ui-check: ## Type-check, lint, format-check and unit-test the admin UI
+	$(PNPM) install
+	$(PNPM) run check
+	$(PNPM) run test
+
 .PHONY: test
 test: ## Run unit tests with the race detector
 	$(GO) test -race -count=1 ./...
@@ -120,6 +161,20 @@ license-report: ## Regenerate THIRD_PARTY_LICENSES from the module graph
 		--ignore $(MODULE) > THIRD_PARTY_LICENSES.tmp
 	mv THIRD_PARTY_LICENSES.tmp THIRD_PARTY_LICENSES
 
+# The other half of §22.1, for the half of the tree go-licenses cannot see.
+# It resolves the Go module graph and stops there, so every npm package the
+# admin UI is built from — including the ones whose code vite inlines into the
+# bundle the binary embeds — would otherwise pass through the license gate
+# unexamined. The allowlist and its exceptions are argued in the script.
+.PHONY: npm-license-check
+npm-license-check: ## Verify every npm package in the workspace is permissively licensed
+	@./scripts/check-npm-licenses.sh
+
+# No ui-build prerequisite here either, and for a happier reason than above:
+# the Dockerfile builds the UI in its own node:22-alpine stage, so `make image`
+# produces an image with the UI in it on a host that has never seen Node. That
+# also keeps `docker build .` self-contained for anyone building from a clean
+# checkout, which is what the release pipeline does.
 .PHONY: image
 image: ## Build the shippable container image
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
@@ -140,3 +195,12 @@ e2e-catalog: ## Check the behavior catalog against the spec and the corpus
 .PHONY: clean
 clean: ## Remove build and test artifacts
 	rm -rf bin dist coverage.txt test/e2e/.artifacts
+	# The admin UI's build output goes too, but never the .gitkeep beside it:
+	# that file is committed, and go:embed fails outright on a directory with
+	# nothing in it, so deleting it would leave `make build` broken rather than
+	# clean. Emptying the rest is the point — a stale bundle embedded into a
+	# binary built an hour later is a confusing way to find out that ui-build
+	# is a separate step.
+	@if [ -d internal/adminui/dist ]; then \
+		find internal/adminui/dist -mindepth 1 ! -name .gitkeep -delete; \
+	fi

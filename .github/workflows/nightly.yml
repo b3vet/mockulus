@@ -136,6 +136,19 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # Built inline for the same reason the merge lane builds it: not because
+      # the corpus needs a bundle — the UI cases pass against the placeholder
+      # too — but so the binary under test is shaped like the one that ships,
+      # with the real assets embedded. The UI cases are `wm: n/a` and take no
+      # part in the diffing this lane exists for; what the build buys here is a
+      # nightly run of the checks that only apply to a real bundle.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: make ui-build
+
       # Nightly rather than only on merge because the oracle is a pinned image
       # and this lane is where a bump to WIREMOCK_VERSION gets found out — on a
       # schedule nobody is waiting on, instead of in the PR that bumped it.

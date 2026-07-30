@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b3vet/mockulus/internal/adminui"
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/match"
 	"github.com/b3vet/mockulus/internal/metrics"
@@ -77,6 +78,8 @@ type Handler struct {
 	stubOpts  stub.Options
 	shutdown  func()
 	tracer    *tracing.Tracer
+	// ui is the embedded admin UI (§5.7), nil when ui_enabled is false.
+	ui *adminui.Handler
 	// started backs the uptime the health endpoint reports.
 	started time.Time
 
@@ -162,6 +165,23 @@ func New(opts Options) *Handler {
 		mux.HandleFunc("POST /__admin/shutdown", h.shutdownServer)
 	}
 
+	// The embedded admin UI (§5.7). It is mockulus' own surface rather than
+	// WireMock's, so it lives under the reserved /__admin/mockulus/** namespace
+	// and nothing else in that namespace is claimed: an unknown path below it
+	// falls through to the same unsupported-endpoint 404 as any other, which is
+	// what keeps the namespace a contract rather than a catch-all.
+	//
+	// Registered only when enabled, for the reason the shutdown route above is:
+	// a disabled feature should not exist rather than exist and refuse.
+	if h.cfg.UIEnabled {
+		h.ui = adminui.New()
+		mux.Handle("GET "+adminui.Prefix, h.ui)
+		mux.Handle("HEAD "+adminui.Prefix, h.ui)
+		// The bare directory, so a link without the trailing slash still lands.
+		mux.Handle("GET "+strings.TrimSuffix(adminui.Prefix, "/"), h.ui)
+		mux.Handle("HEAD "+strings.TrimSuffix(adminui.Prefix, "/"), h.ui)
+	}
+
 	// Anything else under /__admin is outside the supported matrix.
 	mux.HandleFunc("/__admin/", h.notFound)
 	mux.HandleFunc("/__admin", h.notFound)
@@ -188,6 +208,10 @@ func (h *Handler) withAuth(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.uiAsset(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !h.cfg.AdminTokenAccepted(r.Header.Get("Authorization")) {
 			wmcompat.WriteErrors(w, http.StatusUnauthorized,
 				wmcompat.NewError(wmcompat.CodeMalformed, "admin API requires a valid Authorization token"))
@@ -195,6 +219,29 @@ func (h *Handler) withAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// uiAsset reports whether a path is a UI document or asset, which the token
+// check lets through (§5.7, amending §17).
+//
+// This is the one hole in "a route added later is protected by the existing
+// middleware", and it is narrow on purpose. A browser cannot put an
+// Authorization header on a page load or on the script tags that page pulls in,
+// so a token in front of the assets makes the UI unreachable precisely on the
+// deployments that set one — the opposite of what guarding it would be for.
+//
+// What passes is code; what it then does is not exempt. Every read and write the
+// UI performs is an ordinary admin API call carrying the token the operator
+// typed into it, checked here like any other. The corpus pins both halves of
+// that in one case: assets answer 200 with no token while the API answers 401.
+//
+// The prefix test is exact rather than a substring search, so a path like
+// /__admin/mappings?x=/__admin/mockulus/ui/ cannot reach it.
+func (h *Handler) uiAsset(path string) bool {
+	if h.ui == nil {
+		return false
+	}
+	return path == strings.TrimSuffix(adminui.Prefix, "/") || strings.HasPrefix(path, adminui.Prefix)
 }
 
 // withTracing wraps admin requests in a span when tracing is on.
@@ -241,6 +288,14 @@ func (h *Handler) withMetrics(next http.Handler) http.Handler {
 
 // endpointGroup reduces an admin path to its low-cardinality group.
 func endpointGroup(path string) string {
+	// Every UI asset collapses to one group. The bundle emits a fingerprinted
+	// file name per build, so grouping them by path would mint a fresh label
+	// value on every deploy and grow the metric without bound — the failure the
+	// rest of this function exists to prevent, arriving from a new direction.
+	if path == strings.TrimSuffix(adminui.Prefix, "/") || strings.HasPrefix(path, adminui.Prefix) {
+		return "mockulus/ui"
+	}
+
 	rest := strings.TrimPrefix(path, "/__admin")
 	rest = strings.Trim(rest, "/")
 	if rest == "" {

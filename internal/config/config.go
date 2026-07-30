@@ -84,6 +84,13 @@ type Config struct {
 
 	MetricsEnabled bool `yaml:"metrics_enabled" default:"true" doc:""`
 
+	// UIEnabled governs the embedded admin UI of §5.7. On by default, because
+	// the UI is the point of shipping one; off, the whole `/__admin/mockulus/ui`
+	// prefix answers the ordinary unsupported-endpoint 404 and the admin-port
+	// redirect disappears, so a hardened deployment can remove the surface
+	// rather than merely leave it unused.
+	UIEnabled bool `yaml:"ui_enabled" default:"true" doc:"Serve the embedded admin UI at ~/__admin/mockulus/ui/~ (§5.7)"`
+
 	Tracing TracingConfig `yaml:"tracing"`
 }
 

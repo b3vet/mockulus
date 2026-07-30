@@ -719,6 +719,34 @@ $ curl -s -w '\n%{http_code}\n' localhost:9090/metrics
 There is rarely a reason to turn it off. The metric names are listed in
 [SPEC §14.1](../SPEC.md#141-metrics-prometheus-metrics-on-admin-port).
 
+**`ui_enabled`** (`true`) serves the embedded admin UI at
+`/__admin/mockulus/ui/` on both listeners, and redirects the admin port's root
+to it so that port-forwarding a pod and opening it in a browser lands somewhere
+useful. Turned off, the whole prefix stops existing:
+
+```console
+$ MOCKULUS_UI_ENABLED=false mockulus
+$ curl -s -w '\n%{http_code}\n' localhost:9090/__admin/mockulus/ui/
+{"errors":[{"code":1001,"title":"Unsupported endpoint","detail":"/__admin/mockulus/ui/ is not supported in mockulus v1 — see ROADMAP.md"}]}
+404
+```
+
+The redirect goes with it, so `/` on the admin port answers 404 as it did before
+the UI existed. The admin API is untouched either way.
+
+One property of the UI is worth knowing before you decide: its **static assets
+are served without the `admin_auth_token` check**, and everything else —
+including every call the UI makes — is checked as before. A browser cannot put
+an `Authorization` header on a page load, so a token in front of the assets
+would make the UI unreachable on exactly the deployments that set one. What is
+exempt is code; the data behind it is not. The operator types the token into the
+UI and it travels on the API calls, which are refused without it like any other.
+[SPEC §5.7](../SPEC.md#571-the-admin-ui) states the amendment in full.
+
+Note also that the admin listener has no TLS ([SPEC §12.1](../SPEC.md#121-listeners)),
+so the UI is an in-cluster and port-forward tool. Putting it in front of anyone
+else is an ingress decision.
+
 ---
 
 ## Tracing

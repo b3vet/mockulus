@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+@import 'tailwindcss';
+
+/* The UI is an operator tool that runs next to a terminal, so it follows the
+   operating system rather than carrying its own theme switch. */
+html {
+  color-scheme: light dark;
+}

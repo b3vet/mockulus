@@ -3,6 +3,22 @@
 /dist/
 *.exe
 
+# The admin UI's build output. internal/adminui/dist/.gitkeep is committed and
+# has to stay that way — it is what lets `go build` succeed with no Node
+# installed, since go:embed refuses a directory it can find nothing in — but
+# everything vite writes beside it is generated and belongs to whoever last ran
+# `make ui-build`.
+#
+# This is load-bearing beyond tidiness. goreleaser refuses to build from a dirty
+# tree, and .goreleaser.yaml runs ui-build as a before-hook, so a bundle that
+# read as an untracked file would make every release fail on the output of its
+# own build step.
+/internal/adminui/dist/*
+!/internal/adminui/dist/.gitkeep
+
+# The pnpm store for the JavaScript workspace, at the root and in every package.
+node_modules/
+
 # Release artifacts the publish job writes into the working directory before
 # goreleaser runs: `helm package` drops the chart tarball in the current
 # directory, and the SBOM action writes its document beside it. goreleaser
@@ -22,6 +38,23 @@ covdata/
 
 # Local tooling
 /.tools/
+
+# npm toolchain. pnpm-lock.yaml is committed — it is the reproducibility
+# guarantee, same role as go.sum.
+node_modules/
+/ui/dist/
+
+# The embedded admin UI bundle. `internal/adminui` embeds this directory with
+# `//go:embed all:dist`, so the built site is an input to `go build` rather than
+# a leftover of it — but it is still generated, and generated bundles do not
+# belong in the tree.
+#
+# `.gitkeep` is the exception and stays tracked: go:embed fails on a directory
+# that does not exist, and that placeholder is what keeps `go build` working on
+# a machine with no Node installed. Ignoring the contents rather than the
+# directory itself is what leaves room for the negation to apply.
+/internal/adminui/dist/*
+!/internal/adminui/dist/.gitkeep
 
 # Editor / OS
 .DS_Store

@@ -423,6 +423,14 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 		client: &http.Client{
 			Timeout:   30 * time.Second,
 			Transport: transport,
+			// Redirects are answers, not detours. Following them silently makes
+			// a 302 unassertable — the case sees whatever the target returned
+			// and cannot say where it was sent, which for the admin-port root
+			// of §5.7 is the entire behavior. A case that wants the target
+			// requests the target.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 
