@@ -1,0 +1,61 @@
+{
+  "name": "@mockulus/admin-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Typed client, WireMock-style builders and test helpers for the mockulus admin API.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/b3vet/mockulus.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/b3vet/mockulus/tree/main/sdk/typescript#readme",
+  "bugs": "https://github.com/b3vet/mockulus/issues",
+  "keywords": [
+    "mockulus",
+    "wiremock",
+    "mock",
+    "http",
+    "testing",
+    "admin-api"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json",
+    "check": "tsc --noEmit -p tsconfig.json && eslint . && prettier --check .",
+    "test": "vitest run",
+    "clean": "rm -rf dist tsconfig.build.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.15.0",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

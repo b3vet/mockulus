@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: wmv-jsonpath-header-subject-001
-behaviors: [B-MATCH-MATCHESJSONPATH, B-REQ-HEADERS]
+behaviors: [B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH, B-REQ-HEADERS]
 wm: verified
 # The non-matching steps land on the 404 whose body differs by design
 # (deviation #2/#18). Status and headers are still diffed.

@@ -65,6 +65,34 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- **`api/openapi.yaml`** — an authored OpenAPI 3.1 description of the admin API,
+  and the first machine-readable statement of the surface this project has had.
+  It types the supported subset strictly, so a field mockulus would refuse at
+  registration is a field the contract refuses to describe.
+
+  It is checked against the behavior catalog in both directions by
+  `make contract-lint`, which runs in CI: a route the server implements and the
+  contract omits is a call a client cannot make, and a route the contract
+  invents is one that compiles and then 404s. Neither shows up by reading either
+  file alone. The check is against the catalog rather than the spec directly
+  because the catalog is already pinned row-by-row to §5.1 by the E2E gate, so
+  the triangle closes transitively without a second markdown parser.
+
+- **`@mockulus/admin-sdk`**, a TypeScript client for the admin API, begins in
+  `sdk/typescript`. It is not published yet. What it exports today is the error
+  catalog — the codes and the HTTP status each is answered with — held against
+  SPEC Appendix B by its own tests in both directions, so the numbers cannot
+  drift from what the server answers. The client, the WireMock-style builders
+  and the test helpers follow.
+
+- **`AGENTS.md`**, and a `CLAUDE.md` that points at it rather than repeating it.
+  It carries the repo's orientation, the rule that a behavior change updates the
+  catalog and the corpus in the same PR, and its new sibling: a change to the
+  admin surface updates the contract and the SDK in the same PR. It also brings
+  the probing discipline into the tree — the rules for establishing what an
+  external reference does, each of which has already been paid for once, with
+  the incident that bought it written next to it.
+
 - **An embedded admin UI**, served at `/__admin/mockulus/ui/` on both listeners
   and compiled into the binary. This release lands the toolchain and the serving
   contract; the interface itself is thin and grows over the releases that follow.
@@ -147,6 +175,45 @@ supported feature is a minor.
   and the section had no catalog entry of any kind, which is how the claim
   survived a whole release; the section is now pinned like §8, §9 and §11 so the
   rest of it cannot go the same way.
+- **Three specification errors, all found by writing the contract against a
+  running server rather than by reading.**
+
+  Appendix A's annotated example spelled `equalToJson` as
+  `{"equalToJson": {"value": "…", "ignoreExtraElements": true}}`. That is not a
+  form either server has: the flags are siblings of the operand, not members of
+  it, so the criterion compared the body against the literal object
+  `{"value": …, "ignoreExtraElements": true}` — it registered cleanly and
+  matched nothing anybody would send, while the request the surrounding prose
+  described got a 404. It was also not valid JSON, because a `\'` escape inside
+  a string is not one, so the example could not have been posted as printed. The
+  whole mapping is now registered against a live server and serves the request
+  it describes.
+
+  §5.2 had no row for `doesNotMatchJsonPath`, which the server has supported all
+  along. A matcher with no row has no catalog entry and so no gate, which is how
+  it stayed undocumented; it now shares a row with `matchesJsonPath` the way
+  `doesNotMatch` shares one with `matches`, and the evidence contract requires a
+  case that proves the negation.
+
+  §11.2's journal-entry example carried a top-level `ts`, a `pod` and a
+  `bodyAsBase64`. None of the three is emitted — the first two are storage
+  metadata that never reach the document a query returns, and an over-long body
+  is flagged with `bodyTruncated` rather than re-encoded. Their absence is what
+  a client codes against, so the section now names it.
+
+- The differential harness asks the oracle what it is before deriving a single
+  expectation from it. It started the container and read the port back from
+  Docker, so nothing should have been able to answer in its place — this
+  mechanises a rule rather than closing a live hole. The rule was paid for: a
+  stray process once answered on a port taken to be the oracle's, and a batch of
+  confident, wrong findings was recorded from it before anyone asked what was
+  listening. Every one of them was mockulus agreeing with itself.
+- The compatibility matrix is now drift-gated in CI. It is generated from the
+  behavior catalog and the corpus precisely so that it cannot claim support the
+  gate does not enforce, and that property only holds if the check runs — the
+  §13 configuration table and `THIRD_PARTY_LICENSES` were both gated and this
+  was not, which left the most public of the three the only one that could go
+  quietly out of date.
 - The match path carries a context. The scenario state read of §9.2 — the one
   piece of I/O it is allowed to do — used to invent a `context.Background()` at
   the call site, so a client that hung up still had its read run to the full

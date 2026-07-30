@@ -69,6 +69,30 @@ ui-check: ## Type-check, lint, format-check and unit-test the admin UI
 	$(PNPM) run check
 	$(PNPM) run test
 
+# The other package in the workspace: @mockulus/admin-sdk, the published client.
+# It is kept separate from the ui-* targets rather than folded into a single
+# js-check, because the two fail for unrelated reasons and a contributor who
+# broke one should not have to read past the other's output to find out.
+.PHONY: sdk-build
+sdk-build: ## Compile the TypeScript admin SDK into sdk/typescript/dist
+	$(PNPM) install
+	$(PNPM) run sdk:build
+
+.PHONY: sdk-check
+sdk-check: ## Type-check, lint, format-check and unit-test the admin SDK
+	$(PNPM) install
+	$(PNPM) run sdk:check
+	$(PNPM) run sdk:test
+
+# The contract half of the coupling rule in AGENTS.md. The SDK's types are
+# generated from api/openapi.yaml, so an admin route that reaches the server
+# without reaching the contract is a call the SDK cannot make — and one that
+# reaches the contract without reaching the server is a call that compiles and
+# then 404s. Neither shows up by reading either file on its own.
+.PHONY: contract-lint
+contract-lint: ## Cross-check api/openapi.yaml against the behavior catalog, both ways
+	$(GO) run ./scripts/contractlint
+
 .PHONY: test
 test: ## Run unit tests with the race detector
 	$(GO) test -race -count=1 ./...

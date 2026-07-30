@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: deviation-json-lenient-body-001
-behaviors: [B-DEV-DEVIATION-35, B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS, B-MATCH-MATCHESJSONPATH]
+behaviors: [B-DEV-DEVIATION-35, B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS, B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH]
 # Deviation #35, the request-body half. WireMock reads a body with Jackson's
 # defaults, which accept several dialects that are not JSON: content after a
 # complete document, single quotes around member names and around values, and

@@ -295,15 +295,15 @@ behaviors:
     evidence: "structural equality with the relaxation flags, and json-unit placeholders interpreted by rule"
     evidence_tokens: ["equalToJson", "json-unit"]
     status: "ok"
-  - id: "B-MATCH-MATCHESJSONPATH"
-    spec_row: "spec:5.2:content-matchers|matchesJsonPath"
-    spec_hash: "3feee116823276b4"
+  - id: "B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH"
+    spec_row: "spec:5.2:content-matchers|matchesJsonPath, doesNotMatchJsonPath"
+    spec_hash: "0e372573bb27a72b"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
     impl_milestone: "M1"
-    summary: "matchesJsonPath"
-    evidence: "both the bare expression form and the nested-matcher form"
-    evidence_tokens: ["matchesJsonPath"]
+    summary: "matchesJsonPath, doesNotMatchJsonPath"
+    evidence: "both the bare expression form and the nested-matcher form, and the negated spelling refusing what the positive one matches"
+    evidence_tokens: ["matchesJsonPath", "doesNotMatchJsonPath"]
     status: "ok"
   - id: "B-MATCH-MATCHESJSONSCHEMA"
     spec_row: "spec:5.2:content-matchers|matchesJsonSchema"

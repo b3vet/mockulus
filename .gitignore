@@ -72,3 +72,11 @@ node_modules/
 # behind calls that were made and unmade. Anything in them a user needs is in
 # SPEC.md or the deviation list.
 /internalDocs/
+
+# The TypeScript SDK's compiled output. Published to npm from CI, never from a
+# working tree, so the tree carries the source and the tarball carries this.
+/sdk/typescript/dist/
+/sdk/typescript/*.tsbuildinfo
+
+# The contract lint compiles to the repo root when built rather than run.
+/contractlint
