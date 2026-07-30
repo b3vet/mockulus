@@ -904,6 +904,47 @@ line the logs hold ([§14.2](../SPEC.md#142-logs)) and for the same reason: team
 put real credentials in their mocks, and a trace backend is a wider audience than
 a bucket.
 
+### The phases underneath a request
+
+A server span says how long a request took. Its children say where that time
+went, and they follow the same pay-per-use rule the phases themselves do — a span
+appears only when the phase it measures actually ran, so a plain stub's trace is
+a server span and a `match` and nothing else. The full model is
+[SPEC §14.4](../SPEC.md#144-span-model--correlation):
+
+| Child span | Appears when | Carries |
+|---|---|---|
+| `match` | always | `mockulus.candidates` — how many stubs were evaluated |
+| `scenario.read` | the stub is in a scenario | `mockulus.scenario.name` |
+| `scenario.transition` | the stub sets `newScenarioState` | `mockulus.scenario.name` |
+| `template.render` | the stub is templated and templating is active | the span is marked failed on a render error |
+| `delay` | the composed delay is above zero | `mockulus.delay_ms` |
+
+The `delay` span is the one worth pointing at. A slow response and a response
+that was *told* to be slow look identical in a duration, and only one of them is
+a fault; with the span, the configured wait is visibly a separate block of time
+from everything around it.
+
+Two spans are deliberately **not** children of anything. `snapshot.rebuild` and
+`journal.flush` root their own traces, because both are shared work: a rebuild is
+coalesced across every write that triggered it and outlives all of them, and a
+journal batch holds entries from many requests and often many traces. Attaching
+either to one caller would bill the whole cluster's convergence to whoever
+happened to arrive first.
+
+### Finding the trace from a journal entry
+
+When a request was sampled, its journal entry gains a `traceId` member and its
+sampled access-log line gains a `trace_id` field. Both are how you get from
+after-the-fact evidence back to the trace: the journal is usually where someone
+starts, and an entry that cannot name its trace leaves them searching by
+timestamp.
+
+Both are absent rather than empty when there is no sampled span, so a deployment
+that is not tracing keeps exactly the journal document and the log line it had.
+`traceId` is an additive field, which is why it does not disturb the differential
+comparison of [SPEC §5.6](../SPEC.md#56-differential-compatibility-verification-the-compat-tiebreaker).
+
 `/__admin` served on the mock port never produces a mock span — it is excluded
 there exactly as it is from the mock-port metrics, so `mockulus.matched` counts
 stub traffic and nothing else. It still produces its admin span.

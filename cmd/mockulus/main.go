@@ -199,13 +199,16 @@ func run() error {
 	timed := store.Instrumented(st, m)
 
 	builder := match.NewBuilder(timed, engine, log, m, stubOpts)
+	if tracer != nil {
+		builder.SetTracer(tracer)
+	}
 
 	// Scenarios: only stubs that are in one ever read state, so a deployment
 	// that uses no scenarios pays nothing for this (P2).
 	var scenarios *scenario.Client
 	if scenarioStore, ok := st.(store.ScenarioStore); ok {
 		scenarios = scenario.NewClient(scenarioStore, log, m, cfg.ScenarioKVTimeout.D())
-		engine.SetScenarioGate(scenarioGate(scenarios, m, log))
+		engine.SetScenarioGate(scenarioGate(scenarios, m, log, tracer))
 		engine.SetTransitioner(scenarios)
 	}
 
@@ -229,7 +232,7 @@ func run() error {
 			BatchSize:     cfg.JournalBatchSize,
 			FlushInterval: cfg.JournalFlushInterval.D(),
 			Pod:           podName(),
-		}, js, log, m)
+		}, js, log, m, tracer)
 		journalWriter.Start()
 		engine.SetRecorder(journalWriter)
 	}
@@ -422,7 +425,8 @@ func podName() string {
 // of a state machine because the store hiccuped is worse than saying so. Plain
 // stubs are unaffected, which is what keeps the failure contained to the
 // deployments actually using scenarios (SPEC §4.6, §9.2).
-func scenarioGate(client *scenario.Client, m *metrics.Metrics, log *slog.Logger) match.ScenarioGate {
+func scenarioGate(client *scenario.Client, m *metrics.Metrics, log *slog.Logger,
+	tracer *tracing.Tracer) match.ScenarioGate {
 	return func(ctx context.Context, ref *stub.ScenarioRef, req *match.ParsedRequest) bool {
 		if ref.RequiredState == "" {
 			return true
@@ -434,7 +438,16 @@ func scenarioGate(client *scenario.Client, m *metrics.Metrics, log *slog.Logger)
 			return state == ref.RequiredState
 		}
 
+		// The one read the match path is allowed to make, so it is the one worth
+		// a span: a p99 that moves only for scenario stubs is answered here.
+		var span tracing.Span
+		if tracer != nil {
+			_, span = tracer.StartClient(ctx, "scenario.read",
+				tracing.String("mockulus.scenario.name", ref.Name))
+		}
 		state, err := client.State(ctx, ref.Name)
+		span.SetError(err)
+		span.End()
 		if err != nil {
 			m.StoreErrors.WithLabelValues("scenario_read").Inc()
 			log.Warn("scenario state unavailable; failing the request",

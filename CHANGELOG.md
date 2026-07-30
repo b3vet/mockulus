@@ -28,6 +28,30 @@ supported feature is a minor.
   logged at most once a minute behind it, and export is bounded rather than
   retried for a minute — a collector that has not recovered in fifteen seconds is
   an outage, not a queue.
+- The phases underneath a request, as child spans: the match decision and how
+  many stubs it evaluated, the scenario read and transition, the template render,
+  and the delay. The last one earns its place on its own — a slow response and a
+  response told to be slow are the same duration, and only one of them is a
+  fault. Each appears only when the phase actually ran, so a plain stub's trace
+  stays a server span and a match.
+- Snapshot rebuilds and journal flushes as spans that root their own traces
+  rather than joining the request that triggered them. Both are shared work: a
+  rebuild is coalesced across every write behind it, and a journal batch holds
+  entries from many requests, so billing either to one caller would attribute the
+  cluster's convergence to whoever arrived first.
+- A `traceId` on the journal entry and a `trace_id` on the sampled access-log
+  line, for a request that was sampled — the journal is where someone looks after
+  the fact, and an entry that cannot name its trace leaves them searching by
+  timestamp. Both are absent rather than empty otherwise, so a deployment that is
+  not tracing keeps the document and the log line it had.
+
+### Changed
+
+- The match path carries a context. The scenario state read of §9.2 — the one
+  piece of I/O it is allowed to do — used to invent a `context.Background()` at
+  the call site, so a client that hung up still had its read run to the full
+  `scenario_kv_timeout`. A cancelled request now cancels the read it is waiting
+  on. Internal signatures only; the hot-path allocation budget is unchanged.
 
 Tracing is configured only by mockulus' own keys; the standard `OTEL_*`
 environment variables are deliberately not read, so one mechanism owns the

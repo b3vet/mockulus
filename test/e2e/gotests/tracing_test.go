@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -301,36 +302,44 @@ func TestTracingDisabledExportsNothing(t *testing.T) {
 	}
 }
 
-// TestTracingJoinsCallerTraceContext proves the two halves that make a mock's
-// spans useful to the suite driving it: W3C context is extracted from the
-// request, and the caller's sampling decision overrides the local ratio.
+// TestTracingSamplingFollowsTheCallerNotTheRatio proves both halves of the
+// sampling decision from one instance, where the only difference between the two
+// requests is a header.
 //
-// The ratio is zero, so nothing this pod started on its own would be sampled.
-// A span arriving under the caller's trace id can only have come from the
-// caller's decision.
-func TestTracingJoinsCallerTraceContext(t *testing.T) {
+// The ratio is zero, so nothing this pod roots on its own is recorded. One
+// request arrives bare and one carries a sampled traceparent; exactly one span
+// comes out, under the caller's trace. Two instances could not make that
+// comparison — the absence would be a separate run from the presence, and the
+// interesting claim is that the header is what decided.
+func TestTracingSamplingFollowsTheCallerNotTheRatio(t *testing.T) {
 	receiver := newOTLPReceiver(t, false)
 	m := tracedInstance(t, receiver, map[string]string{
 		"MOCKULUS_TRACING_SAMPLE_RATIO": "0",
 	})
 
-	m.registerStub(t, `{"request":{"method":"GET","urlPath":"/gotest/tracing/joined"},
+	m.registerStub(t, `{"request":{"method":"GET","urlPath":"/gotest/tracing/sampling"},
 	                    "response":{"status":200}}`)
+
+	// Bare: this pod would have to root the trace itself, and the ratio says no.
+	resp, err := httpGet(t.Context(), harnessClient, m.mockURL("/gotest/tracing/sampling"))
+	if err != nil {
+		t.Fatalf("serve unsampled request: %v", err)
+	}
+	_ = resp.Body.Close()
 
 	const (
 		callerTrace = "4bf92f3577b34da6a3ce929d0e0e4736"
 		callerSpan  = "00f067aa0ba902b7"
 	)
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
-		m.mockURL("/gotest/tracing/joined"), nil)
+		m.mockURL("/gotest/tracing/sampling"), nil)
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	// The trailing 01 is the sampled flag: the caller has decided this trace is
-	// being recorded.
+	// The trailing 01 is the sampled flag: the caller has already decided.
 	req.Header.Set("traceparent", "00-"+callerTrace+"-"+callerSpan+"-01")
 
-	resp, err := harnessClient.Do(req)
+	resp, err = harnessClient.Do(req)
 	if err != nil {
 		t.Fatalf("serve joined request: %v", err)
 	}
@@ -338,38 +347,22 @@ func TestTracingJoinsCallerTraceContext(t *testing.T) {
 
 	m.stop()
 
-	mock := receiver.spanNamed("mock GET")
-	if mock == nil {
-		t.Fatalf("a sampled caller's request produced no span; got %v", spanNames(receiver))
+	var served []*tracepb.Span
+	for _, span := range receiver.collected() {
+		if span.GetName() == "mock GET" {
+			served = append(served, span)
+		}
 	}
-	if got := hex.EncodeToString(mock.GetTraceId()); got != callerTrace {
+	if len(served) != 1 {
+		t.Fatalf("two requests at sample_ratio 0 produced %d server spans, want only the caller-sampled one; got %v",
+			len(served), spanNames(receiver))
+	}
+	if got := hex.EncodeToString(served[0].GetTraceId()); got != callerTrace {
 		t.Errorf("span trace id = %s, want the caller's %s — the trace was not joined",
 			got, callerTrace)
 	}
-	if got := hex.EncodeToString(mock.GetParentSpanId()); got != callerSpan {
+	if got := hex.EncodeToString(served[0].GetParentSpanId()); got != callerSpan {
 		t.Errorf("span parent = %s, want the caller's span %s", got, callerSpan)
-	}
-}
-
-// TestTracingUnsampledRootProducesNoSpans is the other side of the ratio: with
-// no caller decision to follow and a zero ratio, a request this pod is the root
-// of is not recorded.
-func TestTracingUnsampledRootProducesNoSpans(t *testing.T) {
-	receiver := newOTLPReceiver(t, false)
-	m := tracedInstance(t, receiver, map[string]string{
-		"MOCKULUS_TRACING_SAMPLE_RATIO": "0",
-	})
-
-	resp, err := httpGet(t.Context(), harnessClient, m.mockURL("/gotest/tracing/unsampled"))
-	if err != nil {
-		t.Fatalf("serve request: %v", err)
-	}
-	_ = resp.Body.Close()
-
-	m.stop()
-
-	if spans := receiver.collected(); len(spans) != 0 {
-		t.Fatalf("sample_ratio 0 still exported %d spans: %v", len(spans), spanNames(receiver))
 	}
 }
 
@@ -515,4 +508,190 @@ func spanNames(r *otlpReceiver) []string {
 		out = append(out, s.GetName())
 	}
 	return out
+}
+
+// TestTracingRecordsThePhasesThatRanAndOnlyThose pins the span model of SPEC
+// §14.4 from a single instance, which is what lets it state both halves.
+//
+// Two stubs are served: one that uses a scenario, a template and a delay, and
+// one plain. The children have to appear under the first request's span and be
+// absent from the second's — and asserting that on one instance is stronger than
+// asserting it across two, because the spans that must not be there are ones the
+// same process demonstrably knows how to produce.
+func TestTracingRecordsThePhasesThatRanAndOnlyThose(t *testing.T) {
+	receiver := newOTLPReceiver(t, false)
+	// Default templating activation on purpose. Forcing it on globally would
+	// make every stub templated, including the plain one, and the render span it
+	// then produced would be correct — which is how this case first read as a
+	// failure and was in fact a test asserting the wrong premise.
+	m := tracedInstance(t, receiver, nil)
+
+	m.registerStub(t, `{"request":{"method":"GET","urlPath":"/gotest/tracing/phases"},
+	                    "scenarioName":"gotest-tracing-phases",
+	                    "requiredScenarioState":"Started",
+	                    "newScenarioState":"seen",
+	                    "response":{"status":200,
+	                                "body":"{{request.path}}",
+	                                "transformers":["response-template"],
+	                                "fixedDelayMilliseconds":25}}`)
+	m.registerStub(t, `{"request":{"method":"GET","urlPath":"/gotest/tracing/plain"},
+	                    "response":{"status":200,"body":"plain"}}`)
+
+	for _, path := range []string{"/gotest/tracing/phases", "/gotest/tracing/plain"} {
+		resp, err := httpGet(t.Context(), harnessClient, m.mockURL(path))
+		if err != nil {
+			t.Fatalf("serve %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	m.stop()
+
+	full := serverSpanFor(receiver, "/gotest/tracing/phases")
+	plain := serverSpanFor(receiver, "/gotest/tracing/plain")
+	if full == nil || plain == nil {
+		t.Fatalf("expected a server span for each request; got %v", spanNames(receiver))
+	}
+
+	// The stub that uses every phase produces every phase, attached to it.
+	fullChildren := childrenOf(receiver, full)
+	for _, want := range []string{"match", "scenario.read", "scenario.transition", "template.render", "delay"} {
+		if !fullChildren[want] {
+			t.Errorf("no %q span under the request that used it; children were %v",
+				want, keysOf(fullChildren))
+		}
+	}
+
+	// The plain stub uses none of them, so its trace is a match and nothing else.
+	// A `delay` span here would be a span asserting that zero milliseconds passed.
+	plainChildren := childrenOf(receiver, plain)
+	if !plainChildren["match"] {
+		t.Error("even a plain request should carry a match span")
+	}
+	for _, unwanted := range []string{"delay", "template.render", "scenario.read", "scenario.transition"} {
+		if plainChildren[unwanted] {
+			t.Errorf("a plain stub produced a %q span for a phase that never ran", unwanted)
+		}
+	}
+
+	if match := receiver.spanNamed("match"); match != nil {
+		if _, ok := attr(match.GetAttributes(), "mockulus.candidates"); !ok {
+			t.Error("the match span carries no mockulus.candidates, so it cannot say how much work matching did")
+		}
+	}
+	if delay := receiver.spanNamed("delay"); delay != nil {
+		if got, _ := attr(delay.GetAttributes(), "mockulus.delay_ms"); got != "25" {
+			t.Errorf("delay span mockulus.delay_ms = %q, want the configured 25", got)
+		}
+	}
+}
+
+// serverSpanFor finds the server span of the request served at a given path.
+func serverSpanFor(r *otlpReceiver, path string) *tracepb.Span {
+	for _, span := range r.collected() {
+		if span.GetKind() != tracepb.Span_SPAN_KIND_SERVER {
+			continue
+		}
+		if got, ok := attr(span.GetAttributes(), "url.path"); ok && got == path {
+			return span
+		}
+	}
+	return nil
+}
+
+// childrenOf returns the names of the spans parented to one span.
+func childrenOf(r *otlpReceiver, parent *tracepb.Span) map[string]bool {
+	out := map[string]bool{}
+	id := hex.EncodeToString(parent.GetSpanId())
+	for _, span := range r.collected() {
+		if hex.EncodeToString(span.GetParentSpanId()) == id {
+			out[span.GetName()] = true
+		}
+	}
+	return out
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestSnapshotRebuildIsATraceOfItsOwn pins the deliberate rooting of §14.4.
+// A rebuild is coalesced work that outlives the write that triggered it, so
+// billing it to that caller's trace would attribute the cluster's convergence
+// cost to whoever happened to arrive first.
+func TestSnapshotRebuildIsATraceOfItsOwn(t *testing.T) {
+	receiver := newOTLPReceiver(t, false)
+	m := tracedInstance(t, receiver, nil)
+
+	m.registerStub(t, `{"request":{"method":"GET","urlPath":"/gotest/tracing/rebuild"},
+	                    "response":{"status":200}}`)
+
+	m.stop()
+
+	rebuild := receiver.spanNamed("snapshot.rebuild")
+	if rebuild == nil {
+		t.Fatalf("no snapshot.rebuild span was exported; got %v", spanNames(receiver))
+	}
+	if len(rebuild.GetParentSpanId()) != 0 {
+		t.Error("snapshot.rebuild has a parent span; it is shared work and must root its own trace")
+	}
+	if _, ok := attr(rebuild.GetAttributes(), "mockulus.reload.trigger"); !ok {
+		t.Error("the rebuild span does not say what triggered it")
+	}
+
+	admin := receiver.spanNamed("admin mappings")
+	if admin != nil && hex.EncodeToString(rebuild.GetTraceId()) == hex.EncodeToString(admin.GetTraceId()) {
+		t.Error("the rebuild joined the admin write's trace instead of rooting its own")
+	}
+}
+
+// TestJournalEntryCarriesTheTraceID covers the correlation half of §14.4: the
+// journal is where someone looks after the fact, so an entry has to be able to
+// point at the trace of the request it records.
+func TestJournalEntryCarriesTheTraceID(t *testing.T) {
+	receiver := newOTLPReceiver(t, false)
+	m := tracedInstance(t, receiver, map[string]string{
+		"MOCKULUS_JOURNAL_ENABLED": "true",
+	})
+
+	m.registerStub(t, `{"request":{"method":"GET","urlPath":"/gotest/tracing/journal"},
+	                    "response":{"status":200}}`)
+
+	resp, err := httpGet(t.Context(), harnessClient, m.mockURL("/gotest/tracing/journal"))
+	if err != nil {
+		t.Fatalf("serve request: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// The journal is eventually consistent by design (deviation #10), so this
+	// is a bounded poll rather than a single read.
+	var entries string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := httpGet(t.Context(), harnessClient, m.adminURL("/__admin/requests"))
+		if err == nil {
+			body, _ := io.ReadAll(got.Body)
+			_ = got.Body.Close()
+			if strings.Contains(string(body), "/gotest/tracing/journal") {
+				entries = string(body)
+				break
+			}
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-t.Context().Done():
+			t.Fatal("test ended before the journal entry appeared")
+		}
+	}
+	if entries == "" {
+		t.Fatal("the journal never recorded the served request")
+	}
+	if !strings.Contains(entries, `"traceId"`) {
+		t.Fatalf("the journal entry carries no traceId, so nothing links it to its trace:\n%s", entries)
+	}
 }

@@ -355,7 +355,7 @@ type recordingRecorder struct {
 	entries []recordedRequest
 }
 
-func (r *recordingRecorder) Record(req *http.Request, body []byte, matched *stub.CompiledStub, status int) {
+func (r *recordingRecorder) Record(req *http.Request, body []byte, matched *stub.CompiledStub, status int, _ string) {
 	id := ""
 	if matched != nil {
 		id = matched.ID
