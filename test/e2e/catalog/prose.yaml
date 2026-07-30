@@ -36,7 +36,7 @@ contracts:
 
   - id: "B-PROSE-JOURNAL-CONSISTENCY"
     section: "11"
-    section_hash: "67ecface6bd34f38"
+    section_hash: "7f9a9e3887d171c7"
     spec: "#11-request-journal--verification"
     kind: "distributed"
     impl_milestone: "M5"

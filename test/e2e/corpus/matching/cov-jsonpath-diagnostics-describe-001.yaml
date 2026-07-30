@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: cov-jsonpath-diagnostics-describe-001
-behaviors: [B-MATCH-MATCHESJSONPATH, B-CFG-DIAGNOSTICS-ON-UNMATCHED]
+behaviors: [B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH, B-CFG-DIAGNOSTICS-ON-UNMATCHED]
 config: diagnostics
 # The unmatched body is outside the strict-compat surface either way (deviation
 # #2/#18), so the near-miss text has no oracle to diff against.

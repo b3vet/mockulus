@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -108,7 +109,73 @@ func StartWireMock(ctx context.Context, versionFile string) (*WireMock, error) {
 		_ = wm.Stop()
 		return nil, err
 	}
+	if err := wm.assertIdentity(ctx, image); err != nil {
+		_ = wm.Stop()
+		return nil, err
+	}
 	return wm, nil
+}
+
+// assertIdentity confirms the oracle is the WireMock this run pinned, before a
+// single expectation is derived from it.
+//
+// The container is started here and its port read back from `docker port`, so
+// nothing should be able to answer in its place — this is not closing a live
+// hole. It is mechanising a rule that was paid for once: a stray process
+// answering on a guessed port was mistaken for the oracle, and a batch of
+// confident, wrong findings was recorded from it before `/__admin/version`
+// settled what was actually listening. The rule that came out of that is in
+// AGENTS.md, and a rule the harness itself does not follow is one nobody else
+// will either.
+//
+// The check is deliberately about identity rather than a version match. The
+// pinned tag is what `WIREMOCK_VERSION` names and the reported version is what
+// the image says of itself; requiring the two strings to agree would fail on an
+// image whose tag is a digest or a floating alias, for no gain. What must be
+// true is that something answering as WireMock is there — a mockulus answering
+// this endpoint reports its own shape, which is exactly the confusion that
+// happened.
+func (w *WireMock) assertIdentity(ctx context.Context, image string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.Addr+"/__admin/version", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ask the oracle at %s what it is: %w", w.Addr, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return fmt.Errorf("read the oracle's version at %s: %w", w.Addr, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("the oracle at %s answered %d to /__admin/version; "+
+			"expectations must not be derived from a service that cannot say what it is "+
+			"(pinned image %s)", w.Addr, resp.StatusCode, image)
+	}
+
+	var reported struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(body, &reported); err != nil {
+		return fmt.Errorf("the oracle at %s answered /__admin/version with something that is "+
+			"not JSON, so it is not the pinned WireMock %s: %q", w.Addr, image, string(body))
+	}
+	// mockulus answers this endpoint too, and says so: it reports
+	// `guessedWireMockVersion` beside its own version. That field is how the
+	// original confusion was finally resolved, so it is what is checked for.
+	if bytes.Contains(body, []byte("guessedWireMockVersion")) {
+		return fmt.Errorf("the service at %s is a mockulus, not the pinned WireMock %s — "+
+			"something else is answering on the oracle's port, and every expectation "+
+			"derived from it would be mockulus agreeing with itself", w.Addr, image)
+	}
+	if reported.Version == "" {
+		return fmt.Errorf("the oracle at %s reported no version, so it cannot be confirmed "+
+			"as the pinned WireMock %s", w.Addr, image)
+	}
+	return nil
 }
 
 func (w *WireMock) waitReady(ctx context.Context) error {

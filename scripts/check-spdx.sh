@@ -52,7 +52,8 @@ done < <(find . \
      -o -name .git \
      -o -path './internal/adminui/dist' \
      -o -path './dist' \
-     -o -path './bin' \) -prune \
+     -o -path './bin' \
+     -o -path './sdk/typescript/dist' \) -prune \
   -o -type f \( -name '*.go' -o -name '*.sh' -o -name '*.ts' -o -name '*.svelte' \) -print)
 
 if [ ${#missing[@]} -gt 0 ]; then

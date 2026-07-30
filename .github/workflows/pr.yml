@@ -58,6 +58,16 @@ jobs:
         # rather than being discovered by a reader.
         run: go test ./internal/config -run TestSpecConfigTable
 
+      - name: the compatibility matrix is derived, not asserted
+        # docs/compatibility.md is generated from the behavior catalog and the
+        # corpus — the same two files the E2E gate is derived from — so that the
+        # document cannot claim support the gate does not enforce. That property
+        # only holds if the check runs: the §13 table above and
+        # THIRD_PARTY_LICENSES in the license job were both gated and this was
+        # not, which left the most public of the three claims the only one that
+        # could drift.
+        run: make compat-docs-check
+
   unit:
     name: unit + race
     runs-on: ubuntu-latest
@@ -117,6 +127,47 @@ jobs:
           path: internal/adminui/dist/
           if-no-files-found: error
           retention-days: 1
+
+  sdk:
+    name: admin SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The contract lint is Go, the rest of the job is Node, and both halves
+      # belong here: api/openapi.yaml is what the SDK's types come from, so the
+      # check that it still describes the server's surface is the SDK's own
+      # gate rather than a general one.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Cross-checked against the behavior catalog in both directions: a route
+      # the server implements and the contract omits is a call the SDK cannot
+      # make, and a route the contract invents is one that compiles and 404s.
+      - run: make contract-lint
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # tsc, eslint and prettier over the package.
+      - run: pnpm run sdk:check
+
+      # vitest. Today this is mostly the Appendix B code table held against the
+      # specification in both directions; the integration lane that drives a
+      # real mockulus process arrives with the client it would exercise.
+      - run: pnpm run sdk:test
+
+      # The published artifact has to compile, and a package that type-checks
+      # can still fail to emit — a declaration that cannot be written is only
+      # found by writing it.
+      - run: pnpm run sdk:build
 
   dco:
     name: DCO sign-off

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: matchers-jsonpath-001
-behaviors: [B-MATCH-MATCHESJSONPATH]
+behaviors: [B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH]
 wm: verified
 # A non-matching step lands on a 404 whose body differs by design: WireMock
 # renders a near-miss diff table there and mockulus deliberately does not

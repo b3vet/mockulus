@@ -295,7 +295,7 @@ Content matchers (used in `bodyPatterns`, and as values in `headers`/`queryParam
 | `matches`, `doesNotMatch` | ✅ | Java-regex compat strategy §6.6 |
 | `before`, `after`, `equalToDateTime` (+`truncateExpected`, `actualFormat`) | 🔶 | **The expected value's type selects the comparison.** An expected carrying a zone compares *instants* — the actual's offset is honoured and a zoneless actual resolves in the pod's zone; an expected with no zone compares *wall-clock fields* and the actual's offset is discarded rather than converted. So `2021-06-14T12:00:00` reports `2021-06-14T13:00:00+03:00` as later, though that instant is earlier. `before`/`after` are strict; equality is instant-valued and exact to the nanosecond, so `12:13:14Z` equals `12:13:14.000Z`. Operands: ISO-8601 (an offset must carry a colon), a bare date, RFC 1123, and the now-relative forms `now`, `now ±N units`, `±N units` with plural units from `seconds`…`years` (no `weeks`). Modifiers: `truncateExpected`, `truncateActual`, `applyTruncationLast`, `actualFormat` — there is **no** offset parameter, an offset is written into the expected value. `actualFormat` replaces ISO parsing rather than extending it; `unix` is seconds and `epoch` is milliseconds. An unparseable actual is a non-match. Deviations #49–#53 |
 | `equalToJson` (+`ignoreArrayOrder`, `ignoreExtraElements`) | ✅ | Structural JSON equality; numbers compared by value, so `1` equals `1.0`. `ignoreExtraElements` forgives elements the expected document never accounted for in **arrays as well as objects**: positionally those are the ones past the end, so expected `[1,2]` accepts `[1,2,3]` and still refuses `[3,1,2]`, and an actual array *shorter* than the expected one remains a mismatch. `ignoreArrayOrder` gives up the positions and keeps the count; together they are a subset test — each expected element pairs with a distinct actual element, the unclaimed ones are ignored, and duplicates still have to go round (deviation #25). json-unit placeholders are interpreted as WM does: `ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, and `regex` (full match); in an array a placeholder occupies a slot rather than excusing one. An **unrecognised** placeholder is rejected at registration (deviation #5) |
-| `matchesJsonPath` | ✅ | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. JSONPath dialect: §6.7 |
+| `matchesJsonPath`, `doesNotMatchJsonPath` | ✅ | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. `doesNotMatchJsonPath` negates the whole criterion in either form, so a path that selects nothing satisfies it. JSONPath dialect: §6.7 |
 | `matchesJsonSchema` | 🔶 | Validates the subject against an embedded JSON Schema, inline or as an escaped string. Draft from `schemaVersion` — exactly `V4`, `V6`, `V7`, `V201909`, `V202012`, defaulting to `V202012` — and a document's own `$schema` overrides that field in both directions. **`format` is asserted only under V4/V6/V7**; 2019-09 and 2020-12 treat it as an annotation, which is the spec's own vocabulary boundary and means the default asserts nothing. `$ref` resolves **within the document only** (`$defs`, `definitions`, JSON pointers, `$anchor`, `$id`); WireMock does not fetch a remote one either, it just fails silently. A subject that is not a JSON document is a non-match. Deviations #55–#57 |
 | `equalToXml`, `matchesXPath` | ❌ 422 | Roadmap |
 | `absent` | ✅ | Key-level matcher |
@@ -726,20 +726,24 @@ Registration-time: parse errors and unknown helpers → 422. Serve-time errors (
 
 ```json
 {
-  "id": "<uuid>", "ts": 1753179000123, "pod": "<pod-name>",
+  "id": "3HF2a7mwcgrHTEdHpFeuyflHkco",
   "request": {
     "method": "POST", "url": "/api/orders?x=1", "absoluteUrl": "http://host/api/orders?x=1",
-    "clientIp": "10.0.3.7", "headers": {"..."}, "cookies": {"..."},
-    "body": "<utf8 or omitted>", "bodyAsBase64": "<when binary>",  // capped at journal_max_body (64 KiB), truncation flagged
-    "queryParams": {"..."}, "loggedDate": 1753179000123, "loggedDateString": "..."
+    "clientIp": "10.0.3.7", "headers": {"...": "..."}, "cookies": {"...": "..."},
+    "body": "<utf8; capped at journal_max_body, and a cap that bit sets bodyTruncated>",
+    "queryParams": {"x": {"key": "x", "values": ["1"]}},
+    "loggedDate": 1753179000123, "loggedDateString": "2026-07-30T22:12:36Z"
   },
-  "responseDefinition": {"status": 200, "...": "..."},
-  "stubMapping": {"id": "...", "...": "summary"},
-  "wasMatched": true
+  "responseDefinition": {"status": 200},
+  "stubMapping": {"id": "...", "name": "..."},
+  "wasMatched": true,
+  "traceId": "<only when the request was sampled, §14.3>"
 }
 ```
 
-Shape mirrors WM's `ServeEvent` JSON **[DH]** (harness-verified). Key = `journal::<ksuid>` (time-ordered keys ⇒ efficient recency queries).
+Shape mirrors WM's `ServeEvent` JSON **[DH]** (harness-verified). Key = `journal::<ksuid>` (time-ordered keys ⇒ efficient recency queries), and the entry's `id` is that ksuid rather than a UUID — it is what makes the key time-ordered.
+
+Three fields an earlier revision of this example carried are **not** emitted, and are named here because their absence is the contract a client codes against. There is no top-level `ts` or `pod`: both exist on the stored entry as metadata the journal writer uses, and neither is serialized into the document a query returns. There is no `bodyAsBase64` either — a body that exceeds the cap is truncated and flagged with `bodyTruncated: true` rather than re-encoded, and a body that is not UTF-8 is stored as the bytes decode. `responseDefinition` carries the status and nothing else, and `stubMapping` the id and name, which is the summary this section already promises rather than the whole document. `wasMatched: false` entries carry no `stubMapping` at all.
 
 ### 11.3 Queries
 
@@ -1022,7 +1026,7 @@ ui/                       admin UI source: Svelte 5 SPA, built into internal/adm
 deploy/chart/  deploy/manifests/  
 ```
 
-**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), `go.opentelemetry.io/otel` + `otel/trace` + `otel/sdk` + the OTLP/HTTP trace exporter (§14.3 — the API half was already in the module graph transitively, and the exporter is only linked in, never started, unless `tracing.enabled`), `santhosh-tekuri/jsonschema/v6` (§5.2 `matchesJsonSchema`, behind the `internal/jsonschemax` seam; it brings `golang.org/x/text` and `dlclark/regexp2`, the latter already shipped for §6.6, so a schema's `pattern` is evaluated by the engine `matches` already uses), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
+**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), `go.opentelemetry.io/otel` + `otel/trace` + `otel/sdk` + the OTLP/HTTP trace exporter (§14.3 — the API half was already in the module graph transitively, and the exporter is only linked in, never started, unless `tracing.enabled`), `santhosh-tekuri/jsonschema/v6` (§5.2 `matchesJsonSchema`, behind the `internal/jsonschemax` seam; it brings `golang.org/x/text` and `dlclark/regexp2`, the latter already shipped for §6.6, so a schema's `pattern` is evaluated by the engine `matches` already uses), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing, and the contract lint of §5.1's OpenAPI description). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
 
 Interfaces kept narrow and defined **at the consumer** (Go idiom); `memory` store doubles as the test fake — no mock-generation tooling (fitting, given the project name).
 
@@ -1202,7 +1206,16 @@ mockulus is an open-source project under the **Apache License 2.0** from the fir
 
 ## Appendix A — Annotated stub mapping example
 
-Everything in this example is v1-supported:
+Everything in this example is v1-supported, and every line of it has been
+registered against a running mockulus and served the request it describes. An
+earlier revision spelled the `equalToJson` criterion
+`{"equalToJson": {"value": "…", "ignoreExtraElements": true}}`, which is not a
+form either server has: it registers cleanly and then compares the body against
+the literal object `{"value": …, "ignoreExtraElements": true}`, so the stub
+matches nothing anybody would send. The flags are **siblings** of the operand,
+not members of it. That is the accept-and-behave-differently failure P3 exists
+to prevent, reached through documentation rather than through code, which is why
+the example is now derived from a live registration rather than written out.
 
 ```jsonc
 {
@@ -1224,7 +1237,7 @@ Everything in this example is v1-supported:
     "queryParameters": { "dryRun": { "matches": "true|false" } },
     "bodyPatterns": [
       { "matchesJsonPath": { "expression": "$.customer.id", "matches": "[A-Z]{2}[0-9]{6}" } },
-      { "equalToJson": { "value": "{\"channel\":\"web\"}", "ignoreExtraElements": true } }
+      { "equalToJson": { "channel": "web" }, "ignoreExtraElements": true }
     ]
   },
   "response": {
@@ -1236,7 +1249,7 @@ Everything in this example is v1-supported:
     "jsonBody": {
       "orderId": "{{randomValue type='UUID'}}",
       "customerId": "{{jsonPath request.body '$.customer.id'}}",
-      "createdAt": "{{now format='yyyy-MM-dd\'T\'HH:mm:ss\'Z\''}}",
+      "createdAt": "{{now}}",                       // default format is the ISO-8601 instant
       "status": "CREATED"
     },
     "transformers": ["response-template"],
