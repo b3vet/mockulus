@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/b3vet/mockulus/internal/handlebars"
+	"github.com/b3vet/mockulus/internal/javatime"
 )
 
 // randomValue types, as WireMock spells them.
@@ -100,11 +101,11 @@ func nowHelper(args []any, hash map[string]any) (any, error) {
 	t := time.Now().UTC()
 
 	if raw, ok := hash["offset"]; ok {
-		offset, err := parseOffset(handlebars.Stringify(raw))
+		offset, err := javatime.ParseOffset(handlebars.Stringify(raw))
 		if err != nil {
 			return nil, err
 		}
-		t = offset.shift(t)
+		t = offset.Shift(t)
 	}
 
 	if raw, ok := hash["timezone"]; ok {
@@ -132,154 +133,8 @@ func nowHelper(args []any, hash map[string]any) (any, error) {
 	case "unix":
 		return strconv.FormatInt(t.Unix(), 10), nil
 	default:
-		return t.Format(javaToGoLayout(format)), nil
+		return t.Format(javatime.Layout(format)), nil
 	}
-}
-
-// dateOffset is a `now` offset held apart into the two kinds of quantity an
-// offset can name.
-//
-// Seconds through days are spans of elapsed time and add as one. Months and
-// years are not: how much time a month is depends on which month the instant
-// falls in, and WireMock resolves them on a calendar. Multiplying out a fixed
-// 30- or 365-day month is off by up to a day and a half per month and the
-// result is still a well-formed date, so nothing downstream can notice — an
-// expiry "one month out" from 2026-07-28 lands on the 27th here and the 28th
-// there, and both look like an answer somebody meant.
-type dateOffset struct {
-	months int
-	span   time.Duration
-}
-
-// shift resolves the offset against an instant. The calendar part goes first,
-// so a span of hours is measured from the day the calendar landed on rather
-// than displacing the day the months were counted from.
-func (o dateOffset) shift(t time.Time) time.Time {
-	if o.months != 0 {
-		t = addMonths(t, o.months)
-	}
-	return t.Add(o.span)
-}
-
-// parseOffset reads WireMock's offset syntax: a signed count and a unit, as in
-// "3 days" or "-1 hours".
-func parseOffset(spec string) (dateOffset, error) {
-	fields := strings.Fields(spec)
-	if len(fields) != 2 {
-		return dateOffset{}, fmt.Errorf("offset %q should look like \"3 days\"", spec)
-	}
-	n, err := strconv.ParseInt(fields[0], 10, 64)
-	if err != nil {
-		return dateOffset{}, fmt.Errorf("offset %q does not start with a number", spec)
-	}
-
-	unit := strings.ToLower(strings.TrimSuffix(fields[1], "s"))
-	switch unit {
-	case "second":
-		return dateOffset{span: time.Duration(n) * time.Second}, nil
-	case "minute":
-		return dateOffset{span: time.Duration(n) * time.Minute}, nil
-	case "hour":
-		return dateOffset{span: time.Duration(n) * time.Hour}, nil
-	case "day":
-		return dateOffset{span: time.Duration(n) * 24 * time.Hour}, nil
-	case "month":
-		return dateOffset{months: int(n)}, nil
-	case "year":
-		return dateOffset{months: int(n) * 12}, nil
-	default:
-		return dateOffset{}, fmt.Errorf("unknown offset unit %q", fields[1])
-	}
-}
-
-// addMonths moves an instant by whole calendar months, keeping the time of day
-// and the day of the month wherever the month it lands on is long enough to
-// hold it.
-//
-// Where it is not, the day is pulled back to that month's last day. That is
-// Java's rule and so WireMock's: 2026-01-31 offset by one month is 2026-02-28
-// there, and 2024-02-29 offset by a year is 2025-02-28. Go's AddDate carries
-// the surplus into the following month instead and answers 2026-03-03 — a date
-// outside the month the template asked for, which is the one answer a caller
-// saying "next month" cannot use.
-func addMonths(t time.Time, months int) time.Time {
-	year, month, day := t.Date()
-	hour, minute, sec := t.Clock()
-
-	// Anchored on the first of the month, the month arithmetic has no day to
-	// overflow, so the month and year it lands on are exactly the ones asked
-	// for and the day is decided below rather than by normalisation.
-	target := time.Date(year, month, 1, hour, minute, sec, t.Nanosecond(), t.Location()).
-		AddDate(0, months, 0)
-	if last := daysInMonth(target.Year(), target.Month()); day > last {
-		day = last
-	}
-	return time.Date(target.Year(), target.Month(), day, hour, minute, sec, t.Nanosecond(), t.Location())
-}
-
-// daysInMonth reads a month's length off the calendar, by asking for the day
-// before the first of the next one.
-func daysInMonth(year int, month time.Month) int {
-	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
-}
-
-// javaToGoLayout translates the Java date pattern WireMock templates are
-// written with into Go's reference-time layout.
-//
-// Longest patterns first: a naive replacement would turn "yyyy" into four
-// copies of the "yy" replacement.
-var javaPatternOrder = []struct{ java, golang string }{
-	{"yyyy", "2006"}, {"yy", "06"},
-	{"MMMM", "January"}, {"MMM", "Jan"}, {"MM", "01"},
-	{"dd", "02"}, {"d", "2"},
-	{"HH", "15"},
-	{"hh", "03"},
-	{"mm", "04"},
-	{"ss", "05"},
-	{"SSS", "000"},
-	// "Z07:00" rather than "-07:00" because Java's XXX writes a bare "Z" at a
-	// zero offset and a numeric offset everywhere else, and Go's layout has the
-	// same split. "-07:00" is numeric always, so it renders "+00:00" for a UTC
-	// instant — a timestamp that is still ISO-8601 but not the one the oracle
-	// wrote, and the difference only shows up at UTC, which is where a mock
-	// clock spends nearly all of its time. ZZ and Z stay numeric: those are
-	// Java's RFC-822 patterns and they print "+0000" at UTC.
-	{"XXX", "Z07:00"}, {"ZZ", "-0700"}, {"Z", "-0700"},
-	{"a", "PM"},
-	{"EEEE", "Monday"}, {"EEE", "Mon"},
-}
-
-func javaToGoLayout(pattern string) string {
-	var sb strings.Builder
-	for i := 0; i < len(pattern); {
-		// A quoted run is literal text, which is how templates write the T and
-		// Z of an ISO timestamp.
-		if pattern[i] == '\'' {
-			end := strings.IndexByte(pattern[i+1:], '\'')
-			if end < 0 {
-				sb.WriteString(pattern[i+1:])
-				break
-			}
-			sb.WriteString(pattern[i+1 : i+1+end])
-			i += end + 2
-			continue
-		}
-
-		matched := false
-		for _, p := range javaPatternOrder {
-			if strings.HasPrefix(pattern[i:], p.java) {
-				sb.WriteString(p.golang)
-				i += len(p.java)
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			sb.WriteByte(pattern[i])
-			i++
-		}
-	}
-	return sb.String()
 }
 
 func randomValueHelper(_ []any, hash map[string]any) (any, error) {
