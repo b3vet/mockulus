@@ -65,6 +65,40 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- **An embedded admin UI**, served at `/__admin/mockulus/ui/` on both listeners
+  and compiled into the binary. This release lands the toolchain and the serving
+  contract; the interface itself is thin and grows over the releases that follow.
+
+  It is not part of the WireMock-compatible surface and does not pretend to be.
+  It lives in a new reserved namespace, `/__admin/mockulus/**`, specified in
+  SPEC §5.7 — WireMock answers 404 for every path under it, so nothing here can
+  collide with a client written against WireMock, and an unclaimed path inside
+  the namespace answers the same unsupported-endpoint 404 as anywhere else. The
+  UI talks only to the public admin API: there are no private endpoints behind
+  it and no server-side session state, so everything it can do is something a
+  `curl` can do.
+
+  **One security amendment comes with it, and it is worth reading rather than
+  skimming.** §17 has always said the admin token guards the whole `/__admin`
+  mux, so a route added later is protected by the middleware already in place.
+  The UI's static assets are the one exemption. A browser cannot attach an
+  `Authorization` header to a page load, or to the script and stylesheet
+  requests that page issues, so a token in front of the assets makes the UI
+  unreachable in exactly the deployments that set one. What is exempt is code;
+  the data behind it is not — the operator types the token into the UI and every
+  API call it makes carries it, refused without it like any other. One corpus
+  case pins both halves together, because neither means anything alone.
+
+  `ui_enabled` (default `true`) removes the surface entirely when set to
+  `false`: the routes stop existing rather than existing and refusing, and the
+  admin port's root redirect goes with them.
+
+  A plain `go build` with no Node installed still produces a working binary. The
+  repository commits a placeholder rather than a bundle, and a binary built over
+  it serves a page saying so and how to build one — a state a contributor can
+  read, rather than a link that 404s. Released binaries and container images
+  always carry the real UI.
+
 - `matchesJsonSchema`, with its `schemaVersion` modifier. Another 422 becomes a
   supported feature. Drafts `V4`, `V6`, `V7`, `V201909` and `V202012` are
   accepted, defaulting to `V202012`, and the operand may be an inline object, a

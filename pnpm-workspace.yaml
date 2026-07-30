@@ -1,0 +1,12 @@
+# Workspace members.
+#
+# `ui/` is the embedded admin UI — Vite builds it into internal/adminui/dist,
+# where go:embed picks it up.
+#
+# `sdk/typescript` (@mockulus/admin-sdk) joins this list when the SDK lands; the
+# UI takes it as a workspace dependency for its data layer, which is the reason
+# the two live in one workspace rather than two npm projects.
+packages:
+  - ui
+  # - sdk/typescript
+

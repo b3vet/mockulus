@@ -27,6 +27,7 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	"github.com/b3vet/mockulus/internal/adminui"
 	"github.com/b3vet/mockulus/internal/config"
 	"github.com/b3vet/mockulus/internal/metrics"
 	"github.com/b3vet/mockulus/internal/wmcompat"
@@ -195,6 +196,20 @@ func (s *Server) adminRouter(admin http.Handler) http.Handler {
 
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+
+	// The admin port's root sends a browser to the UI (§5.7). Somebody who
+	// port-forwards a pod and opens it in a browser is looking for the UI, and
+	// the alternative is a 404 that says nothing about where it lives.
+	//
+	// Admin listener only. The mock port's root belongs to the stubs — a
+	// redirect there would answer a request a stub was entitled to match, which
+	// is the one thing the mock port must never do. The admin API reached
+	// through the mock port keeps its /__admin prefix and is unaffected.
+	if s.cfg.UIEnabled {
+		mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, adminui.Prefix, http.StatusFound)
+		})
+	}
 
 	if s.cfg.MetricsEnabled {
 		mux.Handle("GET /metrics", promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{

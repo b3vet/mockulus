@@ -54,7 +54,7 @@ This document is the authoritative implementation guide. Where it conflicts with
 
 ### What v1 is NOT
 
-No XML/XPath matching, no proxying, no record/playback, no webhooks, no gRPC, no browser proxying, no Java-class extensions, no multipart matching, no JSON Schema matching, no admin UI. All are catalogued with design sketches in [ROADMAP.md](ROADMAP.md). Stubs that use these features are rejected with 422 + error detail (never silently ignored).
+No XML/XPath matching, no proxying, no record/playback, no webhooks, no gRPC, no browser proxying, no Java-class extensions, no multipart matching. All are catalogued with design sketches in [ROADMAP.md](ROADMAP.md). Stubs that use these features are rejected with 422 + error detail (never silently ignored).
 
 ### Primary use cases
 
@@ -403,6 +403,48 @@ Compatibility truth is established **differentially**: the same operations run a
 - **Authoring**: a case's `expect:` block is written by hand and then *proved* by running the case differentially — the diff is what establishes the expectation, so an expectation nobody could derive from the oracle cannot survive. The same applies to bumping `WIREMOCK_VERSION`: the bump PR runs the full differential lane and carries whatever expectations the new version changed, reviewed one by one. Earlier revisions of this section promised a `runner --record-wm` flag that rewrote those blocks from the oracle automatically. It was never built, and it went unnoticed for the whole of v1 because this section had no catalog entry of any kind — the completeness gates derive their universe from the tables of §5.1, §5.2, §4.6, §10.3, §13 and Appendix B, the numbered list of §5.5 and the metrics block of §14.1, plus a hand-maintained prose manifest that covered §8, §9 and §11 and not this. A recorder is a tool that writes test expectations from a live service, so it can bless a regression as readily as a correction; deriving them by hand and proving them by diff is the slower half of that trade and the one that fails loudly.
 - **Role**: differential runs pin the *recorded expectations* in the corpus; the E2E gate then replays those expectations deterministically on every PR (§19.1). Any diff fails CI with a readable side-by-side; verified [DH] answers get folded back into this spec (Appendix C tracks open ones).
 - The pinned WM version lives at `test/e2e/WIREMOCK_VERSION`.
+
+---
+
+### 5.7 Mockulus extensions (the `/__admin/mockulus/**` namespace)
+
+Everything above this line describes WireMock's surface. This section describes ours.
+
+`/__admin/mockulus/**` is a **reserved namespace for mockulus' own endpoints**, and it exists so that features WireMock has no opinion about cannot be mistaken for compatibility claims. WireMock 3.13.2 answers 404 for every path under it, so nothing here can collide with a client written against WireMock, and nothing here participates in the differential lane of §5.6 — there is no oracle answer to diff against, which is the same posture the deviations of §5.5 take for a different reason.
+
+Three rules govern the namespace:
+
+1. **Nothing in it is required.** A client that never calls it gets the whole compatibility surface. Removing an extension is a minor-version change, not a major one, because no WireMock-compatible suite can depend on it.
+2. **Nothing outside it is an extension.** Mockulus' additive fields on `/__admin/version` and `/__admin/health` predate this section and stay where they are (§5.6 catalogues them as extensions rather than diffs), but a *new* endpoint that is not WireMock's goes here.
+3. **Unclaimed paths under it answer the standard 404 code 1001**, exactly as any other unsupported endpoint does. The namespace is a contract, not a catch-all: `/__admin/mockulus/chaos` is as unsupported as `/__admin/chaos` until something claims it.
+
+#### 5.7.1 The admin UI
+
+The embedded administration UI is served at **`/__admin/mockulus/ui/`** on both listeners, from assets compiled into the binary. It is a static single-page application that talks exclusively to the public admin API — there are no private endpoints behind it and no server-side session state, so anything the UI can do is something a `curl` can do.
+
+| Behavior | Answer |
+|---|---|
+| `GET /__admin/mockulus/ui/` and any path below it | The application document (200, `text/html`), or a fingerprinted asset |
+| A path below the prefix that is not an asset | The application document — the client router runs in history mode, so deep links must boot it |
+| A path below the prefix that *looks* like an asset (has a file extension) and does not exist | 404 |
+| `GET /` **on the admin listener** | 302 to the UI prefix |
+| `GET /` on the mock listener | Unchanged — the mock port's root belongs to the stubs |
+| Any path under the prefix when `ui_enabled: false` | 404 code 1001, and the `/` redirect is not registered |
+| A binary built with no `dist/` | 200 with a page saying the build has no UI and how to build one |
+
+**Caching.** Fingerprinted assets are `public, max-age=31536000, immutable`; the application document is `no-cache`. A build changes every asset name, so the document is the only thing that has to be revalidated for a deploy to take effect.
+
+**Content Security Policy.** Every UI response carries `default-src 'self'` with `script-src 'self'` (no `unsafe-inline`), `object-src 'none'`, `base-uri 'none'`, `form-action 'none'` and `frame-ancestors 'none'`, plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. This is the second layer under the framework's own escaping, and it earns its place because what the UI renders is untrusted: stub names, URLs, header values and request bodies all arrive from whoever is driving the mock. `style-src` keeps `'unsafe-inline'` because the bundler emits inline style attributes; that admits a class of injection that cannot execute code, and the alternative is minting a nonce per response on a static asset path.
+
+**Authentication — an amendment to §17.** §17 states that a route added later is protected by the middleware already in place. The UI **assets are the one exemption**, and the exemption is exact: a request whose path is the prefix, or lies under it, skips the `admin_auth_token` check. Everything else, including every call the UI itself makes, is checked as before.
+
+The reason is mechanical rather than a judgement about risk. A browser cannot attach an `Authorization` header to a page load, or to the script and stylesheet requests that page issues. A token in front of the assets therefore makes the UI unreachable in precisely the deployments that set one, which inverts what guarding it would be for. What the exemption serves is **code**; what that code then does is not exempt — the operator types the token into the UI, the UI attaches it to every API call, and those calls are refused without it like any other.
+
+That pair is the load-bearing security behavior of this section and it is pinned as one case: with `admin_auth_token` set, the assets answer 200 with no token **while the admin API answers 401 with no token**. Neither half is meaningful alone.
+
+**Configuration.** `ui_enabled` (§13), default `true`. The UI is the reason to ship one, so it is on by default; a deployment that wants the surface gone rather than merely unused sets it to `false` and the routes stop existing.
+
+**What the UI is not.** It is an in-cluster and port-forward tool. The admin listener has no TLS (§12.1 — TLS is mock-port-only), so exposing it beyond a cluster boundary is an ingress decision, not a mockulus one, and §15.2 says so.
 
 ---
 
@@ -800,6 +842,7 @@ Precedence: **env var > YAML file (`--config` / `MOCKULUS_CONFIG`) > default**. 
 | `log.requests` | `false` | Per-request access logs (hot path — keep off under load) |
 | `log.request_sample_n` | `100` | With `log.requests`, log every Nth request |
 | `metrics_enabled` | `true` | |
+| `ui_enabled` | `true` | Serve the embedded admin UI at `/__admin/mockulus/ui/` (§5.7) |
 | `tracing.enabled` | `false` | Export OpenTelemetry traces (off by default; §14.3) |
 | `tracing.endpoint` | — | OTLP/HTTP collector as `host:port` (e.g. `otel-collector:4318`); required when enabled |
 | `tracing.insecure` | `false` | Send over plain HTTP rather than HTTPS |
@@ -936,7 +979,7 @@ S5/S9 **timing** is asserted only here, on the reference rig; the E2E gate cover
 ## 17. Security
 
 - Mock traffic is untrusted input: body caps, header caps, regex timeouts (ReDoS), no reflection of internals in errors on the mock port.
-- Admin API: optional static bearer token (`admin_auth_token`; compare constant-time). It guards the whole `/__admin` mux rather than individual routes, so a route added later is protected by existing; it also guards `/debug/pprof/**` (§14.3), because a profile hands over the stub bodies the token exists to protect. A refusal is counted by `mockulus_admin_requests_total{code="401"}` — a deployment whose token is being guessed must not look idle. Default open — expected posture is NetworkPolicy + in-cluster only + `admin_on_mock_port: false` when the mock port is exposed beyond the namespace. Chart makes this posture the documented "hardened" values preset, and the preset **refuses to render without a token** rather than installing a release that reads as locked down with an open admin API.
+- Admin API: optional static bearer token (`admin_auth_token`; compare constant-time). It guards the whole `/__admin` mux rather than individual routes, so a route added later is protected by existing; it also guards `/debug/pprof/**` (§14.3), because a profile hands over the stub bodies the token exists to protect. **One exemption**, stated and bounded in §5.7: the admin UI's static assets are served without the check, because a browser cannot attach an `Authorization` header to a page load and a token there makes the UI unreachable on exactly the deployments that set one. What is exempt is code; every API call the UI makes is checked like any other, and the pair is pinned by a single corpus case. A refusal is counted by `mockulus_admin_requests_total{code="401"}` — a deployment whose token is being guessed must not look idle. Default open — expected posture is NetworkPolicy + in-cluster only + `admin_on_mock_port: false` when the mock port is exposed beyond the namespace. Chart makes this posture the documented "hardened" values preset, and the preset **refuses to render without a token** rather than installing a release that reads as locked down with an open admin API.
 - Admin file names (`PUT /__admin/files/{name}`) are validated at the edge and **refused, never repaired**: relative, in cleaned form, no `..`, valid UTF-8, no control characters, bounded in length. Nothing joins a name onto a filesystem path today — the file driver builds its map by walking a directory — so this is defence in depth rather than a live traversal; repairing a name instead (trimming a leading `/`) is what would make it live the day a driver does, and in the meantime stores the caller's file under a name they did not choose.
 - Templates are sandboxed by construction: allowlisted helpers only; no file, env, network, or system access (`file`, `systemValue`, `secret`, `hostname` helpers deliberately excluded, §10.3).
 - Container: nonroot, read-only FS, no shell, no capabilities. `securityContext` set in chart. SBOM (`syft`) + vuln scan (`govulncheck`, `trivy`) in CI.
@@ -954,6 +997,7 @@ cmd/mockulus/                 main: config load, wiring, lifecycle (small — al
 internal/config/          typed config, env/yaml binding, docs generation
 internal/server/          listeners, routing, lifecycle, middleware (metrics, recovery)
 internal/admin/           /__admin handlers (transport only — thin over core services)
+internal/adminui/         embedded admin UI: go:embed of the built SPA, SPA fallback, CSP (§5.7)
 internal/match/           engine: Snapshot, matching algorithm, ParsedRequest pool
 internal/stub/            stub JSON model, validation (422 catalog), compilation to CompiledStub
 internal/matchers/        content matchers (equalTo, contains, regex, json…) — pure functions
@@ -974,6 +1018,7 @@ test/e2e/                 E2E harness (§19): runner/ (standalone Go binary), ca
                           corpus/ (YAML cases), gotests/ (socket-level cases), topologies/ (compose/kind),
                           WIREMOCK_VERSION
 test/load/                k6 scenarios, compose rigs (§16)
+ui/                       admin UI source: Svelte 5 SPA, built into internal/adminui/dist (§5.7)
 deploy/chart/  deploy/manifests/  
 ```
 

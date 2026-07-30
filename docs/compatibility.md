@@ -135,13 +135,13 @@ what makes the Evidence column worth reading.
 | WireMock surface — supported with a documented deviation | 9 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
 | Deliberate deviations from WireMock | 57 |
-| Catalogued behaviors in total | 230 |
+| Catalogued behaviors in total | 231 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
-| Behaviors stated in prose rather than a table | 7 |
-| E2E corpus cases | 589 |
+| Behaviors stated in prose rather than a table | 12 |
+| E2E corpus cases | 591 |
 | … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 394 |
-| … `wm: n/a` — expectations from the spec | 195 |
-| Go-native cases (raw socket, process lifecycle) | 27 |
+| … `wm: n/a` — expectations from the spec | 197 |
+| Go-native cases (raw socket, process lifecycle) | 29 |
 
 Milestone cursor `M7`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
 verified cases as a v1.0 release criterion.
@@ -584,7 +584,7 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 
 ### Configuration keys
 
-[SPEC §13](../SPEC.md#13-configuration-reference) · 43 behaviors
+[SPEC §13](../SPEC.md#13-configuration-reference) · 44 behaviors
 
 Precedence is env var > YAML file > default; the env spelling is `MOCKULUS_` plus the key in upper snake case.
 
@@ -627,6 +627,7 @@ Precedence is env var > YAML file > default; the env spelling is `MOCKULUS_` plu
 | `log.requests` | `false` | 1 · n/a | `B-CFG-LOG-REQUESTS` | Per-request access logs (hot path — keep off under load) |
 | `log.request_sample_n` | `100` | 1 · n/a | `B-CFG-LOG-REQUEST-SAMPLE-N` | With `log.requests`, log every Nth request |
 | `metrics_enabled` | `true` | 2 · n/a | `B-CFG-METRICS-ENABLED` | — |
+| `ui_enabled` | `true` | 2 · n/a (2 Go-native) | `B-CFG-UI-ENABLED` | Serve the embedded admin UI at `/__admin/mockulus/ui/` (§5.7) |
 | `tracing.enabled` | `false` | 2 · n/a (2 Go-native) | `B-CFG-TRACING-ENABLED` | Export OpenTelemetry traces (off by default; §14.3) |
 | `tracing.endpoint` | — | 3 · n/a (3 Go-native) | `B-CFG-TRACING-ENDPOINT` | OTLP/HTTP collector as `host:port` (e.g. `otel-collector:4318`); required when enabled |
 | `tracing.insecure` | `false` | 2 · n/a (2 Go-native) | `B-CFG-TRACING-INSECURE` | Send over plain HTTP rather than HTTPS |
@@ -675,7 +676,7 @@ Prometheus exposition on the admin port's `/metrics`. Low-cardinality by design:
 
 ## Behaviors stated in prose
 
-7 contracts are stated as prose rather than as a table, so they cannot be derived
+12 contracts are stated as prose rather than as a table, so they cannot be derived
 mechanically the way every row above was. They are catalogued by hand against a hash
 of the section they encode: editing that prose fails the gate until a person re-reads
 it and re-syncs the entry. All three are the distributed form of something a
@@ -690,5 +691,10 @@ single-process server gets for free, which is why none has an oracle.
 | Background work roots its own trace rather than joining the request that triggered it | [§14](../SPEC.md#144-span-model--correlation) | 1 · n/a (1 Go-native) | `B-PROSE-TRACING-BACKGROUND-ROOT` |
 | A journal entry carries the trace id of the request it records, when that request was sampled | [§14](../SPEC.md#144-span-model--correlation) | 1 · n/a (1 Go-native) | `B-PROSE-TRACING-CORRELATION` |
 | Compatibility truth is established differentially: wm:verified cases are replayed against the pinned oracle and diffed with subset semantics, over a fresh connection per case | [§5.6](../SPEC.md#56-differential-compatibility-verification-the-compat-tiebreaker) | 1 · verified | `B-PROSE-DIFFERENTIAL-ORACLE` |
+| The admin UI is served at /__admin/mockulus/ui/ on both listeners, with a CSP that forbids inline script, and any path below the prefix that is not an asset boots the client router | [§5.7](../SPEC.md#571-the-admin-ui) | 1 · n/a | `B-PROSE-UI-SERVED` |
+| With admin_auth_token set, the UI assets are served without it while every admin API path still refuses without it | [§5.7](../SPEC.md#571-the-admin-ui) | 1 · n/a | `B-PROSE-UI-ASSET-AUTH-EXEMPTION` |
+| ui_enabled: false removes the surface: every path under the prefix answers the standard 404 code 1001 and the admin-port root redirect is not registered | [§5.7](../SPEC.md#571-the-admin-ui) | 1 · n/a (1 Go-native) | `B-PROSE-UI-DISABLED` |
+| The admin listener's root redirects to the UI; the mock listener's root is unchanged and still belongs to the stubs | [§5.7](../SPEC.md#571-the-admin-ui) | 1 · n/a | `B-PROSE-UI-ROOT-REDIRECT` |
+| /__admin/mockulus/** is a reserved namespace rather than a catch-all: an unclaimed path under it answers the standard 404 code 1001 | [§5.7](../SPEC.md#57-mockulus-extensions-the-__adminmockulus-namespace) | 1 · n/a | `B-PROSE-MOCKULUS-NAMESPACE` |
 
 <!-- END GENERATED MATRIX -->

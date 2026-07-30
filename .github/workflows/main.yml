@@ -27,6 +27,22 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # There is no ui job in this workflow to hand a bundle over, so the UI is
+      # built inline. Not because the corpus needs it — the UI cases assert the
+      # serving contract, which the "built without UI" notice satisfies as well
+      # as the real bundle does, and they pass either way on purpose. It is
+      # because this lane re-gates the artifact that would ship, and that
+      # artifact has a UI in it. Building here is what puts the real bundle
+      # under TestTheRealBundleSatisfiesItsOwnPolicy, which skips otherwise and
+      # is the only check that the page can actually run under the CSP it is
+      # served with.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: make ui-build
+
       # Not the instrumented build: the artifact that would ship is the one
       # re-gated here.
       - run: go build -trimpath -o bin/mockulus ./cmd/mockulus

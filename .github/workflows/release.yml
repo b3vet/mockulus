@@ -32,8 +32,25 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # pnpm has to resolve before setup-node runs: `cache: pnpm` works by
+      # asking pnpm where its store directory is, and cannot ask a pnpm that is
+      # not there yet. The action reads the version from package.json's
+      # packageManager field, so the pin still lives in the repository.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
       - run: make spdx
       - run: go test -race -count=1 ./...
+
+      - name: build the admin UI
+        # The gate compiles the binary it then tests, so it needs the same
+        # inputs the released binary has. Without this the corpus would be run
+        # against a build serving the "built without UI" notice, and the tag
+        # would be gated on an artifact nobody is going to ship.
+        run: make ui-build
 
       - name: E2E gate on the shippable binary
         # With T5: a tag ships the compat claim, so the differential runs here
@@ -48,6 +65,11 @@ jobs:
           make license-check
           make license-report
           git diff --exit-code THIRD_PARTY_LICENSES
+
+      - name: npm license gate
+        # go-licenses cannot see the pnpm workspace, so the packages the admin
+        # UI is built from are checked separately against their own allowlist.
+        run: make npm-license-check
 
   publish:
     name: publish
@@ -68,6 +90,16 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+
+      # For goreleaser, whose `before` hooks run `make ui-build` so the released
+      # binaries embed the admin UI. The image does not need this — the
+      # Dockerfile builds the UI in its own stage — but the goreleaser step at
+      # the end of this job runs on the runner itself.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3

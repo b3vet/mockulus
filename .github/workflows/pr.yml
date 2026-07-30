@@ -75,6 +75,49 @@ jobs:
       - name: hot-path allocation budgets
         run: make test-alloc
 
+  ui:
+    name: admin UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm has to resolve before setup-node runs: `cache: pnpm` works by
+      # asking pnpm where its store directory is, and cannot ask a pnpm that is
+      # not there yet. The action reads the version from package.json's
+      # packageManager field, so the pin still lives in the repository, and
+      # Node's version comes from .nvmrc — the same file the Docker stage
+      # pins itself to.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Frozen by default on CI, and named anyway: an install that resolved
+      # something the lockfile does not describe is a finding, not a fixup.
+      - run: pnpm install --frozen-lockfile
+
+      # svelte-check, eslint and prettier.
+      - run: pnpm run check
+
+      # vitest. Component behaviour lives here; the serving contract — prefix,
+      # SPA fallback, headers, the token exemption — is gated by the Go corpus
+      # in the e2e job below, against a binary built from this job's output.
+      - run: pnpm run test
+
+      - run: pnpm run build
+
+      # Handed to the e2e job so the gate runs against a binary with the real
+      # UI embedded rather than the placeholder. Building it once and passing it
+      # along keeps the second pnpm install out of the critical path of a lane
+      # that has fifteen minutes to spend (SPEC §19.5).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-ui-dist
+          path: internal/adminui/dist/
+          if-no-files-found: error
+          retention-days: 1
+
   dco:
     name: DCO sign-off
     runs-on: ubuntu-latest
@@ -107,6 +150,16 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      # For the npm half of the gate below. go-licenses resolves the Go module
+      # graph and nothing else, so the packages the admin UI is built from — and
+      # the ones whose code ends up inlined in the bundle the binary embeds —
+      # need a checker of their own.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
       - name: install go-licenses
         run: go install github.com/google/go-licenses@latest
       - name: every dependency is on the allowlist
@@ -121,8 +174,14 @@ jobs:
           make license-report
           git diff --exit-code THIRD_PARTY_LICENSES
 
+      - name: every npm package is permissively licensed
+        run: |
+          pnpm install --frozen-lockfile
+          make npm-license-check
+
   e2e:
     name: e2e gate (T1)
+    needs: ui
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -130,6 +189,16 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+
+      # The bundle the ui job built, unpacked over the committed placeholder so
+      # that //go:embed all:dist takes in the real site. This job runs no Node
+      # of its own: the UI is built once per pipeline and the gate consumes it,
+      # which is also what makes the corpus' serving cases assert something —
+      # against a placeholder build they would be asserting the notice page.
+      - uses: actions/download-artifact@v4
+        with:
+          name: admin-ui-dist
+          path: internal/adminui/dist/
 
       # Coverage is collected from the instrumented build; the shippable image
       # is smoke-booted separately so nothing ships ungated.
@@ -165,6 +234,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No artifact from the ui job here, deliberately. The Dockerfile builds
+      # the admin UI in its own node:22-alpine stage, so the image already
+      # carries it — and injecting a prebuilt bundle instead would mean the PR
+      # lane never exercised the path a release actually takes. The UI is built
+      # twice per pipeline as a result, which is the price of the Dockerfile
+      # being buildable from a clean checkout.
       - name: build the shippable image
         run: docker build --build-arg VERSION=pr-${{ github.sha }} -t mockulus:pr .
 
@@ -186,4 +261,17 @@ jobs:
             -d '{"request":{"method":"GET","urlPath":"/smoke"},"response":{"status":200,"body":"ok"}}' >/dev/null
           test "$(curl -s localhost:18080/smoke)" = "ok"
           curl -s localhost:19090/metrics | grep -q '^mockulus_build_info'
+
+          # The image's Node stage did its job. The UI route answers either way
+          # — a placeholder build serves an explanatory notice rather than a
+          # 404 — so the status code proves nothing here and the body has to be
+          # the thing that is checked.
+          ui=$(curl -sf localhost:18080/__admin/mockulus/ui/)
+          case "$ui" in
+            *"built without the admin UI"*)
+              echo "the image is serving the no-UI notice: the ui stage produced nothing"
+              exit 1
+              ;;
+          esac
+
           docker rm -f mockulus-smoke

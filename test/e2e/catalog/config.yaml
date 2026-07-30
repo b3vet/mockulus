@@ -423,3 +423,15 @@ behaviors:
     evidence: "exported spans carry the configured service.name on their resource"
     evidence_tokens: ["MOCKULUS_TRACING_SERVICE_NAME", "service.name"]
     status: "ok"
+  - id: "B-CFG-UI-ENABLED"
+    spec_row: "spec:13:config|ui_enabled"
+    spec_hash: "d475f441c07d1578"
+    spec: "#13-configuration-reference"
+    kind: "functional"
+    impl_milestone: "M7"
+    summary: "ui_enabled"
+    evidence: "default true serves the UI; false makes every path under the prefix a 404 code 1001 and removes the admin-port root redirect"
+    # The env spelling rather than the yaml one: a Go-native case is evidenced by
+    # its own source, and what that source contains is the variable it sets.
+    evidence_tokens: ["MOCKULUS_UI_ENABLED"]
+    status: "ok"
