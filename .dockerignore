@@ -40,3 +40,8 @@ covdata/
 *.test
 mockulus-*.tgz
 *.spdx.json
+
+# A host-built SDK bundle, for the same reason the UI's is excluded: the image
+# must only ever carry what its own stages produced.
+sdk/typescript/dist/
+sdk/typescript/*.tsbuildinfo

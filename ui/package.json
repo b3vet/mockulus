@@ -12,6 +12,10 @@
     "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && eslint . && prettier --check .",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@mockulus/admin-sdk": "workspace:*",
+    "bits-ui": "^2.18.1"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",

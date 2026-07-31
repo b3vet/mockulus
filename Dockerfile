@@ -30,8 +30,18 @@ RUN corepack enable
 # and nothing else.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ui/
+# The SDK's manifest belongs in this layer too: the UI takes it as a workspace
+# dependency, so a lockfile install that could not see it would resolve a
+# different tree from the one the lockfile describes and --frozen-lockfile would
+# refuse.
+COPY sdk/typescript/package.json sdk/typescript/
 RUN pnpm install --frozen-lockfile
 
+# The SDK compiles first because the UI imports its build output rather than its
+# source — `pnpm --filter mockulus-ui...` in the root build script is what
+# orders the two. Its committed generated types come along in this copy; nothing
+# here regenerates them, which is the drift gate's job and belongs in CI.
+COPY sdk/typescript/ sdk/typescript/
 COPY ui/ ui/
 RUN pnpm run build
 

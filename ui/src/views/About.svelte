@@ -19,7 +19,14 @@
 
   <dt class="text-sm font-semibold text-slate-500 dark:text-slate-400">API access</dt>
   <dd class="text-sm">
-    Through the public admin API only. The UI gets no private endpoints and keeps no server-side
-    session.
+    Through the public admin API only, and through <code class="font-mono">@mockulus/admin-sdk</code
+    > rather than around it. The UI gets no private endpoints and keeps no server-side session.
+  </dd>
+
+  <dt class="text-sm font-semibold text-slate-500 dark:text-slate-400">Admin token</dt>
+  <dd class="text-sm">
+    Asked for only when the API answers 401, kept for this browser tab alone, and sent as an
+    <code class="font-mono">Authorization</code> header. It is never put in a URL, a cookie, or storage
+    that outlives the tab.
   </dd>
 </dl>
