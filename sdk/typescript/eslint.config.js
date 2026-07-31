@@ -6,7 +6,10 @@ import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
-  { ignores: ['dist/', '*.tsbuildinfo'] },
+  // The generated types are formatted by the generator and checked by
+  // `tsc`; linting them would report on openapi-typescript's output style,
+  // which nobody here can act on.
+  { ignores: ['dist/', '*.tsbuildinfo', 'src/generated/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

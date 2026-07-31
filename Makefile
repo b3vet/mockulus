@@ -81,8 +81,27 @@ sdk-build: ## Compile the TypeScript admin SDK into sdk/typescript/dist
 .PHONY: sdk-check
 sdk-check: ## Type-check, lint, format-check and unit-test the admin SDK
 	$(PNPM) install
+	$(PNPM) run sdk:gen:check
 	$(PNPM) run sdk:check
 	$(PNPM) run sdk:test
+
+# The generated types are committed and diffed rather than produced at install
+# time, the same way the §13 config table and docs/compatibility.md are: a
+# reader of this repository, and the admin UI that imports the SDK from the
+# workspace, should never need a generation step to see what the types are.
+.PHONY: sdk-gen
+sdk-gen: ## Regenerate the SDK's types from api/openapi.yaml
+	$(PNPM) install
+	$(PNPM) run sdk:gen
+
+# Drives a real mockulus the suite starts itself, so the binary has to exist.
+# This is the SDK's regression gate: a client that type-checks against the
+# contract can still send something the server refuses, and only a live round
+# trip finds that.
+.PHONY: sdk-integration
+sdk-integration: build ## Run the SDK integration suite against a freshly built binary
+	$(PNPM) install
+	$(PNPM) run sdk:test:integration
 
 # The contract half of the coupling rule in AGENTS.md. The SDK's types are
 # generated from api/openapi.yaml, so an admin route that reaches the server

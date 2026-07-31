@@ -156,18 +156,31 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The committed types are regenerated and diffed. This is the other half
+      # of the coupling rule: the contract lint above proves the contract still
+      # describes the server, and this proves the types still describe the
+      # contract. A surface change that reaches neither fails here rather than
+      # reaching a consumer as a type that quietly disagrees with the wire.
+      - run: pnpm run sdk:gen:check
+
       # tsc, eslint and prettier over the package.
       - run: pnpm run sdk:check
 
-      # vitest. Today this is mostly the Appendix B code table held against the
-      # specification in both directions; the integration lane that drives a
-      # real mockulus process arrives with the client it would exercise.
+      # The unit lane: URL and query construction, error mapping, the Appendix B
+      # code table held against the specification in both directions.
       - run: pnpm run sdk:test
 
       # The published artifact has to compile, and a package that type-checks
       # can still fail to emit — a declaration that cannot be written is only
       # found by writing it.
       - run: pnpm run sdk:build
+
+      # The integration lane drives a real mockulus the suite starts itself, so
+      # it needs a binary. This is the regression gate for the SDK's actual
+      # claims: a client that type-checks against the contract can still send a
+      # request the server refuses, and only a live round trip finds that.
+      - run: go build -trimpath -o bin/mockulus ./cmd/mockulus
+      - run: pnpm run sdk:test:integration
 
   dco:
     name: DCO sign-off

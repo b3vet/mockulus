@@ -47,8 +47,6 @@ actually answers.
 
 ## Coming with the releases that follow
 
-- `MockulusClient` — the typed client, with namespaces mirroring the API and
-  every non-2xx mapped to a `MockulusError` carrying the parsed `errors[]`.
 - WireMock-style builders — `stubFor(get(urlPathEqualTo('/x')).willReturn(…))`,
   covering exactly the supported matcher and response set.
 - Test helpers — `verify()` that understands the journal is eventually
@@ -63,8 +61,35 @@ the platform's own `fetch`.
 ## Compatibility
 
 The SDK versions independently of the server, because it will iterate faster at
-first. A table stating which SDK versions work against which server versions
-lands with the client, when there is more than one of either to state.
+first, so which pairs work together is stated rather than inferred:
+
+| SDK     | Server  | Notes                                                          |
+| ------- | ------- | -------------------------------------------------------------- |
+| `0.1.x` | `1.1.x` | The admin surface as of the release this SDK was built beside. |
+
+A server older than the row it is paired with is not a supported combination:
+the SDK's types come from that server's contract, and a call it can express is
+one an older server may answer `404` code `1001` to. The reverse — a newer
+server, an older SDK — is safe by the project's own compatibility promise, since
+after `1.0` the WireMock-compatible surface changes only in majors and a `422`
+becoming a supported feature is a minor.
+
+The table grows a row per release. It is not generated, because there is nothing
+to generate it from until there is more than one of either to compare.
+
+## How this package is kept honest
+
+Three mechanisms, none of which rely on anyone remembering:
+
+- The request and response types are **generated** from `api/openapi.yaml` and
+  committed. CI regenerates and diffs them, so they cannot drift from the
+  contract.
+- The contract itself is **cross-checked against the server's behavior catalog**
+  in both directions, so it cannot drift from the surface the server's own test
+  gate enforces.
+- The integration suite drives a **real mockulus process** it starts itself. A
+  client that type-checks against the contract can still send something the
+  server refuses, and that is the only place it shows up.
 
 ## License
 
