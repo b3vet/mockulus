@@ -73,8 +73,27 @@ ALLOWED=(
 # binary. The exception is scoped to the package name for exactly that reason —
 # an MPL-2.0 package that did end up inside the shipped bundle would still fail
 # this gate, which is the distinction worth keeping.
+#
+# argparse and type-fest arrive together, under openapi-typescript, which turns
+# api/openapi.yaml into the SDK's committed types. Neither can reach anything we
+# ship: the generator runs at development time, its output is TypeScript we then
+# read and commit, and no line of either package is in that output, in the admin
+# UI bundle or in the Go binary.
+#
+# argparse is Python-2.0 — the Python Software Foundation license, permissive
+# and imposing nothing on a caller — and reaches us through js-yaml, which the
+# generator uses to read the contract.
+#
+# type-fest publishes as "(MIT OR CC0-1.0)", which is the dual-license case this
+# gate refuses to pattern-match past. The choice is therefore recorded here
+# rather than shrugged at: **we take type-fest under MIT**, which is on the
+# allowlist above and is the term the rest of this tree's dependencies are used
+# under. CC0-1.0 would also have been acceptable; the point is that somebody
+# chose, and wrote it down.
 EXCEPTIONS=(
   "lightningcss*|MPL-2.0"
+  "argparse|Python-2.0"
+  "type-fest|(MIT OR CC0-1.0)"
 )
 
 if ! command -v pnpm >/dev/null 2>&1; then

@@ -38,9 +38,12 @@
     "node": ">=20"
   },
   "scripts": {
+    "gen": "node scripts/gen-types.mjs",
+    "gen:check": "pnpm run gen && git diff --exit-code -- src/generated/types.ts",
     "build": "tsc --build tsconfig.build.json",
     "check": "tsc --noEmit -p tsconfig.json && eslint . && prettier --check .",
-    "test": "vitest run",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
     "clean": "rm -rf dist tsconfig.build.tsbuildinfo"
   },
   "devDependencies": {
@@ -52,7 +55,8 @@
     "prettier": "^3.9.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "openapi-typescript": "^7.13.0"
   },
   "publishConfig": {
     "access": "public",

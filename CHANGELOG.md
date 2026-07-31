@@ -78,12 +78,34 @@ supported feature is a minor.
   because the catalog is already pinned row-by-row to §5.1 by the E2E gate, so
   the triangle closes transitively without a second markdown parser.
 
-- **`@mockulus/admin-sdk`**, a TypeScript client for the admin API, begins in
-  `sdk/typescript`. It is not published yet. What it exports today is the error
-  catalog — the codes and the HTTP status each is answered with — held against
-  SPEC Appendix B by its own tests in both directions, so the numbers cannot
-  drift from what the server answers. The client, the WireMock-style builders
-  and the test helpers follow.
+- **`@mockulus/admin-sdk`**, a TypeScript client for the admin API, in
+  `sdk/typescript`. Not published yet; the WireMock-style builders and the test
+  helpers follow.
+
+  `MockulusClient` covers the admin surface through namespaces that mirror it —
+  `mappings`, `requests`, `nearMisses`, `scenarios`, `files`, `settings`,
+  `system` — over the platform's own `fetch`, with **no runtime dependencies**.
+  Its request and response types are generated from `api/openapi.yaml`,
+  committed, and regenerated-and-diffed in CI, so a type here cannot quietly
+  disagree with the contract, and the contract cannot quietly disagree with the
+  server.
+
+  Every non-2xx becomes a `MockulusError` carrying **every** problem the server
+  reported rather than the first. That matters more here than it looks: mockulus
+  collects the whole list before answering, so a mapping with three unsupported
+  fields is one round trip, and a client that surfaced only `problems[0]` would
+  hand that back three at a time. `pointers()` gives the JSON Pointers to fix,
+  and the guards worth naming have names — `isJournalDisabled` for the default
+  configuration, `isStoreUnavailable` for the one class here worth retrying.
+
+  The error catalog it exports is held against SPEC Appendix B by the package's
+  own tests in both directions, so the codes cannot drift from what the server
+  answers.
+
+  The integration suite drives a real mockulus it starts itself, on port 0, with
+  the addresses read from the startup line — a client that type-checks against
+  the contract can still send something the server refuses, and only a live
+  round trip finds that.
 
 - **`AGENTS.md`**, and a `CLAUDE.md` that points at it rather than repeating it.
   It carries the repo's orientation, the rule that a behavior change updates the
