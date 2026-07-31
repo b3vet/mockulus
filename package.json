@@ -10,10 +10,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm --filter mockulus-ui run build",
+    "build": "pnpm --filter @mockulus/admin-sdk run build && pnpm --filter mockulus-ui run build",
     "dev": "pnpm --filter mockulus-ui run dev",
-    "check": "pnpm --filter mockulus-ui run check",
-    "test": "pnpm --filter mockulus-ui run test",
+    "check": "pnpm --filter @mockulus/admin-sdk run build && pnpm --filter mockulus-ui run check",
+    "test": "pnpm --filter @mockulus/admin-sdk run build && pnpm --filter mockulus-ui run test",
     "sdk:build": "pnpm --filter @mockulus/admin-sdk run build",
     "sdk:check": "pnpm --filter @mockulus/admin-sdk run check",
     "sdk:test": "pnpm --filter @mockulus/admin-sdk run test",

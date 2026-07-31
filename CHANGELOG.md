@@ -65,6 +65,30 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- **The admin UI has a shell and a stub browser.** Navigation, a token flow, the
+  error states worth naming, and a filterable list of the registered stubs with
+  a detail view. Read-only in this release; editing follows.
+
+  Every call it makes goes through `@mockulus/admin-sdk`, which the UI takes as
+  a workspace dependency. There is no second HTTP layer and no private endpoint
+  behind the interface: anything the UI can do is something a `curl` can do,
+  and the SDK gets exercised by its first real consumer in the same repository
+  that ships it.
+
+  **The admin token is held in `sessionStorage` and nowhere else**, and the
+  alternatives were each rejected for a reason. `localStorage` would outlive the
+  tab and be readable by every other tab on the origin. A cookie would be
+  attached by the browser to requests the UI did not make — including the asset
+  loads that are exempt from the token by design — turning a header the SDK
+  controls into ambient authority. A URL would put it in history, in the
+  `Referer` of anything the page links to, and in every access log on the way.
+
+  Two error states are pages rather than toasts, because both are configuration
+  rather than failure: a journal that is off (code `1010`, which is the
+  **default** posture, so the message says how to turn it on) and a store that is
+  unavailable (code `1020`). A `422` renders the JSON Pointers the server named,
+  which is the field that makes it actionable.
+
 - **`api/openapi.yaml`** — an authored OpenAPI 3.1 description of the admin API,
   and the first machine-readable statement of the surface this project has had.
   It types the supported subset strictly, so a field mockulus would refuse at
