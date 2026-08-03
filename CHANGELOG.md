@@ -209,7 +209,11 @@ contract, the client and the interface move together or fail a build.
   the triangle closes transitively without a second markdown parser.
 
 - **`@mockulus/admin-sdk`**, a TypeScript client for the admin API, in
-  `sdk/typescript`. Not published yet; the test helpers follow.
+  `sdk/typescript`, documented at
+  [Programmatic administration](docs/programmatic-administration.md). It is
+  published from its own tag prefix (`ts-sdk/v*`) so it can version
+  independently of the server — a client fix should not wait for a server
+  release.
 
   **Test helpers** for the two server properties every consumer would otherwise
   rediscover. `verify()` polls rather than asking once, because the journal is
