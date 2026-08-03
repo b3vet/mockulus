@@ -36,6 +36,44 @@ function mount(client: MockulusClient): { api: Api } {
 /** The list itself, so a count is of rows and not of every link on the page. */
 const rows = () => within(screen.getByRole('list', { name: 'Stub mappings' })).getAllByRole('link');
 
+/**
+ * What an export handed the browser.
+ *
+ * jsdom implements neither `URL.createObjectURL` nor downloading, so both are
+ * stood in for. What the page actually decides — the document and the file name
+ * — is what is captured, and that is what these tests assert.
+ */
+function captureDownloads(): { name: string; blob: Blob }[] {
+  const offered: { name: string; blob: Blob }[] = [];
+  let pending: Blob | undefined;
+  const urlApi = URL as unknown as {
+    createObjectURL: (blob: Blob) => string;
+    revokeObjectURL: (url: string) => void;
+  };
+  urlApi.createObjectURL = (blob) => {
+    pending = blob;
+    return 'blob:captured';
+  };
+  urlApi.revokeObjectURL = () => {};
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    if (pending) {
+      offered.push({ name: this.download, blob: pending });
+    }
+    pending = undefined;
+  });
+  return offered;
+}
+
+/** The text of a captured download, or a failure that names what went wrong. */
+async function downloadedText(entry: { blob: Blob } | undefined): Promise<string> {
+  if (!entry) {
+    throw new Error('no file was offered to the browser');
+  }
+  return entry.blob.text();
+}
+
 describe('Stubs', () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -256,5 +294,64 @@ describe('Stubs', () => {
       await screen.findByRole('heading', { name: 'This deployment needs an admin token' }),
     ).toBeInTheDocument();
     expect(api.tokenRequested).toBe(true);
+  });
+
+  it('offers the editor on a stub that does not exist yet', async () => {
+    mount(clientOver(stubMappings(2)));
+
+    await screen.findByRole('list', { name: 'Stub mappings' });
+
+    expect(screen.getByRole('link', { name: 'New stub' })).toHaveAttribute('href', '/stubs/new');
+  });
+
+  it('exports the stubs on screen, in the envelope the import endpoint takes', async () => {
+    const user = userEvent.setup();
+    const written = captureDownloads();
+    mount(clientOver(stubMappings(3)));
+    await screen.findByRole('list', { name: 'Stub mappings' });
+
+    await user.click(screen.getByRole('button', { name: 'Export 3' }));
+
+    expect(written).toHaveLength(1);
+    // The same envelope the import endpoint takes, so a round trip needs no
+    // translation by this UI or by anything else.
+    expect(JSON.parse(await downloadedText(written[0]))).toEqual({ mappings: stubMappings(3) });
+    expect(written[0]?.name).toMatch(/^mockulus-mappings-\d{4}-\d{2}-\d{2}\.json$/);
+  });
+
+  it('exports what the filters left, which is the export somebody narrowing a list wants', async () => {
+    const user = userEvent.setup();
+    const written = captureDownloads();
+    mount(clientOver([...stubMappings(2), stubMapping(9, { request: { method: 'POST' } })]));
+    await screen.findByRole('list', { name: 'Stub mappings' });
+
+    await user.selectOptions(screen.getByLabelText('Method'), 'POST');
+    await user.click(screen.getByRole('button', { name: 'Export 1' }));
+
+    const document = JSON.parse(await downloadedText(written[0])) as { mappings: StubMapping[] };
+    expect(document.mappings).toHaveLength(1);
+    expect(document.mappings[0]?.request?.method).toBe('POST');
+  });
+
+  it('has nothing to export when the filters leave nothing', async () => {
+    const user = userEvent.setup();
+    mount(clientOver(stubMappings(2)));
+    await screen.findByRole('list', { name: 'Stub mappings' });
+
+    await user.type(screen.getByLabelText('URL contains'), 'nothing-matches-this');
+
+    expect(screen.getByRole('button', { name: 'Export 0' })).toBeDisabled();
+  });
+
+  it('opens the import panel on request rather than taking up room until then', async () => {
+    const user = userEvent.setup();
+    mount(clientOver(stubMappings(1)));
+    await screen.findByRole('list', { name: 'Stub mappings' });
+
+    expect(screen.queryByRole('region', { name: 'Import mappings' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Import…' }));
+
+    expect(screen.getByRole('region', { name: 'Import mappings' })).toBeInTheDocument();
   });
 });

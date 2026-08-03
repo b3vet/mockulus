@@ -3,7 +3,10 @@
   import type { MockulusClient, StubMapping } from '@mockulus/admin-sdk';
   import AppLink from '../lib/components/AppLink.svelte';
   import ErrorState from '../lib/components/ErrorState.svelte';
+  import ImportPanel from '../lib/components/ImportPanel.svelte';
   import { getApi } from '../lib/api.svelte';
+  import { downloadTextFile } from '../lib/download';
+  import { EXPORT_MEDIA_TYPE, exportFileName, toExportDocument } from '../lib/mappings-file';
   import { createResource } from '../lib/resource.svelte';
   import { toHref } from '../lib/router';
   import { getRouter } from '../lib/router.svelte';
@@ -108,6 +111,21 @@
       resource.reload();
     }
   }
+
+  let importing = $state(false);
+
+  /**
+   * Exports what is on screen, not what is in the deployment.
+   *
+   * The filters are the point: "every stub this run tagged" is the export
+   * somebody actually wants, and it is one metadata search away. Exporting the
+   * whole snapshot regardless would make the filters above decorative on the one
+   * surface where they do the most work. The button says how many will be
+   * written so the two can never be confused.
+   */
+  function exportVisible() {
+    downloadTextFile(exportFileName(new Date()), EXPORT_MEDIA_TYPE, toExportDocument(filtered));
+  }
 </script>
 
 {#snippet row(mapping: StubMapping)}
@@ -139,19 +157,51 @@
 
 <div class="flex flex-wrap items-baseline justify-between gap-3">
   <h1 class="text-2xl font-semibold tracking-tight">Stubs</h1>
-  <button
-    type="button"
-    onclick={() => resource.reload()}
-    class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
-  >
-    Refresh
-  </button>
+  <div class="flex flex-wrap items-center gap-2">
+    <AppLink
+      href={toHref('/stubs/new')}
+      onnavigate={(href) => router.navigate(href)}
+      class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700"
+    >
+      New stub
+    </AppLink>
+    <button
+      type="button"
+      aria-expanded={importing}
+      onclick={() => (importing = !importing)}
+      class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+    >
+      Import…
+    </button>
+    <button
+      type="button"
+      disabled={filtered.length === 0}
+      onclick={exportVisible}
+      class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:hover:bg-slate-800"
+    >
+      Export {filtered.length.toLocaleString()}
+    </button>
+    <button
+      type="button"
+      onclick={() => resource.reload()}
+      class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+    >
+      Refresh
+    </button>
+  </div>
 </div>
 
 <p class="mt-2 max-w-2xl text-sm text-slate-600 dark:text-slate-400">
   The mappings this replica compiled into its snapshot — the stubs it will actually match against.
-  Read-only for now; editing arrives with the stub editor.
+  Export writes the stubs listed below, filters and all, as a file the import endpoint takes back
+  unchanged.
 </p>
+
+{#if importing}
+  <div class="mt-6">
+    <ImportPanel onimported={() => resource.reload()} />
+  </div>
+{/if}
 
 <form aria-label="Filter stubs" onsubmit={applyMetadata} class="mt-6 grid gap-4 sm:grid-cols-3">
   <div>
