@@ -5,8 +5,9 @@
 N replicas behind a Service, stubs persisted in Couchbase, all mock traffic served from an
 in-memory snapshot at ≥50k RPS per 2-vCPU pod with sub-2 ms p99.
 
-**Status: in development.** The core is being built milestone by milestone against
-the plan in SPEC §20; nothing is released yet.
+**Status: released.** See [CHANGELOG.md](CHANGELOG.md) for what is in the current version and
+[ROADMAP.md](ROADMAP.md) for what was deliberately left out — every unsupported feature is
+refused at registration with a pointer to it, never silently ignored.
 
 ## Documentation
 

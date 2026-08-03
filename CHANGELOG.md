@@ -8,7 +8,24 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
-## [Unreleased]
+## [1.1.0] - 2026-08-03
+
+Two compatibility gaps close and two surfaces of mockulus' own arrive.
+
+Every change to the WireMock-compatible surface in this release is a **422
+becoming a supported feature** — the date-time matchers and `matchesJsonSchema`
+— which is the one transition the promise in SPEC §22.5 allows a minor to make.
+No stub that registered against 1.0.0 behaves differently here. The additions
+that are not WireMock's at all — the admin UI, tracing — live under
+`/__admin/mockulus/**` or behind a key that is off by default, so a deployment
+that ignores them is the deployment it was.
+
+The two new artifacts are worth naming separately, because they change how the
+project can be worked on rather than what the server does. `api/openapi.yaml`
+is the first machine-readable description of the admin API, cross-checked
+against the behavior catalog in both directions. `@mockulus/admin-sdk` is a
+typed client generated from it, and the admin UI is its first consumer — so the
+contract, the client and the interface move together or fail a build.
 
 ### Added
 
