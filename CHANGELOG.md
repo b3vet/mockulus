@@ -254,6 +254,17 @@ supported feature is a minor.
   stray process once answered on a port taken to be the oracle's, and a batch of
   confident, wrong findings was recorded from it before anyone asked what was
   listening. Every one of them was mockulus agreeing with itself.
+- The image is held to the size budget SPEC §15.1 states, by a check rather than
+  by assertion. The budget was never measured, and the admin UI is the one part
+  of the artifact that can grow without anybody writing more code — a bundle
+  grows by dependency. What is measured is the **flattened filesystem**, because
+  it is the only figure that does not change with which daemon built the image:
+  a layer sum reads as compressed on a containerd-backed builder and
+  uncompressed on a classic one, roughly four times apart, and `docker images`
+  adds attestation manifests on top of that. Measured that way the image is
+  24.5 MB against a 40 MB budget, of which the embedded UI is about 155 kB.
+  §15.1's previously recorded 35.2 MB named no method and could not be
+  reproduced; it now names one.
 - The compatibility matrix is now drift-gated in CI. It is generated from the
   behavior catalog and the corpus precisely so that it cannot claim support the
   gate does not enforce, and that property only holds if the check runs — the
