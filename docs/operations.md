@@ -1136,11 +1136,24 @@ unreachable in precisely the deployments that set one. What is exempt is code;
 the data behind it is not, and a request for a stub, a scenario or a journal
 entry is refused without a token exactly as it was before the UI existed.
 
-What this means for you: **the UI's existence is discoverable without the
-token.** Anyone who can reach the admin port learns that this is a mockulus and
-what version it is — which `GET /__admin/version` would have told them anyway,
-before the token check, in every version of this server. It does not leak stub
-content, and it does not widen what an unauthenticated caller can do.
+What this means for you, stated precisely because the loose version of it is
+wrong: **with a token set, the UI assets are the only thing on the admin port
+that answers an unauthenticated caller at all.** Every other path — including
+`/__admin/version` and `/__admin/health` — is `401`. So the exemption does
+disclose something that was previously behind the token: that this is a
+mockulus, and that its UI is enabled. The page title says as much.
+
+It discloses no more than that. The version is fetched by the UI at runtime from
+`/__admin/version`, which is refused like everything else, so an unauthenticated
+visitor gets an interface that cannot load anything and a token prompt. No stub
+content, no configuration, no journal. And it widens nothing an unauthenticated
+caller can *do* — every action still goes through the guarded API.
+
+If that disclosure is unacceptable for your deployment — a mock server whose
+existence is itself worth hiding — `ui_enabled: false` removes it, and the
+prefix goes back to answering `404` like any other unclaimed path. A
+NetworkPolicy that keeps the admin port inside the namespace does the same job
+for the whole surface, which is the posture SPEC §17 recommends regardless.
 
 If you would rather the surface not exist at all, `ui_enabled: false` removes
 it: the whole prefix answers the ordinary unsupported-endpoint `404` and the
