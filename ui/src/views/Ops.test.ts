@@ -6,9 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Ops from './Ops.svelte';
 import TestHost from '../lib/TestHost.svelte';
 import { createApi } from '../lib/api.svelte';
-import { health, panelClient, versionInfo } from '../lib/ops-testing';
 import { createRouter } from '../lib/router.svelte';
-import { adminError, stubMapping } from '../lib/testing';
+import { adminError, fakeClient, health, stubMapping, versionInfo } from '../lib/testing';
 
 interface Parts {
   system?: Partial<MockulusClient['system']>;
@@ -28,7 +27,7 @@ function paginate(mappings: readonly StubMapping[]) {
 
 function mount(parts: Parts = {}) {
   window.history.pushState({}, '', '/ops');
-  const client = panelClient({
+  const client = fakeClient({
     system: {
       health: () => Promise.resolve(health()),
       version: () => Promise.resolve(versionInfo()),

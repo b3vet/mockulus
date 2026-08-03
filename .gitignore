@@ -44,6 +44,13 @@ covdata/
 node_modules/
 /ui/dist/
 
+# The browser smoke's own output: traces and screenshots kept from a failing
+# run, and the HTML report built over them. Both are evidence about one run on
+# one machine, which is a thing to read and then throw away.
+/ui/test-results/
+/ui/playwright-report/
+/ui/blob-report/
+
 # The embedded admin UI bundle. `internal/adminui` embeds this directory with
 # `//go:embed all:dist`, so the built site is an input to `go build` rather than
 # a leftover of it — but it is still generated, and generated bundles do not

@@ -161,7 +161,7 @@
     <AppLink
       href={toHref('/stubs/new')}
       onnavigate={(href) => router.navigate(href)}
-      class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700"
+      class="rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800"
     >
       New stub
     </AppLink>

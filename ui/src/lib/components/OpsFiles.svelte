@@ -6,7 +6,7 @@
   import { createAction } from '../action.svelte';
   import { getApi } from '../api.svelte';
   import { danglingReferences, formatBytes, referencesByFile } from '../ops-files';
-  import { downloadBytes } from '../ops-download';
+  import { downloadBytes } from '../download';
   import type { Resource } from '../resource.svelte';
 
   /**
@@ -164,7 +164,7 @@
       <button
         type="submit"
         disabled={busy || !chosen || nameDraft.trim() === ''}
-        class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+        class="rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {upload.pending ? 'Uploading…' : 'Upload'}
       </button>

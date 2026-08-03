@@ -4,11 +4,12 @@
   import ErrorState from '../lib/components/ErrorState.svelte';
   import NearMissCandidates from '../lib/components/NearMissCandidates.svelte';
   import NearMissFromJournal from '../lib/components/NearMissFromJournal.svelte';
+  import TabList from '../lib/components/TabList.svelte';
   import { createAction } from '../lib/action.svelte';
   import { getApi } from '../lib/api.svelte';
-  import { tablistTargetIndex } from '../lib/journal-tablist';
   import { takeDraft } from '../lib/near-miss-handoff';
   import { emptyDraft, groupByRequest, toDescribedRequest } from '../lib/near-miss-model';
+  import type { TabDefinition } from '../lib/tablist';
 
   /**
    * Why nothing matched, in the two shapes that question comes in.
@@ -29,7 +30,7 @@
 
   type Mode = 'compose' | 'journal';
 
-  const MODES: readonly { readonly id: Mode; readonly label: string }[] = [
+  const MODES: readonly TabDefinition<Mode>[] = [
     { id: 'compose', label: 'Compose a request' },
     { id: 'journal', label: 'From the journal' },
   ];
@@ -72,29 +73,6 @@
     }
   }
 
-  /**
-   * Arrow keys move within the tab list, which is what makes these tabs rather
-   * than two buttons. Activation follows focus; opening the journal mode costs a
-   * read, and that read is the mode's whole purpose, so there is nothing to
-   * defer by asking for a second key press.
-   */
-  function onModeKeydown(event: KeyboardEvent, index: number) {
-    const target = tablistTargetIndex(event.key, index, MODES.length);
-    if (target === undefined) {
-      return;
-    }
-    const definition = MODES[target];
-    if (definition === undefined) {
-      return;
-    }
-    event.preventDefault();
-    selectMode(definition.id);
-    const sibling = (event.currentTarget as HTMLElement).parentElement?.children[target];
-    if (sibling instanceof HTMLElement) {
-      sibling.focus();
-    }
-  }
-
   function submit(event: SubmitEvent) {
     event.preventDefault();
     carried = false;
@@ -127,26 +105,18 @@
   the order.
 </p>
 
-<div role="tablist" aria-label="Near-miss modes" class="mt-6 flex gap-1">
-  {#each MODES as definition, index (definition.id)}
-    {@const selected = mode === definition.id}
-    <button
-      type="button"
-      role="tab"
-      id={`near-miss-tab-${definition.id}`}
-      aria-selected={selected}
-      aria-controls={`near-miss-panel-${definition.id}`}
-      tabindex={selected ? 0 : -1}
-      onclick={() => selectMode(definition.id)}
-      onkeydown={(event) => onModeKeydown(event, index)}
-      class="rounded-t-md border-b-2 px-3 py-2 text-sm font-medium {selected
-        ? 'border-sky-600 text-sky-700 dark:text-sky-400'
-        : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'}"
-    >
-      {definition.label}
-    </button>
-  {/each}
-</div>
+<!-- Each mode gets its own panel, kept in the document and hidden when it is not
+     the current one, because the journal mode holds a form and a read that
+     should survive a look at the other tab. -->
+<TabList
+  label="Near-miss modes"
+  tabs={MODES}
+  selected={mode}
+  onselect={selectMode}
+  tabId={(id) => `near-miss-tab-${id}`}
+  panelId={(id) => `near-miss-panel-${id}`}
+  class="mt-6"
+/>
 
 <div
   id="near-miss-panel-compose"
@@ -235,7 +205,7 @@
       <button
         type="submit"
         disabled={score.pending}
-        class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+        class="rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {score.pending ? 'Scoring…' : 'Find the closest stubs'}
       </button>

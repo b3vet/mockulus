@@ -164,6 +164,77 @@ jobs:
           path: test/e2e/.artifacts/
           if-no-files-found: ignore
 
+  # The browser smoke of SOW decision U9, and the accessibility pass that rides
+  # with it.
+  #
+  # `continue-on-error` is the decision, not an oversight. This lane's other
+  # jobs are here because they are statistical or environment-sensitive; this
+  # one is here because it owns a browser, and a browser is the likeliest thing
+  # in this repository to cost the PR gate its zero-flake record. What the smoke
+  # covers is also already gated where it can be: the serving contract — the
+  # prefix, the SPA fallback, assets-200-while-API-401s — is corpus behaviour
+  # that runs on every PR with no browser involved. What is left for a browser
+  # is the class neither vitest nor the Go corpus can reach, and finding that
+  # the morning after is worth having without making it a gate. U9 promotes
+  # this to blocking on evidence that it has earned it; the evidence is a run of
+  # nightlies in which it fails only when something is wrong.
+  #
+  # It runs against the embedded bundle in a real binary rather than the vite
+  # dev server, which is the whole point: the router's base path, the CSP the Go
+  # handler sends and the token header reaching the admin mux are all properties
+  # of the shipped arrangement and none of them exists under `vite dev`.
+  ui-smoke:
+    name: admin UI browser smoke (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    strategy:
+      # Both configurations are real deployments and they take different paths
+      # through the UI: without a token nothing ever 401s and the sheet must
+      # never appear, and with one the first call 401s and everything after it
+      # depends on a header. `fail-fast: false` so that one of them failing
+      # still reports what the other did.
+      fail-fast: false
+      matrix:
+        include:
+          - name: open
+            token: ""
+          - name: token-protected
+            token: nightly-ui-smoke-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: build the bundle and the binary that embeds it
+        run: |
+          make ui-build
+          make build
+
+      # Chromium alone, for the reason playwright.config.ts records: the three
+      # questions the suite asks have no answer that differs by engine.
+      - name: install the browser
+        run: pnpm --filter mockulus-ui exec playwright install --with-deps chromium
+
+      - name: smoke (${{ matrix.name }})
+        env:
+          MOCKULUS_UI_E2E_TOKEN: ${{ matrix.token }}
+        run: pnpm --filter mockulus-ui run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-smoke-${{ matrix.name }}
+          path: ui/test-results/
+          if-no-files-found: ignore
+
   vuln:
     name: vulnerability scan
     runs-on: ubuntu-latest

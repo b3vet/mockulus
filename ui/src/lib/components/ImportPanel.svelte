@@ -204,7 +204,7 @@
           type="button"
           disabled={load.pending}
           onclick={() => batch && load.run(batch)}
-          class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {load.pending ? 'Writing…' : `Write ${count} ${count === 1 ? 'mapping' : 'mappings'}`}
         </button>

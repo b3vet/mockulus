@@ -10,7 +10,7 @@ import {
   queryRows,
   sinceFrom,
 } from './journal-entries';
-import { loggedRequest, serveEvent } from './journal-testing';
+import { loggedRequest, serveEvent } from './testing';
 
 describe('journal windowing', () => {
   it('turns a minutes choice into a bound at that many minutes before the read', () => {

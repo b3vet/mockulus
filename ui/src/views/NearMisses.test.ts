@@ -6,20 +6,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import NearMisses from './NearMisses.svelte';
 import TestHost from '../lib/TestHost.svelte';
 import { createApi, type Api } from '../lib/api.svelte';
-import {
-  candidateMapping,
-  journalClient,
-  loggedRequest,
-  nearMiss,
-  type FakeJournalClientParts,
-} from '../lib/journal-testing';
 import { offerDraft, takeDraft } from '../lib/near-miss-handoff';
 import { createRouter } from '../lib/router.svelte';
-import { adminError } from '../lib/testing';
+import {
+  adminError,
+  candidateMapping,
+  fakeClient,
+  loggedRequest,
+  nearMiss,
+  type FakeClientParts,
+} from '../lib/testing';
 
-function mount(parts: FakeJournalClientParts): { api: Api } {
+function mount(parts: FakeClientParts): { api: Api } {
   window.history.pushState({}, '', '/near-misses');
-  const client = journalClient(parts);
+  const client = fakeClient(parts);
   const api = createApi({ baseUrl: 'http://mock.example', createClient: () => client });
   const router = createRouter([{ path: '/near-misses' }, { path: '/stubs/:id' }]);
   render(TestHost, { api, router, view: NearMisses });

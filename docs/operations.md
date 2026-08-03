@@ -1124,6 +1124,33 @@ process is holding — which is exactly what the token exists to protect.
 kubelet and Prometheus cannot present one, and none of the three carries stub
 content.
 
+**One exemption, and it is worth understanding rather than discovering.** The
+admin UI's static assets — the HTML, JavaScript and CSS under
+`/__admin/mockulus/ui/` — are served without the token check. Every call the UI
+then makes is checked normally, with the token the operator typed into it.
+
+The reason is mechanical rather than a judgement that assets are harmless: a
+browser cannot attach an `Authorization` header to a page load or to the script
+tags that page pulls in, so a token in front of the assets makes the interface
+unreachable in precisely the deployments that set one. What is exempt is code;
+the data behind it is not, and a request for a stub, a scenario or a journal
+entry is refused without a token exactly as it was before the UI existed.
+
+What this means for you: **the UI's existence is discoverable without the
+token.** Anyone who can reach the admin port learns that this is a mockulus and
+what version it is — which `GET /__admin/version` would have told them anyway,
+before the token check, in every version of this server. It does not leak stub
+content, and it does not widen what an unauthenticated caller can do.
+
+If you would rather the surface not exist at all, `ui_enabled: false` removes
+it: the whole prefix answers the ordinary unsupported-endpoint `404` and the
+admin port's root stops redirecting. The admin API is unaffected.
+
+**The UI is an in-cluster tool.** The admin listener has no TLS — TLS is
+mock-port only — so reaching it means being inside the cluster or holding a
+`kubectl port-forward`. Exposing it through an ingress is a decision to make
+deliberately, and one that should arrive with the token set.
+
 ```console
 $ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:19315/__admin/mappings
 401

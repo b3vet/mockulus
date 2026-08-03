@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { MockulusClient, StubMapping } from '@mockulus/admin-sdk';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from './App.svelte';
@@ -75,7 +75,13 @@ describe('App', () => {
 
     await screen.findByRole('heading', { level: 1 });
 
-    expect(screen.getByRole('link', { name: 'Stubs' })).toHaveAttribute('aria-current', 'page');
+    // Scoped to the navigation: the overview links to the same areas, so an
+    // unscoped query by name is ambiguous the moment a page mentions one.
+    const nav = screen.getByRole('navigation');
+    expect(within(nav).getByRole('link', { name: 'Stubs' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     expect(screen.getByText('/api/things/1')).toBeInTheDocument();
   });
 
@@ -115,13 +121,44 @@ describe('App', () => {
     expect(screen.getByText('Admin token set for this tab')).toBeInTheDocument();
   });
 
+  it('moves focus into the main region on a route change, and announces the page', async () => {
+    const user = userEvent.setup();
+    render(App, { api: openDeployment() });
+
+    // Nothing is announced on the first render: the browser has already said
+    // what it loaded, and the app repeating it would talk over the platform.
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live).toHaveTextContent('');
+
+    await user.click(screen.getByRole('link', { name: 'About' }));
+
+    // The link that caused the move is still in the document here, so this is
+    // the milder half of the problem. The one that matters is a control that
+    // unmounts with its view — focus would fall to <body> and the next Tab
+    // would start again from the top of the page.
+    expect(document.activeElement).toBe(screen.getByRole('main'));
+    expect(live).toHaveTextContent('About');
+  });
+
+  it('gives the skip link a target focus can actually land on', () => {
+    render(App, { api: openDeployment() });
+
+    const skip = screen.getByRole('link', { name: 'Skip to content' });
+    const main = screen.getByRole('main');
+
+    expect(skip).toHaveAttribute('href', `#${main.id}`);
+    // Without a tabindex the element is not a focus target at all, and the skip
+    // link moves the reading position in some browsers and nothing in others.
+    expect(main).toHaveAttribute('tabindex', '-1');
+  });
+
   it('titles the document after the route, so a tab is identifiable', async () => {
     const user = userEvent.setup();
     render(App, { api: openDeployment() });
 
     expect(document.title).toBe('Overview · mockulus');
 
-    await user.click(screen.getByRole('link', { name: 'Stubs' }));
+    await user.click(within(screen.getByRole('navigation')).getByRole('link', { name: 'Stubs' }));
 
     expect(document.title).toBe('Stubs · mockulus');
   });

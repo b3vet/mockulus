@@ -10,7 +10,7 @@ export default ts.config(
   {
     // Build output and the embed directory are generated; nothing in them is
     // ours to lint.
-    ignores: ['dist/', '../internal/adminui/dist/'],
+    ignores: ['dist/', '../internal/adminui/dist/', 'test-results/', 'playwright-report/'],
   },
   js.configs.recommended,
   ts.configs.recommended,
@@ -33,7 +33,14 @@ export default ts.config(
     },
   },
   {
-    files: ['vite.config.ts', 'vitest-setup.ts', 'eslint.config.js', 'svelte.config.js'],
+    files: [
+      'vite.config.ts',
+      'vitest-setup.ts',
+      'eslint.config.js',
+      'svelte.config.js',
+      'playwright.config.ts',
+      'e2e/**/*.ts',
+    ],
     languageOptions: {
       globals: { ...globals.node },
     },
