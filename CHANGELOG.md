@@ -65,6 +65,25 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- **The request journal and the near-miss debugger** are in the UI. The log with
+  matched and unmatched tabs, `since`/`limit` windowing, an auto-refresh toggle,
+  and an entry detail that links to the stub that served it.
+
+  **The journal is off by default**, so the page most people see first is the one
+  that says so. That is a configuration answer rather than a failure, and it
+  reads like one: it names `journal_enabled`, and it offers no "Try again"
+  button, because pressing one could not help. No timer starts and exactly one
+  request is made.
+
+  The near-miss debugger has two modes, and the second is the one that matters on
+  a default deployment: **compose a request** and ask why nothing matched, with
+  no journal involved at all. The structured `differences` mockulus reports —
+  which WireMock has no equivalent for — are rendered as a table of criterion,
+  what the stub asked for, and what the request carried, because that is the
+  comparison someone came to make. From an unmatched journal entry, the recorded
+  request is carried into the composer directly rather than through the URL,
+  which is not where a request with headers and a body belongs.
+
 - **The admin UI can write, not only read.** A CodeMirror editor over the mapping
   JSON, with create, edit, duplicate and delete, plus import and export.
 
