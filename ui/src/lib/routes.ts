@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Component } from 'svelte';
 import About from '../views/About.svelte';
+import Journal from '../views/Journal.svelte';
+import NearMisses from '../views/NearMisses.svelte';
+import Ops from '../views/Ops.svelte';
 import Overview from '../views/Overview.svelte';
+import Scenarios from '../views/Scenarios.svelte';
 import StubDetail from '../views/StubDetail.svelte';
 import StubEditor from '../views/StubEditor.svelte';
 import Stubs from '../views/Stubs.svelte';
@@ -19,9 +23,12 @@ export interface RouteDefinition {
 /**
  * The whole route table.
  *
- * What is here is the shell and the stub area, browse and edit. The remaining
- * feature areas the SOW lists — journal, near-miss debugger, scenarios, ops —
- * arrive as later stages fill this in.
+ * Every feature area has its route, its nav entry and its title here, including
+ * the ones whose views are still placeholders. The table is deliberately ahead
+ * of the views: two stages building different areas at once would otherwise both
+ * be editing this file and the nav beside it, which is the one place they would
+ * collide. Filling in a placeholder is then a change to one view and nothing
+ * else.
  *
  * The three editor paths name one component, which decides between them from the
  * path (`lib/stub-draft.ts`). They are separate routes rather than one route
@@ -40,6 +47,10 @@ export const routes: readonly RouteDefinition[] = [
   { path: '/stubs/:id', title: 'Stub', component: StubDetail },
   { path: '/stubs/:id/edit', title: 'Edit stub', component: StubEditor },
   { path: '/stubs/:id/duplicate', title: 'Duplicate stub', component: StubEditor },
+  { path: '/journal', label: 'Journal', title: 'Journal', component: Journal },
+  { path: '/near-misses', label: 'Near misses', title: 'Near misses', component: NearMisses },
+  { path: '/scenarios', label: 'Scenarios', title: 'Scenarios', component: Scenarios },
+  { path: '/ops', label: 'Ops', title: 'Ops', component: Ops },
   { path: '/about', label: 'About', title: 'About', component: About },
 ];
 
