@@ -103,8 +103,32 @@ supported feature is a minor.
   the triangle closes transitively without a second markdown parser.
 
 - **`@mockulus/admin-sdk`**, a TypeScript client for the admin API, in
-  `sdk/typescript`. Not published yet; the WireMock-style builders and the test
-  helpers follow.
+  `sdk/typescript`. Not published yet; the test helpers follow.
+
+  **WireMock-style builders**, under the names the Java DSL uses, so the muscle
+  memory transfers: `stubFor(get(urlPathEqualTo('/x')).withHeader('Accept',
+  containing('json')).willReturn(aResponse().withStatus(201)))`. They cover
+  exactly the supported subset — including the date-time matchers and
+  `matchesJsonSchema` that landed earlier in this release — and nothing outside
+  it exists to call.
+
+  The point of the layer is that a stub the builders can express is a stub the
+  server registers, so the refusals the server makes are carried by the types
+  where they can be. A modifier is a parameter of the matcher it modifies, so
+  there is no `schemaVersion` to attach to the wrong thing; `applyTruncationLast`
+  without `truncateExpected` does not typecheck; nor does `truncateActual`
+  beside a pattern `actualFormat`, which the server refuses as inert. Exactly one
+  body form. Scenario transitions only after naming a scenario. Path parameters
+  only for variables the template binds. What types cannot carry — a status out
+  of range, a malformed UUID, invalid base64 — throws at the call site, and what
+  is left to the server is value-level only: a regex that does not compile, a
+  schema that is not a schema.
+
+  One consequence is worth stating because it will be met: `truncateExpected`
+  applies only to a now-relative operand, and a plain `string` cannot be shown to
+  be one, so it is available on a literal and through `nowOffset(3, 'days')` but
+  not on a computed operand. `nowOffset` is the better spelling anyway — it also
+  removes the trap that the offset must use plural units and single spaces.
 
   `MockulusClient` covers the admin surface through namespaces that mirror it —
   `mappings`, `requests`, `nearMisses`, `scenarios`, `files`, `settings`,
