@@ -8,9 +8,9 @@
  * stub the server registers. That moves mockulus' fail-loud contract from a 422
  * at registration to a type error before the call is written.
  *
- * What is here today is the client and the documents it exchanges. The
- * WireMock-style builders and the test helpers land in the releases that
- * follow; nothing below is waiting on them.
+ * What is here today is the client, the documents it exchanges, and the
+ * WireMock-style builders that produce them. The test helpers land in the
+ * release that follows; nothing below is waiting on them.
  */
 
 export { MockulusClient } from './client/client.js';
@@ -38,6 +38,12 @@ export { FilesApi } from './client/files.js';
 export type { FileBody, PutFileOptions } from './client/files.js';
 export { SettingsApi } from './client/settings.js';
 export { SystemApi } from './client/system.js';
+
+// The builders re-export their whole surface, which is a vocabulary rather than
+// a handful of entry points: naming each function twice would leave one of the
+// two lists to go stale, and the module's own index is the one that is looked at
+// while a builder is being added.
+export * from './builders/index.js';
 
 export type {
   ContentMatcher,
