@@ -22,6 +22,11 @@ three in the morning.
 
 ## Reference
 
+- **[Programmatic administration](programmatic-administration.md)** — managing
+  mocks from code: the OpenAPI contract at `api/openapi.yaml`, and the
+  TypeScript SDK generated from it, with the two server properties its test
+  helpers encode so a suite need not rediscover them.
+
 - **[The admin UI](admin-ui.md)** — the web interface compiled into the binary.
   Open the admin port in a browser; it is at `/__admin/mockulus/ui/` and the
   root redirects there. Browse and edit stubs with the server's refusals landing

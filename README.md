@@ -21,6 +21,8 @@ Start at **[docs/](docs/README.md)**.
   that proves it, generated from the catalog and the corpus.
 - **[The admin UI](docs/admin-ui.md)** — the web interface built into the binary: browse and
   edit stubs, read the journal, ask why a request did not match.
+- **[Programmatic administration](docs/programmatic-administration.md)** — managing mocks from
+  code, the OpenAPI contract, and the TypeScript SDK generated from it.
 - **[Deviations](docs/deviations.md)** · **[Configuration](docs/configuration.md)** ·
   **[Operations](docs/operations.md)**
 
