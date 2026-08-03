@@ -65,6 +65,29 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- **The admin UI can write, not only read.** A CodeMirror editor over the mapping
+  JSON, with create, edit, duplicate and delete, plus import and export.
+
+  **The 422 is the centrepiece rather than a detail.** mockulus refuses a bad
+  mapping by listing *every* problem it found, each carrying a JSON Pointer at
+  the offending field — the property this whole project is built around — and
+  this is where a person finally sees it. Every problem is rendered, and each one
+  **jumps to its own field in the editor**: the pointer is resolved against the
+  document with the same grammar the syntax highlighting uses, so there is no
+  second reading of JSON to disagree with the first, and the resolution survives
+  a document that is mid-edit. A pointer that cannot be resolved says so and
+  names the deepest part of itself that could, instead of offering a button that
+  does nothing.
+
+  Import is atomic on the server — one bad mapping in a batch writes nothing —
+  so the failure surface says that plainly and attributes each problem to the
+  mapping in the batch it came from.
+
+  The editor costs about 110 kB gzipped, taking the bundle to roughly 160 kB. Its
+  extensions are assembled by hand rather than taken wholesale, so no
+  autocomplete, search, lint or folding is carried. The image is 24.8 MB against
+  the 40 MB budget, with the whole UI accounting for 494 kB of it.
+
 - **The admin UI has a shell and a stub browser.** Navigation, a token flow, the
   error states worth naming, and a filterable list of the registered stubs with
   a detail view. Read-only in this release; editing follows.

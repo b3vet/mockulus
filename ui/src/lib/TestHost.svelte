@@ -17,12 +17,19 @@
     api: Api;
     router: Router<{ readonly path: string }>;
     view: Component;
+    /**
+     * Props for the mounted component. The shell mounts route views with none,
+     * which is why this defaults to none — but a component that takes them, such
+     * as the import panel, is still reached through the api and router in
+     * context and belongs here rather than in a second host.
+     */
+    viewProps?: Record<string, unknown>;
   }
 
-  let { api, router, view: View }: Props = $props();
+  let { api, router, view: View, viewProps = {} }: Props = $props();
 
   setApi(untrack(() => api));
   setRouter(untrack(() => router));
 </script>
 
-<View />
+<View {...viewProps} />
