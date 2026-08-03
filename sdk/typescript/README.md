@@ -5,9 +5,8 @@ for managing mocks programmatically from a service, a test suite, or a
 deployment script.
 
 > **Not published yet.** This package is being built alongside the server on the
-> way to its first release. What is described below as _available today_ is what
-> the package actually exports; everything else is stated as what it will be, so
-> that this file is never ahead of the code.
+> way to its first release. Everything described below is what the package
+> actually exports today, so that this file is never ahead of the code.
 
 ## What it is for
 
@@ -24,8 +23,77 @@ would otherwise get, delivered by the compiler.
 
 ## Available today
 
-The error codes of the server's catalog, and the HTTP status each is answered
-with:
+### The client
+
+One namespace per group of the admin API, over the platform's own `fetch`:
+
+```ts
+import { MockulusClient } from '@mockulus/admin-sdk';
+
+const client = new MockulusClient({ baseUrl: 'http://localhost:9090' });
+await client.mappings.create({
+  request: { method: 'GET', urlPath: '/api/orders' },
+  response: { status: 200, jsonBody: { orders: [] } },
+});
+```
+
+Every non-2xx answer becomes a `MockulusError` carrying **every** problem the
+server reported rather than the first, since mockulus collects the whole list
+before answering. The endpoints that answer an unknown id with a bare, bodyless
+404 have `…OrNull` variants beside the throwing defaults.
+
+### The builders
+
+The WireMock Java DSL's names, over exactly the supported subset:
+
+```ts
+import { aResponse, containing, get, stubFor, urlPathEqualTo } from '@mockulus/admin-sdk';
+
+await client.mappings.create(
+  stubFor(
+    get(urlPathEqualTo('/api/orders'))
+      .withHeader('Accept', containing('json'))
+      .willReturn(aResponse().withStatus(201).withJsonBody({ id: 7 })),
+  ),
+);
+```
+
+Nothing outside the subset exists to call, and several of the combinations the
+server refuses do not type-check either — a modifier is a parameter of the
+matcher it modifies, a verb takes one URL criterion, a response has one body
+form.
+
+### The test helpers
+
+Three properties of the server that a suite would otherwise discover the hard
+way, each with a helper:
+
+```ts
+import { suite, verify, waitForStub } from '@mockulus/admin-sdk';
+
+// The journal is eventually consistent, so this polls rather than asking once.
+await verify(client, { method: 'GET', urlPath: '/api/orders' }, { times: 2 });
+
+// A deployment is one shared namespace, so a run namespaces and cleans up by
+// tag instead of resetting what everyone else is using.
+const run = suite(client, { prefix: 'checkout' });
+try {
+  const stub = await run.register(stubFor(get(urlPathEqualTo(run.url('/orders')))));
+  // Stubs reach the other replicas within `sync_interval`, not instantly.
+  await waitForStub(client, stub.id!);
+} finally {
+  await run.cleanup();
+}
+```
+
+`verify()` reports the count history it observed rather than only the final
+number, and answers the journal-off case — a 500 with code `1010`, which is what
+a fresh deployment gives — by naming `journal_enabled` instead of reporting a
+failed assertion.
+
+### The error codes
+
+The server's catalog, and the HTTP status each is answered with:
 
 ```ts
 import { ErrorCode, ErrorCodeStatus } from '@mockulus/admin-sdk';
@@ -44,14 +112,6 @@ and the code is what tells them apart.
 These constants are checked against the server's specification by this package's
 own test suite, in both directions, so they cannot drift from what the server
 actually answers.
-
-## Coming with the releases that follow
-
-- WireMock-style builders — `stubFor(get(urlPathEqualTo('/x')).willReturn(…))`,
-  covering exactly the supported matcher and response set.
-- Test helpers — `verify()` that understands the journal is eventually
-  consistent, and a suite helper that namespaces and cleans up after itself
-  instead of resetting a deployment other people are sharing.
 
 ## Requirements
 
