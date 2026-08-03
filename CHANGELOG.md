@@ -128,6 +128,21 @@ supported feature is a minor.
 - **`@mockulus/admin-sdk`**, a TypeScript client for the admin API, in
   `sdk/typescript`. Not published yet; the test helpers follow.
 
+  **Test helpers** for the two server properties every consumer would otherwise
+  rediscover. `verify()` polls rather than asking once, because the journal is
+  eventually consistent — an entry becomes visible within the flush interval
+  plus index lag — and a helper that asked once would be flaky in a way people
+  paper over with sleeps. It reports the count history it observed rather than
+  only the final number, and when the journal is off it says `journal_enabled`
+  instead of handing back a 500. `waitForStub()` does the same for cross-pod
+  propagation, which is bounded by `sync_interval`.
+
+  `suite()` is SPEC §1's shared-deployment discipline as code. A deployment is
+  shared, so a suite namespaces its URLs, tags what it registers, and removes
+  exactly its own — it **never** calls a global reset, which is the failure this
+  exists to prevent, and the test that proves it is one where a global reset
+  would show up as somebody else's stub going missing.
+
   **WireMock-style builders**, under the names the Java DSL uses, so the muscle
   memory transfers: `stubFor(get(urlPathEqualTo('/x')).withHeader('Accept',
   containing('json')).willReturn(aResponse().withStatus(201)))`. They cover

@@ -8,9 +8,11 @@
  * stub the server registers. That moves mockulus' fail-loud contract from a 422
  * at registration to a type error before the call is written.
  *
- * What is here today is the client, the documents it exchanges, and the
- * WireMock-style builders that produce them. The test helpers land in the
- * release that follows; nothing below is waiting on them.
+ * What is here is the client, the documents it exchanges, the WireMock-style
+ * builders that produce them, and the test helpers that encode the three
+ * properties of the server a suite would otherwise rediscover for itself — an
+ * eventually consistent journal, a journal that is off by default, and a
+ * deployment that is one shared namespace.
  */
 
 export { MockulusClient } from './client/client.js';
@@ -44,6 +46,12 @@ export { SystemApi } from './client/system.js';
 // two lists to go stale, and the module's own index is the one that is looked at
 // while a builder is being added.
 export * from './builders/index.js';
+
+// The test helpers, re-exported whole for the same reason: `verify`, `suite`
+// and `waitForStub` are three entry points to one discipline, and a reader
+// looking for the second of them after finding the first should not have to
+// know that this list exists.
+export * from './testing/index.js';
 
 export type {
   ContentMatcher,
