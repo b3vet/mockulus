@@ -10,8 +10,7 @@ import {
   servingIn,
   STARTED,
 } from './scenario-panel';
-import { scenario } from './ops-testing';
-import { stubMapping } from './testing';
+import { scenario, stubMapping } from './testing';
 
 function member(index: number, overrides: Partial<StubMapping>): StubMapping {
   return stubMapping(index, { scenarioName: 'checkout', ...overrides });

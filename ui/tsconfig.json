@@ -23,6 +23,8 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.svelte",
+    "e2e/**/*.ts",
+    "playwright.config.ts",
     "vite.config.ts",
     "vitest-setup.ts",
     "svelte.config.js",

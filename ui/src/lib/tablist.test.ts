@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { tablistTargetIndex } from './journal-tablist';
+import { tablistTargetIndex } from './tablist';
 
 describe('tablistTargetIndex', () => {
   it('moves one tab in the direction of the arrow', () => {

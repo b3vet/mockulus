@@ -65,6 +65,30 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- **The UI is hardened, documented, and covered by a browser.** A Playwright
+  smoke runs in the **nightly** lane, non-blocking and without retries, against
+  the embedded production bundle rather than a dev server — which is the only
+  place the router's base path, the security policy blocking an asset, and the
+  token header actually travelling can be observed at all. It is out of the PR
+  gate deliberately: that gate is held to zero flake, and a browser suite is the
+  likeliest thing to cost it.
+
+  An accessibility sweep fixed seven real defects, four of them contrast
+  failures against WCAG AA that no amount of reading would have found — primary
+  buttons at 4.02:1, editor line numbers at 2.45:1. Route changes now move focus
+  and announce the new page, and the skip link has a target focus can land on.
+
+  The Content-Security-Policy was re-examined and **deliberately left as it
+  was**. Removing `unsafe-inline` from `style-src` looked available on the
+  evidence of the built bundle; a real browser refused it, because the editor
+  injects a stylesheet element to theme itself. The policy now records the
+  measurement rather than the assumption. What protects these pages is the layer
+  above: no inline script is admitted, every field is escaped, and no part of the
+  interface interpolates raw HTML.
+
+  New: **[The admin UI](docs/admin-ui.md)**, and a section in the operations
+  guide covering what the asset exemption does and does not widen.
+
 - **Scenarios and ops** complete the UI's feature areas. A card per scenario with
   its state and one-click transitions; an overview, a files manager, a settings
   editor and a danger zone.

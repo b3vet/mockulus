@@ -18,6 +18,8 @@ Start at **[docs/](docs/README.md)**.
   shape, what to turn on.
 - **[Compatibility matrix](docs/compatibility.md)** — every catalogued behavior and the test
   that proves it, generated from the catalog and the corpus.
+- **[The admin UI](docs/admin-ui.md)** — the web interface built into the binary: browse and
+  edit stubs, read the journal, ask why a request did not match.
 - **[Deviations](docs/deviations.md)** · **[Configuration](docs/configuration.md)** ·
   **[Operations](docs/operations.md)**
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
 import { danglingReferences, formatBytes, referencesByFile } from './ops-files';
-import { lastSegment } from './ops-download';
+import { lastSegment } from './download';
 import { stubMapping } from './testing';
 
 function referencing(index: number, bodyFileName: string) {

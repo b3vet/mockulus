@@ -148,8 +148,13 @@
             </ul>
           </div>
           <div>
+            <!-- slate-600 rather than the slate-500 this label wears elsewhere.
+                 The card behind it is a tinted panel rather than white, and
+                 slate-500 over rose-50/50 comes to 4.42:1 — the same colour that
+                 clears the floor on every other surface in this UI fails on this
+                 one. -->
             <p
-              class="text-xs font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400"
+              class="text-xs font-semibold tracking-wide text-slate-600 uppercase dark:text-slate-400"
             >
               Leaves alone
             </p>

@@ -37,6 +37,52 @@
   const View = $derived(router.match?.route.component ?? NotFound);
 
   /**
+   * The main region, which is both the skip link's destination and where focus
+   * goes after a client-side navigation.
+   */
+  let main = $state<HTMLElement | null>(null);
+
+  /**
+   * What the live region below says. Empty until the first navigation, so a
+   * fresh page load announces nothing — the browser has already said what it
+   * loaded, and repeating it would be the app talking over the platform.
+   */
+  let announcement = $state('');
+
+  /** The path the announcement and the focus move were last made for. */
+  let announcedFor = router.path;
+
+  /**
+   * Navigation, for a reader who is not watching the page.
+   *
+   * A client-side route change is invisible in two ways that a full page load is
+   * not, and both need answering. **Focus** is the first: the control that
+   * caused the move is often gone with the view that held it — the journal's
+   * "Debug this request" button navigates to the near-miss debugger and unmounts
+   * itself — and a focused element that leaves the document drops focus to
+   * `<body>`, so the reader's next Tab starts again from the top of the page.
+   * Moving focus into the main region puts them at the start of what actually
+   * changed. **The announcement** is the second: `document.title` is updated
+   * above, and screen readers do not reliably announce a title that changes
+   * without a page load, so the new page's name is put into a live region as
+   * well. The two are not redundant — the live region says which page, the focus
+   * move says where the reader now is.
+   *
+   * `untrack` on the element is what keeps this an effect about the path: `main`
+   * is state so that binding it re-runs nothing, and reading it as a dependency
+   * would make the first mount look like a navigation.
+   */
+  $effect(() => {
+    const path = router.path;
+    if (path === announcedFor) {
+      return;
+    }
+    announcedFor = path;
+    announcement = router.match?.route.title ?? 'Not found';
+    untrack(() => main)?.focus();
+  });
+
+  /**
    * A section is current for the whole subtree under it, so the Stubs tab stays
    * marked while a stub's detail page is open. Without this the nav would go
    * blank one click into the only section that has a detail view.
@@ -102,9 +148,26 @@
     </div>
   </header>
 
-  <main id="main" class="mx-auto w-full max-w-5xl flex-1 px-6 py-10">
+  <!-- `tabindex="-1"` is what makes both the skip link and the route change
+       above able to put focus here. Without it the element is not a focus
+       target: following the skip link moves the browser's reading position in
+       Chrome and moves nothing at all in Safari, so the keyboard user who used
+       it is still in the header. `outline-none` because focus arriving here is
+       a consequence of an action taken elsewhere rather than a control the
+       reader is standing on, and a ring around the whole page would read as one. -->
+  <main
+    bind:this={main}
+    id="main"
+    tabindex="-1"
+    class="mx-auto w-full max-w-5xl flex-1 px-6 py-10 outline-none"
+  >
     <View />
   </main>
+
+  <!-- Off screen and always present. A live region has to be in the document
+       before the text arrives, or the assistive technology has nothing to be
+       watching when it does. -->
+  <p aria-live="polite" class="sr-only">{announcement}</p>
 
   <footer
     class="border-t border-slate-200 bg-white px-6 py-4 text-center text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400"

@@ -24,12 +24,32 @@
    */
   const version = createResource(api, (client) => client.system.version());
 
-  const planned = [
-    'Stub editor — create, edit, duplicate and delete, with the server’s 422s inline',
-    'Journal — the request log, matched and unmatched',
-    'Near-miss debugger — why a request did not match',
-    'Scenarios — current state and one-click transitions',
-    'Ops — health, files, settings, danger zone',
+  /**
+   * The areas, as links rather than as a list of promises.
+   *
+   * This was a "coming in later stages" list while they were being built, and
+   * it outlived them: every one landed and the front page went on telling a
+   * first-time reader the product was unfinished. A list of what exists is only
+   * worth the space if it takes you there, so these are links.
+   */
+  const areas = [
+    {
+      path: '/stubs',
+      name: 'Stubs',
+      what: 'browse, filter, and edit — the server’s 422s land on the field they name',
+    },
+    {
+      path: '/journal',
+      name: 'Journal',
+      what: 'the request log, matched and unmatched; off by default',
+    },
+    {
+      path: '/near-misses',
+      name: 'Near misses',
+      what: 'why a request did not match, with or without the journal',
+    },
+    { path: '/scenarios', name: 'Scenarios', what: 'current state, and one click to move it' },
+    { path: '/ops', name: 'Ops', what: 'health, files, settings, and the destructive actions' },
   ];
 </script>
 
@@ -80,13 +100,17 @@
 </div>
 
 <h2 class="mt-10 text-sm font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400">
-  Coming in later stages
+  What is here
 </h2>
 <ul class="mt-3 space-y-2">
-  {#each planned as item (item)}
+  {#each areas as item (item.path)}
     <li class="flex gap-3 text-slate-700 dark:text-slate-300">
-      <span aria-hidden="true" class="text-slate-400 dark:text-slate-600">—</span>
-      <span>{item}</span>
+      <!-- A visible glyph is held to the contrast floor whether or not a screen
+           reader is told to skip it: `aria-hidden` decides who hears it, and a
+           low-vision reader is looking at it either way. slate-400 on the light
+           page and slate-600 on the dark one were both under 3:1. -->
+      <span aria-hidden="true" class="text-slate-500 dark:text-slate-400">—</span>
+      <span><AppLink href={toHref(item.path)}>{item.name}</AppLink> — {item.what}</span>
     </li>
   {/each}
 </ul>

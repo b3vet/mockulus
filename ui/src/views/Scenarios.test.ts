@@ -6,9 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Scenarios from './Scenarios.svelte';
 import TestHost from '../lib/TestHost.svelte';
 import { createApi } from '../lib/api.svelte';
-import { panelClient, scenario } from '../lib/ops-testing';
 import { createRouter } from '../lib/router.svelte';
-import { adminError, stubMapping } from '../lib/testing';
+import { adminError, fakeClient, scenario, stubMapping } from '../lib/testing';
 
 interface Parts {
   scenarios?: Partial<MockulusClient['scenarios']>;
@@ -17,7 +16,7 @@ interface Parts {
 
 function mount(parts: Parts) {
   window.history.pushState({}, '', '/scenarios');
-  const client = panelClient({
+  const client = fakeClient({
     scenarios: { list: () => Promise.resolve({ scenarios: [] }), ...parts.scenarios },
     mappings: { paginate: () => paginate([]), ...parts.mappings },
   });

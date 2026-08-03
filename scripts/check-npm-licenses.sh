@@ -90,10 +90,24 @@ ALLOWED=(
 # allowlist above and is the term the rest of this tree's dependencies are used
 # under. CC0-1.0 would also have been acceptable; the point is that somebody
 # chose, and wrote it down.
+#
+# axe-core and its Playwright binding are the accessibility pass in the nightly
+# browser suite (ui/e2e). MPL-2.0 again, and again file-level copyleft over
+# MPL-licensed *files*: nothing here is linked, bundled or transformed into
+# anything we ship. The reach argument is stronger than lightningcss', not
+# weaker — axe-core is evaluated inside a page under test, by a browser the
+# nightly lane downloads and throws away, against a bundle that was already
+# built before Playwright started. `ui/vite.config.ts` builds from `src/` alone,
+# so there is no path by which a line of it enters internal/adminui/dist or the
+# Go binary. The exception is scoped by name for the same reason the
+# lightningcss one is: an MPL-2.0 package that did end up in the shipped bundle
+# should still fail this gate.
 EXCEPTIONS=(
   "lightningcss*|MPL-2.0"
   "argparse|Python-2.0"
   "type-fest|(MIT OR CC0-1.0)"
+  "axe-core|MPL-2.0"
+  "@axe-core/playwright|MPL-2.0"
 )
 
 if ! command -v pnpm >/dev/null 2>&1; then

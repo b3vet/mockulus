@@ -188,9 +188,28 @@ func looksLikeAsset(name string) bool {
 // no `unsafe-inline` for scripts means an injected `<script>` does not run even
 // if something upstream forgets to escape it.
 //
-// Styles keep 'unsafe-inline' because the bundler emits inline style attributes
-// and a nonce would have to be minted per response — a template render on a
-// static asset path, for a class of injection that cannot execute code.
+// Styles keep 'unsafe-inline', and this was re-examined rather than inherited.
+//
+// The tightening that looked available was `style-src-elem 'self'`, which would
+// have refused an injected `<style>` element while leaving the style attributes
+// the interface uses. That is worth wanting: a stylesheet cannot execute script,
+// but it can read a document through attribute selectors and exfiltrate what it
+// reads through background-image URLs, which is a real technique against a page
+// rendering somebody else's request bodies.
+//
+// It does not hold. Driven in a real browser with violation reporting on, the
+// editor page reports `Applying inline style violates … 'style-src-elem 'self”`
+// — CodeMirror injects a stylesheet element to theme itself. Blocking it leaves
+// an editor that renders and is unstyled, which is worse than the exposure it
+// closes. A hash would pin one version of a third-party stylesheet and break on
+// upgrade; a nonce needs a per-response render on a path that is otherwise a
+// static file.
+//
+// So the directive stays wide, and the reason is now measured rather than
+// assumed. What actually protects this page is the layer above: `script-src`
+// admits no inline script, Svelte escapes every field, and nothing in the
+// interface uses `{@html}` — checked, and the exposure a permissive `style-src`
+// leaves needs an injection point that none of those three allow.
 func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; "+

@@ -22,6 +22,12 @@ three in the morning.
 
 ## Reference
 
+- **[The admin UI](admin-ui.md)** — the web interface compiled into the binary.
+  Open the admin port in a browser; it is at `/__admin/mockulus/ui/` and the
+  root redirects there. Browse and edit stubs with the server's refusals landing
+  on the field they name, read the request journal, and ask why a request did
+  not match — the last of which works with the journal off.
+
 | | |
 |---|---|
 | **[Compatibility matrix](compatibility.md)** | Every catalogued behavior: supported or not, and which test proves it. Generated from the behavior catalog and the corpus, so it cannot claim what the gate does not enforce. |

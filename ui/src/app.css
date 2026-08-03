@@ -25,7 +25,11 @@ html {
   --mockulus-editor-bg: #ffffff;
   --mockulus-editor-fg: #0f172a;
   --mockulus-editor-gutter-bg: #f8fafc;
-  --mockulus-editor-gutter-fg: #94a3b8;
+  /* Line numbers are read to act on — a problem list says which line, and the
+     gutter is where that is looked up — so they are held to the same 4.5:1 as
+     body text rather than treated as chrome. slate-400 against this gutter was
+     2.45:1. */
+  --mockulus-editor-gutter-fg: #64748b;
   --mockulus-editor-active: rgb(2 132 199 / 6%);
   --mockulus-editor-selection: #bae6fd;
   --mockulus-editor-focus: #0284c7;
@@ -45,7 +49,10 @@ html {
     --mockulus-editor-bg: #0f172a;
     --mockulus-editor-fg: #e2e8f0;
     --mockulus-editor-gutter-bg: #1e293b;
-    --mockulus-editor-gutter-fg: #64748b;
+    /* The light scheme's gutter colour, which is 3.07:1 against this darker
+       gutter. The two schemes swap: what is legible on a near-white gutter is
+       not on a slate one, and the reverse. */
+    --mockulus-editor-gutter-fg: #94a3b8;
     --mockulus-editor-active: rgb(56 189 248 / 8%);
     --mockulus-editor-selection: rgb(56 189 248 / 30%);
     --mockulus-editor-focus: #38bdf8;

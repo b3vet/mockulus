@@ -257,7 +257,7 @@
         <button
           type="submit"
           disabled={busy}
-          class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {save.pending ? 'Saving…' : 'Save settings'}
         </button>

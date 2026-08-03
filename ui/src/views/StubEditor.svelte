@@ -312,7 +312,7 @@
         <button
           type="submit"
           disabled={save.pending}
-          class="rounded-md bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-md bg-sky-700 px-4 py-2 text-sm font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {save.pending ? 'Saving…' : saveLabels[mode]}
         </button>

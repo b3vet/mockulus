@@ -7,10 +7,9 @@ import Journal from './Journal.svelte';
 import TestHost from '../lib/TestHost.svelte';
 import { createApi, type Api } from '../lib/api.svelte';
 import { AUTO_REFRESH_INTERVAL_MS } from '../lib/journal-entries';
-import { journalClient, loggedRequest, serveEvent } from '../lib/journal-testing';
 import { takeDraft } from '../lib/near-miss-handoff';
 import { createRouter } from '../lib/router.svelte';
-import { adminError } from '../lib/testing';
+import { adminError, fakeClient, loggedRequest, serveEvent } from '../lib/testing';
 
 /** The envelope `GET /__admin/requests` answers with, over these entries. */
 function serveEventList(events: readonly ServeEvent[], total = events.length): ServeEventList {
@@ -22,7 +21,7 @@ function mount(list: MockulusClient['requests']['list']): {
   unmount: () => void;
 } {
   window.history.pushState({}, '', '/journal');
-  const client = journalClient({ requests: { list } });
+  const client = fakeClient({ requests: { list } });
   const api = createApi({ baseUrl: 'http://mock.example', createClient: () => client });
   const router = createRouter([{ path: '/journal' }, { path: '/near-misses' }]);
   const { unmount } = render(TestHost, { api, router, view: Journal });

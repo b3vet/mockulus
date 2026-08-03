@@ -8,6 +8,7 @@
   } from '@mockulus/admin-sdk';
   import AppLink from '../lib/components/AppLink.svelte';
   import ErrorState from '../lib/components/ErrorState.svelte';
+  import TabList from '../lib/components/TabList.svelte';
   import { getApi } from '../lib/api.svelte';
   import {
     AUTO_REFRESH_INTERVAL_MS,
@@ -25,7 +26,6 @@
     sinceFrom,
     type JournalTab,
   } from '../lib/journal-entries';
-  import { tablistTargetIndex } from '../lib/journal-tablist';
   import { offerDraft } from '../lib/near-miss-handoff';
   import { draftFromLoggedRequest } from '../lib/near-miss-model';
   import { createResource } from '../lib/resource.svelte';
@@ -122,28 +122,11 @@
   }
 
   /**
-   * Arrow keys move within the tab list, which is part of what makes these tabs
-   * rather than three buttons wearing the word. Activation follows focus: the
-   * tabs filter a list already in the browser, so there is no cost to moving
-   * that would justify making the reader press Enter as well.
+   * The three outcomes all describe the same panel, so every tab controls the
+   * one list below rather than a panel of its own — which is why this is a
+   * constant where the near-miss debugger's is a function of the tab.
    */
-  function onTabKeydown(event: KeyboardEvent, index: number) {
-    const target = tablistTargetIndex(event.key, index, JOURNAL_TABS.length);
-    if (target === undefined) {
-      return;
-    }
-    const definition = JOURNAL_TABS[target];
-    if (definition === undefined) {
-      return;
-    }
-    event.preventDefault();
-    selectTab(definition.id);
-    const tabs = event.currentTarget as HTMLElement;
-    const sibling = tabs.parentElement?.children[target];
-    if (sibling instanceof HTMLElement) {
-      sibling.focus();
-    }
-  }
+  const ENTRIES_PANEL_ID = 'journal-entries';
 
   function toggle(id: string) {
     expandedId = expandedId === id ? undefined : id;
@@ -356,31 +339,23 @@
   {:else if resource.loading && resource.data === undefined}
     <p class="mt-4 text-sm text-slate-600 dark:text-slate-400">Reading the journal…</p>
   {:else}
-    <div role="tablist" aria-label="Journal entries by outcome" class="mt-4 flex gap-1">
-      {#each JOURNAL_TABS as definition, index (definition.id)}
-        {@const selected = tab === definition.id}
-        <button
-          type="button"
-          role="tab"
-          id={`journal-tab-${definition.id}`}
-          aria-selected={selected}
-          aria-controls="journal-entries"
-          tabindex={selected ? 0 : -1}
-          onclick={() => selectTab(definition.id)}
-          onkeydown={(event) => onTabKeydown(event, index)}
-          class="rounded-t-md border-b-2 px-3 py-2 text-sm font-medium {selected
-            ? 'border-sky-600 text-sky-700 dark:text-sky-400'
-            : 'border-transparent text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'}"
-        >
-          {definition.label}
-          <span class="ml-1 text-xs text-slate-500 dark:text-slate-400">
-            {counts[definition.id]}
-          </span>
-        </button>
-      {/each}
-    </div>
+    <TabList
+      label="Journal entries by outcome"
+      tabs={JOURNAL_TABS}
+      selected={tab}
+      onselect={selectTab}
+      tabId={(id) => `journal-tab-${id}`}
+      panelId={() => ENTRIES_PANEL_ID}
+      class="mt-4"
+    >
+      {#snippet trailing(definition)}
+        <span class="ml-1 text-xs text-slate-600 dark:text-slate-400">
+          {counts[definition.id]}
+        </span>
+      {/snippet}
+    </TabList>
 
-    <div id="journal-entries" role="tabpanel" aria-labelledby={`journal-tab-${tab}`} tabindex="-1">
+    <div id={ENTRIES_PANEL_ID} role="tabpanel" aria-labelledby={`journal-tab-${tab}`} tabindex="-1">
       {#if visible.length === 0}
         <div
           class="mt-4 rounded-lg border border-slate-300 bg-white px-5 py-8 text-center dark:border-slate-700 dark:bg-slate-900"
