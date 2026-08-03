@@ -65,6 +65,29 @@ supported feature is a minor.
   nanosecond; `actualFormat` replaces ISO parsing rather than extending it; and
   `unix` means epoch seconds while `epoch` means milliseconds.
 
+- **Scenarios and ops** complete the UI's feature areas. A card per scenario with
+  its state and one-click transitions; an overview, a files manager, a settings
+  editor and a danger zone.
+
+  The danger zone is guarded by typed confirmation rather than an OK button, and
+  each action states both what it destroys **and what it leaves alone** — "the
+  journal, and not your stubs" is what lets someone tell the three apart. The
+  phrases differ per action, so typing one does not train the fingers for the
+  next, and both lists appear inside the dialog as well as on the page, because
+  someone inside a modal cannot read the page it covers. The panel opens by
+  pointing at namespacing and `remove-by-metadata`, which is what SPEC §1 asks
+  of anyone sharing a deployment.
+
+  The store-unavailable answer (code `1020`) matters more here than anywhere
+  else, and says what still works: admin writes fail during a store outage while
+  reads keep serving from the snapshot, which is the degraded mode behaving as
+  designed rather than an outage of the whole server.
+
+  One thing is named rather than shown: the **quarantined-stub count is not on
+  the admin API**, only on the metrics endpoint, which is outside `/__admin` and
+  so outside the SDK the UI is required to go through. The overview says where
+  the number lives instead of inventing one.
+
 - **The request journal and the near-miss debugger** are in the UI. The log with
   matched and unmatched tabs, `since`/`limit` windowing, an auto-refresh toggle,
   and an entry detail that links to the stub that served it.
