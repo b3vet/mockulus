@@ -209,6 +209,14 @@ license-report: ## Regenerate THIRD_PARTY_LICENSES from the module graph
 # admin UI is built from — including the ones whose code vite inlines into the
 # bundle the binary embeds — would otherwise pass through the license gate
 # unexamined. The allowlist and its exceptions are argued in the script.
+# The §15.1 size budget, checked rather than asserted. It went unmeasured until
+# the admin UI arrived, which is the one addition with an obvious path to growing
+# unnoticed: a bundle grows by dependency rather than by anyone writing more of
+# it. What the script measures, and why that particular number, is argued there.
+.PHONY: image-size
+image-size: ## Check the built image against the SPEC §15.1 size budget
+	@./scripts/check-image-size.sh $(IMAGE):$(VERSION)
+
 .PHONY: npm-license-check
 npm-license-check: ## Verify every npm package in the workspace is permissively licensed
 	@./scripts/check-npm-licenses.sh

@@ -307,6 +307,14 @@ jobs:
       - name: build the shippable image
         run: docker build --build-arg VERSION=pr-${{ github.sha }} -t mockulus:pr .
 
+      - name: the image is inside its size budget
+        # SPEC §15.1 sets < 40 MB, and nothing measured it until the admin UI
+        # arrived — the one addition that can grow without anyone writing more
+        # of it, because a bundle grows by dependency. The script measures the
+        # flattened filesystem rather than a layer sum, since that is the only
+        # number that does not change with which daemon built the image.
+        run: ./scripts/check-image-size.sh mockulus:pr
+
       - name: boot, serve, admin
         # The ~20-case shippable-image smoke of SPEC §19.5: prove the artifact
         # that would actually ship starts and serves.
