@@ -250,8 +250,13 @@
       </button>
     </div>
     <p id="stub-metadata-help" class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-      Searched by the server. A path the server cannot compile is refused, and the refusal is shown
-      below.
+      A JSONPath over each stub's <code class="font-mono">metadata</code> object.
+      <code class="font-mono">$.team</code> finds the stubs that <em>have</em> a
+      <code class="font-mono">team</code> key;
+      <code class="font-mono">$[?(@.team == 'checkout')]</code> finds the ones whose team is
+      <code class="font-mono">checkout</code>. Searched by the server, so this one narrows the
+      result rather than filtering what was already loaded — a path the server cannot compile is
+      refused, and the refusal is shown below.
     </p>
   </div>
 </form>
