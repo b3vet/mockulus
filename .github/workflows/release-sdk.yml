@@ -1,6 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
-# Publishes @mockulus/admin-sdk to npm.
+# Publishes @mockulus/admin-sdk to npm using trusted publishing (OIDC).
+#
+# There is no publish token here and there should never be one again. npm is
+# retiring token-based automation: from early August 2026 a 2FA-bypass token can
+# no longer perform sensitive account, package or organization actions, and from
+# January 2027 it loses the ability to publish directly at all — it will only be
+# able to stage a publish for a human to approve. Trusted publishing is the
+# replacement npm names, and it is strictly better besides: the credential is a
+# short-lived token minted for this workflow, on this repository, for this run,
+# so there is nothing to leak, nothing to rotate, and nothing an attacker can
+# lift out of a log and reuse.
+#
+# The registry decides whether to trust a run by matching the OIDC claims
+# against what was configured on npmjs.com: the organization, the repository,
+# **this file's name**, and the environment below. Renaming this file breaks
+# publishing until the trusted publisher is updated to match — which is worth
+# knowing before somebody tidies it.
 #
 # Separate from release.yml, and triggered by its own tag prefix, because the
 # SDK versions independently of the server (SOW decision K6): it will iterate
@@ -80,14 +96,14 @@ jobs:
     name: publish
     needs: gate
     runs-on: ubuntu-latest
-    # The protected environment is where the approval and the credential live,
-    # matching the server's release job. Nothing before this point can publish.
+    # Named here and again in the trusted publisher on npmjs.com: the registry
+    # checks the environment claim, so a run outside this environment cannot
+    # publish even from this repository and this workflow.
     environment: release
     permissions:
       contents: read
-      # OIDC, which is what `--provenance` signs with. It ties the published
-      # tarball to this workflow, this repository and this commit, so a consumer
-      # can verify where it came from rather than trusting the registry entry.
+      # The whole credential. Without it there is no OIDC token to exchange and
+      # the publish is refused; with it, npm mints one scoped to this run.
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -96,8 +112,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          # No dependency cache in a release build. A cache is a place for
+          # something to be substituted between the gate that checked the tree
+          # and the job that ships it, and this job runs once per release —
+          # there is nothing to save worth that.
           registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 and 23 both ship npm 10.x, and trusted publishing needs 11.5.1
+      # or later. Without this the publish fails at the registry with an
+      # authentication error rather than a version one, which sends you looking
+      # in the wrong place — so the version is asserted here, loudly, before
+      # anything is uploaded.
+      - name: npm new enough for trusted publishing
+        run: |
+          npm install -g npm@^11.5.1
+          have=$(npm --version)
+          node -e "
+            const [a,b,c] = process.argv[1].split('.').map(Number);
+            const ok = a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1)));
+            if (!ok) { console.error('npm ' + process.argv[1] + ' is below the 11.5.1 trusted-publishing floor'); process.exit(1); }
+            console.log('npm ' + process.argv[1] + ' supports trusted publishing');
+          " "$have"
 
       - run: pnpm install --frozen-lockfile
 
@@ -106,11 +141,10 @@ jobs:
       # step, so there is no window where an artifact could be substituted.
       - run: pnpm run sdk:build
 
-      - name: publish to npm with provenance
+      - name: publish
         working-directory: sdk/typescript
-        # `publishConfig` in package.json already sets access:public and
-        # provenance:true, so the flags are not repeated here — one spelling of
-        # the intent, in the file a reader would look in.
+        # No NODE_AUTH_TOKEN, and no --provenance. The first would be the thing
+        # this flow exists to remove; the second is implied — a trusted publish
+        # attaches a provenance attestation on its own, and passing the flag
+        # says nothing extra.
         run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
