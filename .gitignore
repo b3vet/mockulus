@@ -87,3 +87,8 @@ node_modules/
 
 # The contract lint compiles to the repo root when built rather than run.
 /contractlint
+
+# Copied in at pack time by the SDK's prepack script and removed after, so a
+# publish carries the licence text without the tree carrying a second copy.
+/sdk/typescript/LICENSE
+/sdk/typescript/NOTICE

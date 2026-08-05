@@ -44,7 +44,9 @@
     "check": "tsc --noEmit -p tsconfig.json && eslint . && prettier --check .",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
-    "clean": "rm -rf dist tsconfig.build.tsbuildinfo"
+    "clean": "rm -rf dist tsconfig.build.tsbuildinfo",
+    "prepack": "cp ../../LICENSE ../../NOTICE .",
+    "postpack": "rm -f LICENSE NOTICE"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -59,7 +61,6 @@
     "openapi-typescript": "^7.13.0"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   }
 }
