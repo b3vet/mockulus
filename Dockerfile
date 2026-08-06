@@ -8,7 +8,18 @@
 # Node lives here and only here. Building the UI inside the image is what keeps
 # `docker build .` self-contained for a clean checkout on a host with no Node,
 # which is the shape the release pipeline builds in.
-FROM node:22-alpine AS ui
+# --platform=$BUILDPLATFORM pins this stage to the machine doing the building
+# rather than the machine being built for, and it is the difference between a
+# release that takes minutes and one that does not finish.
+#
+# What this stage emits is a static bundle: HTML, CSS and JavaScript, identical
+# whatever the target architecture. Without the pin, buildx runs the whole stage
+# once per platform in `platforms:`, and the arm64 copy runs under QEMU — where
+# `pnpm install` is not slow but effectively stalled, because emulating a Node
+# process doing tens of thousands of small file operations is close to the worst
+# case QEMU has. A v1.1.0 release sat on that step for four hours and produced
+# nothing.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui
 
 # The same directory the Go stage uses, so the tree inside the image matches the
 # tree in the repository. vite resolves its output directory relative to
@@ -47,7 +58,15 @@ RUN pnpm run build
 
 # Build stage. CGO is off so the result is a static binary that runs on the
 # distroless static base with no libc at all (SPEC §15.1).
-FROM golang:1.25-bookworm AS build
+# Pinned to the build platform for the same reason, and for a better one: Go
+# cross-compiles. Setting GOARCH produces a native arm64 binary on an amd64
+# machine in about the time it takes to produce an amd64 one, so emulating the
+# compiler buys nothing at all. This was costing most of an hour before the UI
+# existed — v1.0.0 took 1h44m to release, and this is most of where it went.
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS build
+
+# Supplied by buildx, one value per entry in `platforms:`.
+ARG TARGETARCH
 
 ARG VERSION=dev
 # COVER=1 produces the coverage-instrumented variant the E2E gate runs against.
@@ -71,7 +90,7 @@ COPY --from=ui /src/internal/adminui/dist ./internal/adminui/dist
 
 RUN set -eux; \
     if [ -n "$COVER" ]; then COVERFLAG="-cover -covermode=atomic"; else COVERFLAG=""; fi; \
-    CGO_ENABLED=0 go build $COVERFLAG \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build $COVERFLAG \
         -trimpath \
         -ldflags "-s -w -X main.version=${VERSION}" \
         -o /out/mockulus ./cmd/mockulus
