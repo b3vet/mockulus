@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-actual-iso-forms-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# Which spellings of the ACTUAL value parse, with no `actualFormat` in play.
+#
+# The method is a bracket, because "it parsed" is not directly observable: each
+# value is sent at two stubs at once, one demanding it be `before` a threshold far
+# in the future and one demanding it be `after` a threshold far in the past. A
+# value that parsed satisfies both. A value that did not satisfies neither, since
+# an unparseable actual is a plain non-match rather than an error. So a 200 pair
+# means parsed-and-compared and a 404 pair means not parsed, and no single answer
+# has to be trusted on its own.
+#
+# The `not-a-date` step at the end is the falsifier that keeps the bracket
+# honest: without it, a matcher that accepted everything would produce the same
+# eight 200s above it.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000a-0001-4000-8000-000000000001",
+         "name": "before a threshold far in the future",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-iso-forms-001/upper",
+                     "headers": {"X-When": {"before": "2030-01-01T00:00:00Z"}}},
+         "response": {"status": 200, "body": "upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2030-01-01T00:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000a-0001-4000-8000-000000000002",
+         "name": "after a threshold far in the past",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-iso-forms-001/lower",
+                     "headers": {"X-When": {"after": "2000-01-01T00:00:00Z"}}},
+         "response": {"status": 200, "body": "lower",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # ISO with a Z.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/upper
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "upper"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/lower
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "lower"}
+
+  # ISO with a colon-bearing offset.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/upper
+      headers: {X-When: "2021-06-14T12:13:14+03:00"}
+    expect: {status: 200, body: "upper"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/lower
+      headers: {X-When: "2021-06-14T12:13:14+03:00"}
+    expect: {status: 200, body: "lower"}
+
+  # ISO with no zone at all.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/upper
+      headers: {X-When: "2021-06-14T12:13:14"}
+    expect: {status: 200, body: "upper"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/lower
+      headers: {X-When: "2021-06-14T12:13:14"}
+    expect: {status: 200, body: "lower"}
+
+  # A bare date.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/upper
+      headers: {X-When: "2021-06-14"}
+    expect: {status: 200, body: "upper"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/lower
+      headers: {X-When: "2021-06-14"}
+    expect: {status: 200, body: "lower"}
+
+  # Fractional seconds all the way to the nanosecond.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/upper
+      headers: {X-When: "2021-06-14T12:13:14.123456789Z"}
+    expect: {status: 200, body: "upper"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/lower
+      headers: {X-When: "2021-06-14T12:13:14.123456789Z"}
+    expect: {status: 200, body: "lower"}
+
+  # The falsifier. Neither stub serves it, so the eight 200s above are a
+  # statement about parsing rather than about a pair of matchers that hold for
+  # anything.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/upper
+      headers: {X-When: "not-a-date"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/lower
+      headers: {X-When: "not-a-date"}
+    expect: {status: 404}
+
+  # And the second falsifier, in the direction the bracket cannot see: a value
+  # that parses but falls outside the window is refused by the stub whose bound
+  # it breaks. Each threshold is therefore load-bearing.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/upper
+      headers: {X-When: "2031-06-14T12:13:14Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-iso-forms-001/lower
+      headers: {X-When: "1999-06-14T12:13:14Z"}
+    expect: {status: 404}

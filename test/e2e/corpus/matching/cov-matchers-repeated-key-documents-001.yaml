@@ -2,7 +2,7 @@
 id: cov-matchers-repeated-key-documents-001
 behaviors:
   - B-REQ-QUERYPARAMETERS
-  - B-MATCH-MATCHESJSONPATH
+  - B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH
 wm: verified
 # The non-matching steps land on a 404 body that differs by design
 # (deviation #2/#18). Status and the matched bodies are still diffed.

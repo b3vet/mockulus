@@ -1,0 +1,174 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-actualformat-epoch-units-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `unix` and `epoch` are two keywords for a numeric actual, and they are **not**
+# synonyms: `unix` reads epoch SECONDS and `epoch` reads epoch MILLISECONDS.
+# Treating them as aliases is wrong by a factor of a thousand, and it is wrong
+# invisibly — a stub written with the wrong one still registers, and the number
+# it then compares against lands in 1970 or in the year 53000, neither of which
+# looks like a units bug from the outside.
+#
+# So each keyword is pinned against the value that satisfies it *and* against
+# the value that satisfies the other one. The cross-checks are the case: a
+# single implementation that read both as seconds passes two of these four steps
+# and fails two, and one that read both as millis fails the other two.
+#
+# 1623672794 and 1623672794000 are the same instant — 2021-06-14T12:13:14Z — in
+# the two units, which is what makes the cross-checks a units claim rather than
+# a claim about two unrelated numbers.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000005-0000-4000-8000-000000000001",
+         "name": "unix is seconds",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-epoch-units-001/unix",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "actualFormat": "unix"}}},
+         "response": {"status": 200, "body": "unix",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000005-0000-4000-8000-000000000002",
+         "name": "epoch is milliseconds",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-epoch-units-001/epoch",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "actualFormat": "epoch"}}},
+         "response": {"status": 200, "body": "epoch",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/unix
+      headers: {X-When: "1623672794"}
+    expect: {status: 200, body: "unix"}
+
+  # The cross-check: the millisecond spelling of the same instant is a different
+  # instant to a seconds reader, and must be refused.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/unix
+      headers: {X-When: "1623672794000"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/epoch
+      headers: {X-When: "1623672794000"}
+    expect: {status: 200, body: "epoch"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/epoch
+      headers: {X-When: "1623672794"}
+    expect: {status: 404}
+
+  # The keyword is case-insensitive — it is a keyword, not a pattern, so it is
+  # not read letter by letter as `dd/MM/yyyy` would be.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000005-0000-4000-8000-000000000003",
+         "name": "the keyword is case-insensitive",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-epoch-units-001/upper",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "actualFormat": "UNIX"}}},
+         "response": {"status": 200, "body": "upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/upper
+      headers: {X-When: "1623672794"}
+    expect: {status: 200, body: "upper"}
+
+  # The keyword is also required: without it a bare epoch number is not a
+  # date-time this matcher can read, so the number that just matched is refused
+  # by the same criterion with no `actualFormat`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000005-0000-4000-8000-000000000004",
+         "name": "no keyword, so no numeric parsing",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-epoch-units-001/none",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z"}}},
+         "response": {"status": 200, "body": "none",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/none
+      headers: {X-When: "1623672794"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/none
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "none"}
+
+  # A numeric actual parses to a *zoned* instant, which is the one form
+  # `truncateActual` is not skipped on — so the two modifiers compose here even
+  # though `truncateActual` beside a pattern `actualFormat` is inert and refused
+  # (deviation #50). The pair below is the falsifier for each other: same stub
+  # shape, same request, different expected instant.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000005-0000-4000-8000-000000000005",
+         "name": "truncation applies to a unix actual",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-epoch-units-001/truncated",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-01T00:00:00Z",
+                                            "truncateActual": "first day of month",
+                                            "actualFormat": "unix"}}},
+         "response": {"status": 200, "body": "truncated",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000005-0000-4000-8000-000000000006",
+         "name": "the untruncated instant is no longer the answer",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actualformat-epoch-units-001/untruncated",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "truncateActual": "first day of month",
+                                            "actualFormat": "unix"}}},
+         "response": {"status": 200, "body": "untruncated",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/truncated
+      headers: {X-When: "1623672794"}
+    expect: {status: 200, body: "truncated"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actualformat-epoch-units-001/untruncated
+      headers: {X-When: "1623672794"}
+    expect: {status: 404}

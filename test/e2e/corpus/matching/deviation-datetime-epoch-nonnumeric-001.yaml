@@ -1,0 +1,114 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-datetime-epoch-nonnumeric-001
+behaviors: [B-DEV-DEVIATION-52, B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT]
+# Mockulus-specific by construction: WireMock answers HTTP 500 and a Jetty error
+# page to every request below, so there is no compatible answer to diff.
+# Reproducing a crash is not a compatibility goal.
+wm: n/a
+#
+# Deviation #52. A non-numeric actual under `actualFormat: unix` or `epoch` is a
+# **non-match**, not a server error. WireMock parses the value with an unguarded
+# `Long.parseLong`, so anything that is not an integer escapes as a
+# NumberFormatException and reaches the client as a 500 — from a header, a query
+# parameter or a cookie alike.
+#
+# Two reasons that is not reproduced. A request that is not what a criterion
+# asked for is a fact about the request, and every other matcher in the system
+# answers it the same way (§6.7): an unparseable value is a non-match. And mock
+# traffic is untrusted input, which must not be able to make the server fail
+# (§17) — a stub with a `unix` criterion anywhere would otherwise be a 500 that
+# any client could trigger by sending a word.
+#
+# The stub still works, which is the other half of the claim: the numeric value
+# matches. A "non-match on everything" implementation would pass the failure
+# steps and fail that one.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000105-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-epoch-nonnumeric-001/unix",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "actualFormat": "unix"}}},
+         "response": {"status": 200, "body": "unix",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The criterion works.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-epoch-nonnumeric-001/unix
+      headers: {X-When: "1623672794"}
+    expect: {status: 200, body: "unix"}
+
+  # A word. WireMock: 500.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-epoch-nonnumeric-001/unix
+      headers: {X-When: "notanumber"}
+    expect: {status: 404}
+
+  # A decimal, which is the shape a client sending fractional epoch seconds
+  # produces without meaning to. WireMock: 500.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-epoch-nonnumeric-001/unix
+      headers: {X-When: "1623672794.5"}
+    expect: {status: 404}
+
+  # An ISO timestamp, which is what a client sends when it has not read the
+  # stub. The keyword replaces ISO parsing, so this is unreadable here too.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-epoch-nonnumeric-001/unix
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  # An absent value is a non-match as well, and by the same rule — absence is
+  # not special-cased into an error either.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-epoch-nonnumeric-001/unix
+    expect: {status: 404}
+
+  # The same claim for `epoch`, and from a query parameter rather than a header:
+  # WireMock's crash reaches every position, so the answer has to hold in every
+  # position too.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000105-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-epoch-nonnumeric-001/query",
+                     "queryParameters": {"when": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                                  "actualFormat": "epoch"}}},
+         "response": {"status": 200, "body": "query",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: "/e2e/deviation-datetime-epoch-nonnumeric-001/query?when=1623672794000"
+    expect: {status: 200, body: "query"}
+
+  - request:
+      method: GET
+      path: "/e2e/deviation-datetime-epoch-nonnumeric-001/query?when=notanumber"
+    expect: {status: 404}
+
+  # An empty value, which is the one WireMock crashes on most easily because a
+  # query parameter written with no value is a normal thing for a client to do.
+  - request:
+      method: GET
+      path: "/e2e/deviation-datetime-epoch-nonnumeric-001/query?when="
+    expect: {status: 404}
+
+  # The server is still serving afterwards, which is what separates "answered a
+  # non-match" from "survived by luck".
+  - request:
+      method: GET
+      path: "/e2e/deviation-datetime-epoch-nonnumeric-001/query?when=1623672794000"
+    expect: {status: 200, body: "query"}

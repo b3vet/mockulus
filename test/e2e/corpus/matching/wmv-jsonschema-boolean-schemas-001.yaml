@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-boolean-schemas-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# while mockulus echoes what was registered (deviation #41). Every served
+# response is still diffed in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# JSON Schema says a schema is an object *or a boolean*: `true` is the schema
+# every document satisfies and `false` is the schema no document satisfies. They
+# are not decoration — they are what `additionalProperties` and the boolean
+# branches of a generated schema reduce to, so a matcher that only understood
+# objects would reject perfectly ordinary machine-written schemas at
+# registration.
+#
+# Both spellings of each are pinned: the JSON literal and the same literal inside
+# a string operand, since the string form is what a schema read from a file
+# arrives as.
+#
+# Only object, array and JSON-string documents are probed here. Number, boolean,
+# null and unparseable bodies are where the two servers genuinely differ —
+# WireMock gives itself a second reading of the raw request text and so matches
+# more (§5.5) — and that divergence has its own deviation case rather than
+# being smuggled into this one.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0003-0001-4000-8000-000000000001",
+         "name": "the always-true schema",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-boolean-schemas-001/anything",
+                     "bodyPatterns": [{"matchesJsonSchema": true}]},
+         "response": {"status": 200, "body": "anything",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0003-0001-4000-8000-000000000002",
+         "name": "the always-false schema",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-boolean-schemas-001/nothing",
+                     "bodyPatterns": [{"matchesJsonSchema": false}]},
+         "response": {"status": 200, "body": "nothing",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0003-0001-4000-8000-000000000003",
+         "name": "the always-true schema, as a string operand",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-boolean-schemas-001/anything-string",
+                     "bodyPatterns": [{"matchesJsonSchema": "true"}]},
+         "response": {"status": 200, "body": "anything-string",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0003-0001-4000-8000-000000000004",
+         "name": "the always-false schema, as a string operand",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-boolean-schemas-001/nothing-string",
+                     "bodyPatterns": [{"matchesJsonSchema": "false"}]},
+         "response": {"status": 200, "body": "nothing-string",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # `true` takes every JSON document, whatever its shape.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/anything
+      headers: {Content-Type: "application/json"}
+      body: '{"anything": "at all"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "anything"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/anything
+      headers: {Content-Type: "application/json"}
+      body: '[1, 2, 3]'
+    expect: {status: 200, body: "anything"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/anything
+      headers: {Content-Type: "application/json"}
+      body: '"a bare JSON string"'
+    expect: {status: 200, body: "anything"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/anything
+      headers: {Content-Type: "application/json"}
+      body: '{}'
+    expect: {status: 200, body: "anything"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/anything-string
+      headers: {Content-Type: "application/json"}
+      body: '{"anything": "at all"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "anything-string"}
+
+  # `false` takes none of them — including the documents `true` above accepted,
+  # which is what makes this a claim about the schema rather than about the
+  # requests.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/nothing
+      headers: {Content-Type: "application/json"}
+      body: '{"anything": "at all"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/nothing
+      headers: {Content-Type: "application/json"}
+      body: '[1, 2, 3]'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/nothing
+      headers: {Content-Type: "application/json"}
+      body: '{}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-boolean-schemas-001/nothing-string
+      headers: {Content-Type: "application/json"}
+      body: '{"anything": "at all"}'
+    expect: {status: 404}

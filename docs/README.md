@@ -22,12 +22,23 @@ three in the morning.
 
 ## Reference
 
+- **[Programmatic administration](programmatic-administration.md)** — managing
+  mocks from code: the OpenAPI contract at `api/openapi.yaml`, and the
+  TypeScript SDK generated from it, with the two server properties its test
+  helpers encode so a suite need not rediscover them.
+
+- **[The admin UI](admin-ui.md)** — the web interface compiled into the binary.
+  Open the admin port in a browser; it is at `/__admin/mockulus/ui/` and the
+  root redirects there. Browse and edit stubs with the server's refusals landing
+  on the field they name, read the request journal, and ask why a request did
+  not match — the last of which works with the journal off.
+
 | | |
 |---|---|
 | **[Compatibility matrix](compatibility.md)** | Every catalogued behavior: supported or not, and which test proves it. Generated from the behavior catalog and the corpus, so it cannot claim what the gate does not enforce. |
 | **[Deviations](deviations.md)** | The places mockulus deliberately answers differently, grouped by what you would be doing when you hit one. |
 | **[Configuration](configuration.md)** | Every key, where it can come from, and which ones you actually touch. |
-| **[Operations](operations.md)** | Deployment shapes, Couchbase, probes, graceful drain, degraded modes, and the metrics worth alerting on. |
+| **[Operations](operations.md)** | Deployment shapes, Couchbase, probes, graceful drain, degraded modes, tracing, and the metrics worth alerting on. |
 
 ## Deeper
 

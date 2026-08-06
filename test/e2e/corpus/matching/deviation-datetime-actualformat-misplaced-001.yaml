@@ -1,0 +1,153 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-datetime-actualformat-misplaced-001
+behaviors: [B-DEV-DEVIATION-53, B-ERR-10]
+# Mockulus-specific by construction: WireMock answers 201 to every document
+# below and then ignores the modifier, so there is no compatible answer to
+# diff. The placement that works — the modifier repeated inside each leaf — is
+# parity and is asserted at the end of this case.
+wm: n/a
+#
+# Deviation #53. `actualFormat` and the truncation parameters are refused
+# wherever there is no date-time matcher for them to modify.
+#
+# WireMock accepts them everywhere. Beside `equalTo` or `contains` a date
+# pattern means nothing and is dropped. As a sibling of `and`/`or`/`not` it is
+# dropped too, because the format never reaches the leaves that would use it —
+# and that one is the expensive mistake: writing it once beside the combinator
+# is the obvious thing to do, it registers, and the stub then matches ISO input
+# the author thought they had switched off.
+#
+# The last two steps are the fix, and they work on both servers: repeat the
+# modifier inside each leaf.
+steps:
+  # A date pattern on a string matcher.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000106-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-misplaced-001/equalto",
+                     "headers": {"X-When": {"equalTo": "x",
+                                            "actualFormat": "dd/MM/yyyy"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/actualFormat"}
+      body_regex: 'actualFormat'
+
+  # Nothing persisted — the stub that would have matched `x` does not exist.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-actualformat-misplaced-001/equalto
+      headers: {X-When: "x"}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d7000106-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # The combinator sibling. Both branches are date-time matchers, so the
+  # document reads as though the format applied to them — and on WireMock it
+  # silently does not.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000106-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-misplaced-001/and",
+                     "headers": {"X-When": {"and": [{"after": "2000-01-01T00:00:00Z"},
+                                                    {"before": "2030-01-01T00:00:00Z"}],
+                                            "actualFormat": "dd/MM/yyyy"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/actualFormat"}
+      # The detail says where the modifier does belong, because "not here" alone
+      # would leave the author to guess.
+      body_regex: 'leaf'
+
+  - admin: {method: GET, path: /__admin/mappings/d7000106-0000-4000-8000-000000000002}
+    expect: {status: 404}
+
+  # `not` has one operand rather than two, and the rule is about the position
+  # rather than the arity.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000106-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-misplaced-001/not",
+                     "headers": {"X-When": {"not": {"after": "2000-01-01T00:00:00Z"},
+                                            "truncateActual": "first day of month"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/truncateActual"}
+      body_regex: 'truncateActual'
+
+  # A truncation parameter on a string matcher, which closes the same hole for
+  # the other three names in the family.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000106-0000-4000-8000-000000000004",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-misplaced-001/contains",
+                     "headers": {"X-When": {"contains": "2021",
+                                            "truncateExpected": "first day of month",
+                                            "applyTruncationLast": true}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/applyTruncationLast"}
+          - code: 10
+            source: {pointer: "/request/headers/X-When/truncateExpected"}
+
+  # The placement that works, on both servers: the modifier inside each leaf.
+  # This is the whole cost of the refusal — one repetition — and the stub then
+  # does what the misplaced version only looked like it was doing.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000106-0000-4000-8000-000000000005",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-misplaced-001/leaves",
+                     "headers": {"X-When": {"and": [{"after": "2000-01-01T00:00:00",
+                                                     "actualFormat": "dd/MM/yyyy"},
+                                                    {"before": "2030-01-01T00:00:00",
+                                                     "actualFormat": "dd/MM/yyyy"}]}}},
+         "response": {"status": 200, "body": "leaves",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-actualformat-misplaced-001/leaves
+      headers: {X-When: "14/06/2021"}
+    expect: {status: 200, body: "leaves"}
+
+  # And the format really is in force inside the combinator: an ISO value, which
+  # is inside the range both branches name, is refused because the leaves no
+  # longer read ISO. On WireMock the sibling spelling answers 200 here — that
+  # difference is the deviation.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-actualformat-misplaced-001/leaves
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}

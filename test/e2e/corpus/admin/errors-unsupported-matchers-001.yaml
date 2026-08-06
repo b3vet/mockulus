@@ -2,66 +2,12 @@
 id: errors-unsupported-matchers-001
 behaviors:
   - B-ERR-1000
-  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTEDTO-ETC
-  - B-MATCH-MATCHESJSONSCHEMA
   - B-MATCH-EQUALTOXML-MATCHESXPATH
   - B-DEV-DEVIATION-14
 # WireMock implements all of these, so there is no compatible answer to diff:
 # the 422 is the deviation.
 wm: n/a
 steps:
-  # The three date-time matchers are refused individually, so the 422 says which
-  # of them a stub is waiting on. `truncateExpectedTo` rides along as a modifier
-  # and must not be reported as a matcher in its own right — one problem per
-  # deferred matcher, not one per key.
-  - admin:
-      method: POST
-      path: /__admin/mappings
-      body: |
-        {"id": "e770e770-0000-4000-8000-000000000030",
-         "request": {"method": "POST", "urlPath": "/e2e/errors-unsupported-matchers-001/dt",
-                     "bodyPatterns": [{"before": "2030-01-01T00:00:00Z"},
-                                      {"after": "2020-01-01T00:00:00Z"},
-                                      {"equalToDateTime": "2021-06-01T00:00:00Z",
-                                       "truncateExpectedTo": "first day of month"}]},
-         "response": {"status": 200}}
-    expect:
-      status: 422
-      body_json_subset:
-        errors:
-          - code: 1000
-            title: "Unsupported feature"
-            source: {pointer: "/request/bodyPatterns/0/before"}
-          - code: 1000
-            source: {pointer: "/request/bodyPatterns/1/after"}
-          - code: 1000
-            source: {pointer: "/request/bodyPatterns/2/equalToDateTime"}
-      body_regex: 'the equalToDateTime matcher is not supported in mockulus v1.*ROADMAP\.md'
-
-  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000030}
-    expect: {status: 404}
-
-  # matchesJsonSchema is deferred; a stub using it would otherwise register and
-  # then match bodies the schema was written to exclude.
-  - admin:
-      method: POST
-      path: /__admin/mappings
-      body: |
-        {"id": "e770e770-0000-4000-8000-000000000031",
-         "request": {"method": "POST", "urlPath": "/e2e/errors-unsupported-matchers-001/schema",
-                     "bodyPatterns": [{"matchesJsonSchema": "{\"type\":\"object\"}"}]},
-         "response": {"status": 200}}
-    expect:
-      status: 422
-      body_json_subset:
-        errors:
-          - code: 1000
-            source: {pointer: "/request/bodyPatterns/0/matchesJsonSchema"}
-      body_regex: 'matchesJsonSchema is not supported in mockulus v1.*ROADMAP\.md'
-
-  - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000031}
-    expect: {status: 404}
-
   # Both XML matchers are deferred, and both are named in one answer.
   - admin:
       method: POST
@@ -85,7 +31,7 @@ steps:
   - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000032}
     expect: {status: 404}
 
-  # None of the three documents left anything behind on the mock port.
+  # Neither document left anything behind on the mock port.
   - request:
       port: mock
       method: POST

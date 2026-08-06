@@ -49,3 +49,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-admin-auth" (include "mockulus.fullname" .) -}}
 {{- end -}}
 {{- end -}}
+
+{{/* Name of the Secret holding the trace exporter's headers, if any are set. */}}
+{{- define "mockulus.tracingSecret" -}}
+{{- if .Values.tracing.existingSecret -}}
+{{- .Values.tracing.existingSecret -}}
+{{- else -}}
+{{- printf "%s-tracing" (include "mockulus.fullname" .) -}}
+{{- end -}}
+{{- end -}}

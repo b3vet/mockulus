@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: cov-jsonpath-scan-validates-document-001
-behaviors: [B-MATCH-MATCHESJSONPATH]
+behaviors: [B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH]
 # Which of mockulus's two JSONPath evaluators answered a request is
 # mockulus-specific: WireMock has one, so there is no oracle for the agreement
 # this case asserts. D-OPEN-14 is the decision, and SPEC §6.7's "a body that is

@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# What never reaches the docker build context. Both stages copy whole trees
+# (`COPY . .` in the Go stage, `COPY ui/ ui/` in the UI stage), so anything left
+# in here is uploaded to the daemon on every build and baked into a layer.
+#
+# node_modules is the reason this file now exists: a pnpm store for the UI
+# toolchain runs to hundreds of megabytes of content that the image builds its
+# own copy of anyway, and shipping it into the context would make every
+# `docker build` slower for everyone, including the people who never touch the
+# UI.
+node_modules/
+
+# Build output from the host. internal/adminui/dist is excluded on purpose and
+# not by oversight: the UI stage produces it and the Go stage copies it from
+# there, so keeping the host's copy out means the image can only ever serve the
+# bundle this build made. A developer with a stale local dist gets the same
+# image as CI does.
+internal/adminui/dist/
+bin/
+dist/
+runner
+mockulus
+*.exe
+
+# History, CI definitions and prose. The version is passed in as a build arg, so
+# nothing in the build reads git metadata, and internal/adminui/dist is the only
+# go:embed in the tree — no Go package reads a document from here.
+.git/
+.github/
+docs/
+internalDocs/
+
+# Test and release artifacts that would otherwise ride along.
+test/e2e/.artifacts/
+test/load/.results/
+coverage.txt
+covdata/
+*.out
+*.test
+mockulus-*.tgz
+*.spdx.json
+
+# A host-built SDK bundle, for the same reason the UI's is excluded: the image
+# must only ever carry what its own stages produced.
+sdk/typescript/dist/
+sdk/typescript/*.tsbuildinfo

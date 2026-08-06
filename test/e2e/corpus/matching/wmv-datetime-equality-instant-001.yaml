@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-equality-instant-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# `equalToDateTime` is instant-valued, not textual. The two sharp steps sit next
+# to each other on purpose:
+#
+#   * `2021-06-14T15:00:00+03:00` MATCHES `2021-06-14T12:00:00Z` — different
+#     text, same instant.
+#   * `2021-06-14T12:00:00+03:00` does NOT — the wall clock is identical to the
+#     operand's and the instant is not.
+#
+# So a matcher that compared the two strings, and a matcher that compared the two
+# wall clocks, each get exactly one of those two backwards.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0006-0001-4000-8000-000000000001",
+         "name": "equalToDateTime on a UTC instant",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-equality-instant-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {equalToDateTime: "2021-06-14T12:00:00Z"}
+
+  # The control: the same instant written the same way.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-instant-001/equal
+      headers: {X-When: "2021-06-14T12:00:00Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+
+  # Same instant, different spelling and a different wall clock.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-instant-001/equal
+      headers: {X-When: "2021-06-14T15:00:00+03:00"}
+    expect: {status: 200, body: "equal"}
+
+  # Same wall clock as the operand, different instant.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-instant-001/equal
+      headers: {X-When: "2021-06-14T12:00:00+03:00"}
+    expect: {status: 404}
+
+  # And not every value carrying an offset matches either — this one is an hour
+  # off, which rules out "the offset is honoured" degenerating into "an offset is
+  # enough".
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-instant-001/equal
+      headers: {X-When: "2021-06-14T14:00:00+03:00"}
+    expect: {status: 404}
+
+  # A zoneless actual is resolved in the server's own zone rather than read as
+  # UTC by fiat. That distinction is invisible here and deliberately so: the
+  # harness pins TZ=UTC on the instance and on the oracle alike (see
+  # runner/differential.go), which is what makes this step a stable claim about
+  # the resolution happening at all. The zone-sensitive half of the behaviour is
+  # a deployment property, not something a corpus case can pin.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-instant-001/equal
+      headers: {X-When: "2021-06-14T12:00:00"}
+    expect: {status: 200, body: "equal"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-equality-instant-001/equal
+      headers: {X-When: "2021-06-14T13:00:00"}
+    expect: {status: 404}

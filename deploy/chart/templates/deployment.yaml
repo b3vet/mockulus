@@ -104,6 +104,25 @@ spec:
                   name: {{ include "mockulus.adminAuthSecret" . }}
                   key: {{ .Values.adminAuth.tokenKey }}
             {{- end }}
+            {{- if .Values.tracing.enabled }}
+            - name: MOCKULUS_TRACING_ENABLED
+              value: "true"
+            - name: MOCKULUS_TRACING_ENDPOINT
+              value: {{ required "tracing.endpoint is required when tracing.enabled is set" .Values.tracing.endpoint | quote }}
+            - name: MOCKULUS_TRACING_INSECURE
+              value: {{ .Values.tracing.insecure | quote }}
+            - name: MOCKULUS_TRACING_SAMPLE_RATIO
+              value: {{ .Values.tracing.sampleRatio | quote }}
+            - name: MOCKULUS_TRACING_SERVICE_NAME
+              value: {{ .Values.tracing.serviceName | quote }}
+            {{- if or .Values.tracing.headers .Values.tracing.existingSecret }}
+            - name: MOCKULUS_TRACING_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mockulus.tracingSecret" . }}
+                  key: {{ .Values.tracing.headersKey }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $value := .Values.config.extraEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}

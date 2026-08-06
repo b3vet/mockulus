@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-operand-bare-date-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# A bare date is an accepted expected operand, and it means the START OF THAT DAY
+# for `before` and `after` — not the day as an interval. The reading that it
+# names a range predicts a 404 for `after` against a same-day 13:00:00Z, and the
+# step below is a 200.
+#
+# `equalToDateTime` with a date-only operand is probed here at exactly midnight
+# and nowhere else, on purpose. Midnight is where mockulus and WireMock agree,
+# and it is the falsifier this case needs: the two directions both refusing the
+# same value could otherwise be a matcher that never matches at all, and the 200
+# on `/equal` shows the operand parsed and resolved to that instant. Every other
+# instant of that day is the territory of the deliberate one-directional
+# widening (decision 4 of CHK-DT, §5.5), and a parity case has no business there.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0008-0001-4000-8000-000000000001",
+         "name": "before a bare date",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-operand-bare-date-001/before",
+                     "headers": {"X-When": {"before": "2021-06-14"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2021-06-14"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0008-0001-4000-8000-000000000002",
+         "name": "after the same bare date",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-operand-bare-date-001/after",
+                     "headers": {"X-When": {"after": "2021-06-14"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0008-0001-4000-8000-000000000003",
+         "name": "equalToDateTime on the same bare date",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-operand-bare-date-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Midnight of the named day: both directions refuse it, and equality holds. The
+  # boundary is the start of the day, and it is strict.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/before
+      headers: {X-When: "2021-06-14T00:00:00Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/after
+      headers: {X-When: "2021-06-14T00:00:00Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/equal
+      headers: {X-When: "2021-06-14T00:00:00Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+
+  # One second before that midnight is `before`.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/before
+      headers: {X-When: "2021-06-13T23:59:59Z"}
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/after
+      headers: {X-When: "2021-06-13T23:59:59Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/equal
+      headers: {X-When: "2021-06-13T23:59:59Z"}
+    expect: {status: 404}
+
+  # And the middle of the named day is `after` it, which is what rules out the
+  # whole-day-interval reading of the operand.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/after
+      headers: {X-When: "2021-06-14T13:00:00Z"}
+    expect: {status: 200, body: "after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/before
+      headers: {X-When: "2021-06-14T13:00:00Z"}
+    expect: {status: 404}
+
+  # A later day is `after` too, so the previous step is not the interval's own
+  # upper edge in disguise.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/after
+      headers: {X-When: "2021-06-15T00:00:00Z"}
+    expect: {status: 200, body: "after"}
+
+  # A bare date on the actual side lands on its own start of day, so a
+  # same-date actual is refused by both directions exactly as the timestamped
+  # midnight above was.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/before
+      headers: {X-When: "2021-06-14"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/after
+      headers: {X-When: "2021-06-14"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-bare-date-001/after
+      headers: {X-When: "2021-06-15"}
+    expect: {status: 200, body: "after"}

@@ -11,6 +11,7 @@
 package response
 
 import (
+	"context"
 	"crypto/rand"
 	"math"
 	mathrand "math/rand/v2"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/b3vet/mockulus/internal/handlebars"
 	"github.com/b3vet/mockulus/internal/stub"
+	"github.com/b3vet/mockulus/internal/tracing"
 	"github.com/b3vet/mockulus/internal/wmcompat"
 )
 
@@ -42,13 +44,35 @@ type Options struct {
 	Context  map[string]any
 	// OnRenderError counts a serve-time render failure.
 	OnRenderError func()
+	// Tracer and Ctx are supplied only when tracing is on, and only then does
+	// anything here start a span. Both are zero on the default path, where
+	// `child` returns a no-op Span and costs one nil comparison.
+	Tracer *tracing.Tracer
+	Ctx    context.Context
+}
+
+// child starts a serve-phase span, or returns the no-op Span when tracing is
+// off. Keeping the check here means the phases below read the same either way.
+func (o Options) child(name string, attrs ...tracing.Attr) tracing.Span {
+	if o.Tracer == nil || o.Ctx == nil {
+		return tracing.Span{}
+	}
+	_, span := o.Tracer.StartInternal(o.Ctx, name, attrs...)
+	return span
 }
 
 // Write emits a compiled response and reports the status it sent, which the
 // caller records as a metric. A fault reports the status as 0: nothing that
 // could be called a status ever reached the client.
 func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, opts Options) int {
-	applyDelay(r, resp, opts.Settings)
+	// A delay gets a span of its own so a trace separates the time a stub was
+	// told to wait from time anything actually took — the two are
+	// indistinguishable in a duration, and only one of them is a problem.
+	if total := composeDelay(resp, opts.Settings); total > 0 {
+		span := opts.child("delay", tracing.Int64("mockulus.delay_ms", total.Milliseconds()))
+		awaitDelay(r, total)
+		span.End()
+	}
 
 	if resp.Fault != "" {
 		injectFault(w, resp.Fault)
@@ -69,7 +93,12 @@ func Write(w http.ResponseWriter, r *http.Request, resp *stub.CompiledResponse, 
 	headers := resp.Headers
 
 	if resp.Templated && opts.Renderer != nil {
+		renderSpan := opts.child("template.render")
 		rendered, renderedHeaders, err := render(resp, opts)
+		if err != nil {
+			renderSpan.SetError(err)
+		}
+		renderSpan.End()
 		if err != nil {
 			// WireMock renders the error text into the response body rather
 			// than failing the request, so a template bug is visible to
@@ -206,12 +235,7 @@ func render(resp *stub.CompiledResponse, opts Options) ([]byte, []stub.Header, e
 // than a sleeping worker because there is no worker pool to block: net/http's
 // goroutine-per-connection model scales to tens of thousands of concurrent
 // sleepers, which is what makes delay simulation cheap here (SPEC §12.4).
-func applyDelay(r *http.Request, resp *stub.CompiledResponse, global *stub.Settings) {
-	total := composeDelay(resp, global)
-	if total <= 0 {
-		return
-	}
-
+func awaitDelay(r *http.Request, total time.Duration) {
 	timer := time.NewTimer(total)
 	defer timer.Stop()
 	select {

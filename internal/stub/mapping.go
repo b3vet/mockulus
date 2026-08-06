@@ -40,6 +40,8 @@ type Options struct {
 	CompileRegex matchers.RegexCompiler
 	// CompileJSONPath builds path evaluators for matchesJsonPath.
 	CompileJSONPath matchers.JSONPathCompiler
+	// CompileSchema builds validators for matchesJsonSchema.
+	CompileSchema matchers.SchemaCompiler
 	// CompileTemplate parses a response template and rejects unknown helpers.
 	// Nil disables templating entirely, which is what `templating_enabled: off`
 	// means.
@@ -68,6 +70,7 @@ func (o Options) matcherOptions(allowContent bool) matchers.Options {
 	return matchers.Options{
 		CompileRegex:         o.CompileRegex,
 		CompileJSONPath:      o.CompileJSONPath,
+		CompileSchema:        o.CompileSchema,
 		AllowContentPatterns: allowContent,
 	}
 }
@@ -546,8 +549,18 @@ func matcherCost(m matchers.Matcher) int {
 		return 1
 	case *matchers.Regex:
 		return 2
-	case *matchers.EqualToJSON:
+	// A temporal match parses the actual value on every evaluation, which is
+	// costlier than a regex over an already-materialised string but has no
+	// backtracking to blow up on.
+	case *matchers.Temporal:
 		return 3
+	case *matchers.EqualToJSON:
+		return 4
+	// A schema walks the whole parsed document against a compiled tree, so it is
+	// the most expensive matcher here and sorts last within a stub's body
+	// patterns (SPEC §6.5).
+	case *matchers.MatchesJSONSchema:
+		return 5
 	case *matchers.Not:
 		return matcherCost(t.Matcher)
 	case *matchers.And:
@@ -555,7 +568,7 @@ func matcherCost(m matchers.Matcher) int {
 	case *matchers.Or:
 		return maxCost(t.Matchers)
 	default:
-		return 4
+		return 6
 	}
 }
 
@@ -580,6 +593,8 @@ func addMatcherProblems(errs *wmcompat.ErrorList, problems []matchers.Problem) {
 		switch p.Kind {
 		case matchers.ProblemDeferred:
 			errs.Unsupported(p.Pointer, p.Feature)
+		case matchers.ProblemSchema:
+			errs.Addf(wmcompat.CodeInvalidSchema, p.Pointer, p.Detail)
 		case matchers.ProblemRegex:
 			errs.Addf(wmcompat.CodeRegex, p.Pointer, p.Detail)
 		default:

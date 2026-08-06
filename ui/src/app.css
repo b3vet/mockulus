@@ -1,0 +1,69 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+@import 'tailwindcss';
+
+/* The UI is an operator tool that runs next to a terminal, so it follows the
+   operating system rather than carrying its own theme switch. */
+html {
+  color-scheme: light dark;
+}
+
+/* The stub editor's palette.
+ *
+ * CodeMirror builds its styles in JavaScript, so its colours cannot be written
+ * as Tailwind `dark:` utilities the way every other colour in this UI is. Naming
+ * them here as custom properties puts the two schemes back in one place and
+ * under the same `prefers-color-scheme` signal the rest of the page follows —
+ * `lib/components/JsonEditor.svelte` refers to these and holds no literal
+ * colour of its own.
+ *
+ * The values track the surrounding Tailwind slate/sky palette on purpose: the
+ * editor should read as a panel of this page rather than as an embedded
+ * application with opinions of its own. */
+:root {
+  --mockulus-editor-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --mockulus-editor-bg: #ffffff;
+  --mockulus-editor-fg: #0f172a;
+  --mockulus-editor-gutter-bg: #f8fafc;
+  /* Line numbers are read to act on — a problem list says which line, and the
+     gutter is where that is looked up — so they are held to the same 4.5:1 as
+     body text rather than treated as chrome. slate-400 against this gutter was
+     2.45:1. */
+  --mockulus-editor-gutter-fg: #64748b;
+  --mockulus-editor-active: rgb(2 132 199 / 6%);
+  --mockulus-editor-selection: #bae6fd;
+  --mockulus-editor-focus: #0284c7;
+  --mockulus-editor-bracket: #e0f2fe;
+
+  --mockulus-editor-key: #0369a1;
+  --mockulus-editor-string: #047857;
+  --mockulus-editor-number: #b45309;
+  --mockulus-editor-atom: #7e22ce;
+  --mockulus-editor-punctuation: #64748b;
+  --mockulus-editor-invalid: #be123c;
+  --mockulus-editor-invalid-bg: #ffe4e6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mockulus-editor-bg: #0f172a;
+    --mockulus-editor-fg: #e2e8f0;
+    --mockulus-editor-gutter-bg: #1e293b;
+    /* The light scheme's gutter colour, which is 3.07:1 against this darker
+       gutter. The two schemes swap: what is legible on a near-white gutter is
+       not on a slate one, and the reverse. */
+    --mockulus-editor-gutter-fg: #94a3b8;
+    --mockulus-editor-active: rgb(56 189 248 / 8%);
+    --mockulus-editor-selection: rgb(56 189 248 / 30%);
+    --mockulus-editor-focus: #38bdf8;
+    --mockulus-editor-bracket: rgb(56 189 248 / 25%);
+
+    --mockulus-editor-key: #7dd3fc;
+    --mockulus-editor-string: #6ee7b7;
+    --mockulus-editor-number: #fcd34d;
+    --mockulus-editor-atom: #d8b4fe;
+    --mockulus-editor-punctuation: #94a3b8;
+    --mockulus-editor-invalid: #fda4af;
+    --mockulus-editor-invalid-bg: rgb(190 18 60 / 30%);
+  }
+}

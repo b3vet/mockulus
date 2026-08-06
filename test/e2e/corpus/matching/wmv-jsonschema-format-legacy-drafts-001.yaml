@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-format-legacy-drafts-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# into the pattern regardless of what the stub asked for (deviation #41). Every
+# served response is still diffed in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# `format` is an assertion under drafts 4, 6 and 7. `{"type":"string","format":
+# "email"}` refuses `"not-an-email"` under all three.
+#
+# This is half of the single most surprising thing about `matchesJsonSchema`, and
+# the half that behaves the way most people expect. The other half — that the
+# *same* schema accepts `"not-an-email"` under 2019-09, 2020-12 and when no
+# version is named at all — is the companion case. Split across two files
+# because a reader who takes only one of them away should still take away a
+# complete rule.
+#
+# The boundary is not a WireMock quirk: 2019-09 moved `format` out of the
+# assertion vocabulary and into the annotation one, so an implementation that
+# ignores it there is the conforming one. Both servers follow the specification's
+# own line exactly.
+#
+# Each stub carries the valid-email control as well as the invalid one. Without
+# it the case could not tell "the schema asserts `format`" from "the schema
+# rejects everything", which is the failure mode a draft named but not applied
+# would produce.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0005-0001-4000-8000-000000000001",
+         "name": "format under draft 4",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-format-legacy-drafts-001/v4",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}},
+                       "schemaVersion": "V4"}]},
+         "response": {"status": 200, "body": "v4",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0005-0001-4000-8000-000000000002",
+         "name": "format under draft 6",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-format-legacy-drafts-001/v6",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}},
+                       "schemaVersion": "V6"}]},
+         "response": {"status": 200, "body": "v6",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0005-0001-4000-8000-000000000003",
+         "name": "format under draft 7",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-format-legacy-drafts-001/v7",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}},
+                       "schemaVersion": "V7"}]},
+         "response": {"status": 200, "body": "v7",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control: a well-formed address is accepted under each draft, so the
+  # refusals below are `format` biting and not the schema rejecting everything.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v4
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v4"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v6
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v6"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v7
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v7"}
+
+  # And `format` asserted: a string that is not an address is refused under all
+  # three older drafts.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v4
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v6
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v7
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 404}
+
+  # The rest of the schema still applies alongside `format`.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v7
+      headers: {Content-Type: "application/json"}
+      body: '{}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-legacy-drafts-001/v7
+      headers: {Content-Type: "application/json"}
+      body: '{"email": 7}'
+    expect: {status: 404}

@@ -5,8 +5,9 @@
 N replicas behind a Service, stubs persisted in Couchbase, all mock traffic served from an
 in-memory snapshot at ≥50k RPS per 2-vCPU pod with sub-2 ms p99.
 
-**Status: in development.** The core is being built milestone by milestone against
-the plan in SPEC §20; nothing is released yet.
+**Status: released.** See [CHANGELOG.md](CHANGELOG.md) for what is in the current version and
+[ROADMAP.md](ROADMAP.md) for what was deliberately left out — every unsupported feature is
+refused at registration with a pointer to it, never silently ignored.
 
 ## Documentation
 
@@ -18,6 +19,10 @@ Start at **[docs/](docs/README.md)**.
   shape, what to turn on.
 - **[Compatibility matrix](docs/compatibility.md)** — every catalogued behavior and the test
   that proves it, generated from the catalog and the corpus.
+- **[The admin UI](docs/admin-ui.md)** — the web interface built into the binary: browse and
+  edit stubs, read the journal, ask why a request did not match.
+- **[Programmatic administration](docs/programmatic-administration.md)** — managing mocks from
+  code, the OpenAPI contract, and the TypeScript SDK generated from it.
 - **[Deviations](docs/deviations.md)** · **[Configuration](docs/configuration.md)** ·
   **[Operations](docs/operations.md)**
 

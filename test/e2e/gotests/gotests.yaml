@@ -128,3 +128,95 @@ tests:
       steps are fixed text with no way to carry a value between them. The other
       half needs the process too: "the entry is gone" is a statement about the
       whole journal, which no case sharing an instance is in a position to make.
+  - name: TestTracingExportsMockAndAdminServerSpans
+    behaviors: [B-CFG-TRACING-ENABLED, B-CFG-TRACING-ENDPOINT, B-CFG-TRACING-INSECURE]
+    why: >-
+      What a traced request produces is not a response but a span at a
+      collector. A corpus case asserts on what came back, and nothing came back
+      differently: the served body is byte-identical with tracing on and off.
+      Proving the span exists means being the collector, which means speaking
+      OTLP over a socket the case itself is listening on.
+  - name: TestTracingDisabledExportsNothing
+    behaviors: [B-CFG-TRACING-ENABLED]
+    why: >-
+      The assertion is that a channel carried nothing. There is no response to
+      look at — the case has to hold the collector open, drive traffic, and find
+      it still empty, which is an observation a YAML expectation has no shape
+      for.
+  - name: TestTracingSamplingFollowsTheCallerNotTheRatio
+    behaviors: [B-CFG-TRACING-SAMPLE-RATIO]
+    why: >-
+      Both halves of the decision are asserted from one instance, where the only
+      difference between the two requests is a traceparent header. The answer
+      lives in the exported spans' own trace and parent ids, so the case has to
+      send a header of its own choosing and read the binary ids back out of an
+      OTLP payload — and it has to count the spans, because the claim is that
+      exactly one of the two requests produced one.
+  - name: TestTracingSendsConfiguredHeadersAndServiceName
+    behaviors: [B-CFG-TRACING-HEADERS, B-CFG-TRACING-SERVICE-NAME]
+    why: >-
+      Both are properties of the request mockulus makes outward, not of any
+      request made to it: one is a header on the export call, the other a
+      resource attribute inside its protobuf body. Only the receiving end can
+      see either.
+  - name: TestTraceExportFailuresAreCounted
+    behaviors: [B-METRIC-TRACE-EXPORT-FAILURES-TOTAL]
+    why: >-
+      The counter only moves when an export is refused, so the case has to be a
+      collector that refuses. A metricsprobe can read the value but cannot
+      create the outage that produces it.
+  - name: TestTracingRefusesAnEndpointWithAScheme
+    behaviors: [B-CFG-TRACING-ENDPOINT]
+    why: >-
+      What is asserted is that no serving process exists. A corpus case needs a
+      started instance before it can assert anything, and this configuration is
+      one that must never reach a started instance.
+  - name: TestTracingEnabledWithoutEndpointRefusesToStart
+    behaviors: [B-CFG-TRACING-ENDPOINT]
+    why: >-
+      Same shape: the outcome is a non-zero exit naming the offending key, which
+      happens before either listener binds.
+  - name: TestTracingInsecureSelectsPlainHTTP
+    behaviors: [B-CFG-TRACING-INSECURE]
+    why: >-
+      The key chooses the scheme mockulus speaks outward, and the failure it
+      guards against is a TLS handshake against a listener that has none. Both
+      the choice and its consequence happen on a connection mockulus opens to
+      somewhere else, so nothing a corpus case can send or receive touches it.
+  - name: TestTracingRecordsThePhasesThatRanAndOnlyThose
+    behaviors: [B-PROSE-TRACING-SPAN-MODEL]
+    why: >-
+      The claim is about the shape of a tree that exists only at a collector:
+      which phases became spans, that each is attached to the request that
+      caused it, and that the phases a stub did not use produced nothing. A
+      corpus case sees two responses, both byte-identical whether the trees
+      underneath them are right or empty. One instance serves both stubs so the
+      absence is proved on a process that demonstrably knows how to produce the
+      spans in question.
+  - name: TestSnapshotRebuildIsATraceOfItsOwn
+    behaviors: [B-PROSE-TRACING-BACKGROUND-ROOT]
+    why: >-
+      What is asserted is the absence of a parent, and that a background span
+      did not join the trace of the admin write that triggered it. Both are
+      properties of exported span metadata, which no HTTP expectation reaches.
+  - name: TestJournalEntryCarriesTheTraceID
+    behaviors: [B-PROSE-TRACING-CORRELATION]
+    why: >-
+      The field only appears when a sampled span existed, so proving it means
+      driving a traced request and then reading the journal — two surfaces, one
+      of which has to be configured as a collector first.
+  - name: TestUIDisabledRemovesTheSurface
+    behaviors: [B-CFG-UI-ENABLED, B-PROSE-UI-DISABLED]
+    why: >-
+      `ui_enabled` is read once at startup, and the corpus runs its cases against
+      shared instances started from the fixed variant set of §19.4. Asserting on
+      a differently-configured process would mean adding a whole topology variant
+      for one boolean, which §19.4 exists to keep from happening; the Go lane
+      starts a process per test and needs no such thing.
+  - name: TestUIEnabledByDefault
+    behaviors: [B-CFG-UI-ENABLED]
+    why: >-
+      "On by default" is a claim about a process configured with nothing at all,
+      and every corpus variant configures something. Only an instance started
+      with no keys set can distinguish a default from a variant that happens to
+      agree with it.

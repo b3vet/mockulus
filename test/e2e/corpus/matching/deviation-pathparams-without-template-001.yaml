@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-pathparams-without-template-001
+behaviors:
+  - B-DEV-DEVIATION-54
+# WireMock accepts both of these stubs, so there is no compatible answer to diff.
+# The first is the one that matters: it takes `pathParameters` alongside a plain
+# `urlPath`, drops the whole block because there is no template to bind against,
+# and registers a stub whose surviving criteria match *every* request to that
+# path — including one carrying an unsatisfiable `before: 1900-01-01`. A stub
+# whose path criteria were silently discarded is one that intercepts traffic
+# belonging to somebody else, arrived at without a word.
+wm: n/a
+steps:
+  # No urlPathTemplate to bind against, so the criterion could never be applied.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d54d54d5-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-pathparams-without-template-001/plain",
+                     "pathParameters": {"when": {"before": "1900-01-01T00:00:00Z"}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/pathParameters"}
+      body_regex: 'pathParameters needs a urlPathTemplate'
+
+  - admin: {method: GET, path: /__admin/mappings/d54d54d5-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # Nothing was registered, so the path is unmatched rather than answered by a
+  # stub whose criteria were thrown away.
+  - request: {method: GET, path: /e2e/deviation-pathparams-without-template-001/plain}
+    expect: {status: 404}
+
+  # The other half: a template that binds no variable of that name. WireMock
+  # refuses nothing here either and simply never matches, which is a criterion
+  # that reads as active and is not.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d54d54d5-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPathTemplate": "/e2e/deviation-pathparams-without-template-001/{other}",
+                     "pathParameters": {"when": {"before": "2030-01-01T00:00:00Z"}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/pathParameters/when"}
+      body_regex: 'binds no variable named'
+
+  # And the working spelling still registers and serves, so the refusals above
+  # are about the mismatch rather than about pathParameters being unusable.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d54d54d5-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPathTemplate": "/e2e/deviation-pathparams-without-template-001/{when}",
+                     "pathParameters": {"when": {"before": "2030-01-01T00:00:00Z"}}},
+         "response": {"status": 200, "body": "bound"}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-pathparams-without-template-001/2021-06-14T12:00:00Z
+    expect: {status: 200, body: "bound"}

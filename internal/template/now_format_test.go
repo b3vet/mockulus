@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
+	"github.com/b3vet/mockulus/internal/javatime"
 )
 
 // Java's XXX is the ISO-8601 offset that collapses to a bare "Z" at UTC, and
@@ -33,7 +35,7 @@ func TestXXXRendersZuluOnlyAtAZeroOffset(t *testing.T) {
 		{time.FixedZone("UTC+0", 0), "Z", "a zone named for UTC is still a zero offset"},
 	}
 
-	layout := javaToGoLayout("XXX")
+	layout := javatime.Layout("XXX")
 	for _, c := range cases {
 		if got := instant.In(c.zone).Format(layout); got != c.want {
 			t.Errorf("XXX in %s rendered %q, want %q (%s)", c.zone, got, c.want, c.why)
@@ -61,7 +63,7 @@ func TestRFC822OffsetTokensStayNumericAtUTC(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		if got := instant.In(c.zone).Format(javaToGoLayout(c.pattern)); got != c.want {
+		if got := instant.In(c.zone).Format(javatime.Layout(c.pattern)); got != c.want {
 			t.Errorf("%s in %s rendered %q, want %q", c.pattern, c.zone, got, c.want)
 		}
 	}
@@ -74,7 +76,7 @@ func TestRFC822OffsetTokensStayNumericAtUTC(t *testing.T) {
 func TestQuotedZuluStaysLiteral(t *testing.T) {
 	instant := time.Date(2026, time.July, 28, 9, 30, 0, 0, time.FixedZone("AEST", 10*3600))
 
-	layout := javaToGoLayout("yyyy-MM-dd'T'HH:mm:ss'Z'")
+	layout := javatime.Layout("yyyy-MM-dd'T'HH:mm:ss'Z'")
 	if got := instant.Format(layout); got != "2026-07-28T09:30:00Z" {
 		t.Errorf("a quoted Z rendered %q, want the literal letter back", got)
 	}

@@ -135,6 +135,28 @@ named instance variants (`journal`, `authed`, `fast-clock`, `h2c`, `tls`, …).
 mockulus starts in well under a second, so variants multiply cheap processes
 rather than containers.
 
+### When something else already holds Couchbase's ports
+
+T2 and T3 publish 8091, 8092, 8093 and 11210 on the loopback address, and those
+numbers cannot be remapped: Couchbase advertises 11210 for KV itself, so a client
+handed a remapped host port would still dial 11210. That is also why one machine
+runs one gate at a time.
+
+The consequence is that any other container holding one of those ports blocks the
+lane, and the answer is not to stop it — it may well be something you need
+running. Export `MOCKULUS_E2E_CB_DIRECT=1` and the lane publishes nothing,
+addressing the container by its own IP instead:
+
+```sh
+MOCKULUS_E2E_CB_DIRECT=1 make e2e
+```
+
+It is opt-in because it is only true on some hosts. A container IP is routable
+from the host under OrbStack and on Linux, and is not under Docker Desktop's VM
+on macOS or Windows, where publishing is the only path that works. CI keeps the
+default. If the container reports no address, the runner says so and tells you to
+unset the variable rather than failing obscurely.
+
 ## Go-native cases
 
 Some behavior is not observable through an HTTP client at all. A fault that

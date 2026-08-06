@@ -301,3 +301,93 @@ func TestEphemeralPortsAreValid(t *testing.T) {
 		t.Fatalf("port 0 must be accepted so instances can bind ephemeral ports: %v", err)
 	}
 }
+
+func TestTracingValidation(t *testing.T) {
+	// Enabled and aimed at nothing: the exporter would build spans and drop
+	// every one, with a counter nobody has reason to read as the only evidence.
+	cfg := Default()
+	cfg.Tracing.Enabled = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "tracing.endpoint") {
+		t.Errorf("tracing without an endpoint must fail by name, got %v", err)
+	}
+
+	// `tracing.insecure` already answers the scheme question, so an endpoint
+	// carrying one is two answers to it. Refused rather than reinterpreted (P3).
+	cfg = Default()
+	cfg.Tracing.Enabled = true
+	cfg.Tracing.Endpoint = "https://collector:4318"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "tracing.endpoint") {
+		t.Errorf("an endpoint carrying a scheme must be refused, got %v", err)
+	}
+
+	cfg = Default()
+	cfg.Tracing.Enabled = true
+	cfg.Tracing.Endpoint = "collector:4318"
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a host:port endpoint should validate, got %v", err)
+	}
+
+	// The ratio is checked whether or not tracing is on, so a deployment that
+	// turns it on later is not surprised by a value it has been carrying.
+	for _, ratio := range []float64{-0.1, 1.5} {
+		cfg = Default()
+		cfg.Tracing.SampleRatio = ratio
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "tracing.sample_ratio") {
+			t.Errorf("sample ratio %v must be refused, got %v", ratio, err)
+		}
+	}
+
+	cfg = Default()
+	cfg.Tracing.Headers = "not-a-pair"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "tracing.headers") {
+		t.Errorf("a malformed header list must be refused, got %v", err)
+	}
+}
+
+func TestTracingHeadersParse(t *testing.T) {
+	cfg := Default()
+	cfg.Tracing.Headers = " x-scope-orgid=checkout , authorization=Bearer tok "
+	got, err := cfg.Tracing.ParsedHeaders()
+	if err != nil {
+		t.Fatalf("parse headers: %v", err)
+	}
+	if got["x-scope-orgid"] != "checkout" {
+		t.Errorf("x-scope-orgid = %q, want checkout", got["x-scope-orgid"])
+	}
+	// A value may contain spaces; only the surrounding ones are trimmed.
+	if got["authorization"] != "Bearer tok" {
+		t.Errorf("authorization = %q, want %q", got["authorization"], "Bearer tok")
+	}
+
+	cfg = Default()
+	if h, err := cfg.Tracing.ParsedHeaders(); err != nil || h != nil {
+		t.Errorf("an unset header list should parse to nothing, got %v, %v", h, err)
+	}
+}
+
+func TestTracingSampleRatioBindsAsANumber(t *testing.T) {
+	// float64 is the one field kind the binder grew for tracing; a key that
+	// silently failed to bind would leave the documented default in place and
+	// look like it had worked.
+	cfg, err := Load("", env(map[string]string{"MOCKULUS_TRACING_SAMPLE_RATIO": "0.25"}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Tracing.SampleRatio != 0.25 {
+		t.Errorf("sample_ratio = %v, want 0.25", cfg.Tracing.SampleRatio)
+	}
+
+	if _, err := Load("", env(map[string]string{"MOCKULUS_TRACING_SAMPLE_RATIO": "half"})); err == nil {
+		t.Error("a non-numeric sample ratio must be refused rather than left at the default")
+	}
+}
+
+func TestTracingHeadersAreRedactedInTheDump(t *testing.T) {
+	cfg := Default()
+	cfg.Tracing.Headers = "authorization=Bearer supersecret"
+	for _, line := range cfg.Dump() {
+		if strings.HasPrefix(line, "tracing.headers=") && strings.Contains(line, "supersecret") {
+			t.Errorf("the startup dump printed an ingestion token: %s", line)
+		}
+	}
+}

@@ -1,0 +1,2888 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The authored contract for the mockulus admin API.
+#
+# This file is a server-owned artifact and is reviewed like spec text, not like
+# a convenience file that trails the implementation. It is the single machine-
+# readable statement of the admin surface: the TypeScript SDK's types are
+# generated from it, a future Java SDK would be, and the API documentation is.
+# Two independent nets keep it honest — `scripts/contractlint` compares its
+# paths and methods against the behavior catalog in both directions, and the
+# SDK's integration suite exercises it against a live binary.
+#
+# Its normative sources are SPEC §5.1 (the admin endpoint matrix), SPEC §5.2
+# (the stub-mapping field support matrix), SPEC Appendix B (the error catalog)
+# and the deviation list of SPEC §5.5. Where a schema is narrower than the
+# server, the narrowing is deliberate and the description says so.
+
+openapi: 3.1.0
+
+info:
+  title: mockulus admin API
+  version: 1.1.0
+  summary: The WireMock-3.13.2-compatible administration surface of a mockulus deployment.
+  description: >-
+    mockulus is a Go mock server that reproduces the WireMock 3.13.2 admin API over a
+    Couchbase-backed, horizontally scalable deployment. This contract describes the
+    **supported subset** and nothing beyond it, which is the same claim the server makes
+    of itself: a stub this contract can express is a stub the server registers.
+
+
+    That is why every object here sets `additionalProperties: false`. mockulus refuses an
+    unsupported WireMock field with a 422 rather than accepting it and behaving differently
+    (SPEC §5.5 deviation #14), and a generated client should hit the same wall one step
+    earlier — at compile time, where the author is still holding the stub they wrote. The
+    handful of places where the schema is deliberately open (`metadata`, `jsonBody`,
+    `transformerParameters`, an `equalToJson` operand) are the places where the payload is
+    the caller's own data and the server stores it verbatim.
+
+
+    Three properties of this surface surprise people arriving from a WireMock client, and
+    all three are documented on the operations that carry them. The request journal is
+    **off by default** (deviation #1), so every journal-backed endpoint answers 500 with
+    code 1010 until `journal_enabled` is set. The journal is **eventually consistent**
+    (deviation #10), so a verification issued immediately after the traffic it verifies
+    should poll rather than assert once. And several not-found answers are **bodyless** —
+    a bare 404 with no body and no `Content-Type` — because that is the not-found a
+    WireMock client library already handles.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    name: mockulus
+    url: https://github.com/b3vet/mockulus
+
+externalDocs:
+  description: >-
+    SPEC.md is the normative source for everything here. §5.1 is the endpoint matrix, §5.2
+    the stub-mapping field support matrix, §5.5 the numbered deviations from WireMock and
+    Appendix B the error catalog.
+  url: https://github.com/b3vet/mockulus/blob/main/SPEC.md
+
+servers:
+  - url: '{scheme}://{host}:{port}'
+    description: >-
+      A mockulus deployment. The admin API is served on the dedicated ops listener
+      (`admin_port`, default 9090) and, unless `admin_on_mock_port` is turned off, on the
+      mock listener as well (`port`, default 8080) — deviation #9. A client that talks to
+      the ops port keeps admin traffic off the port under load test; a client migrating a
+      WireMock suite can leave its base URL pointing at the mock port and change nothing.
+    variables:
+      scheme:
+        default: http
+        enum: [http, https]
+        description: >-
+          TLS is optional and configured per listener; in-mesh deployments usually
+          terminate it elsewhere (SPEC §12.1).
+      host:
+        default: localhost
+      port:
+        default: '9090'
+        description: The ops listener's port, or the mock listener's when admin_on_mock_port is left on.
+
+security:
+  - {}
+  - adminToken: []
+
+tags:
+  - name: mappings
+    description: >-
+      Stub mappings: the documents that say which requests match and what is served back.
+      Every write compiles the document before anything is persisted, so a stub that would
+      fail to compile can never enter the store (SPEC §4.3).
+  - name: requests
+    description: >-
+      The request journal and the verification queries over it. Every operation here needs
+      `journal_enabled: true` and answers 500 with code 1010 without it (deviation #1).
+  - name: near-misses
+    description: >-
+      On-demand near-miss scoring, which answers "why did nothing match?". The cost lands
+      on a person waiting for a diagnostic rather than on served traffic (SPEC §5.4, §6.8).
+  - name: scenarios
+    description: >-
+      Stateful mocks. A scenario exists because some stub names it, and its possible states
+      are the states those stubs name — there is no separate lifecycle to manage (SPEC §9.1).
+  - name: files
+    description: >-
+      The response-body file store, which backs `bodyFileName`. A body can be uploaded once
+      and referenced by many stubs (SPEC §7.3).
+  - name: system
+    description: >-
+      Deployment-wide operations: the global settings document, the combined reset, health,
+      version and shutdown.
+
+paths:
+  /__admin/mappings:
+    post:
+      tags: [mappings]
+      operationId: createStubMapping
+      summary: Register a stub mapping.
+      description: >-
+        Creates a stub and answers 201 with the document as stored — which is the document
+        that was submitted, with `id` and `uuid` stamped to the identity the server assigned
+        when the client supplied none. Nothing else is rewritten: unlike WireMock, mockulus
+        does not fill in defaults on the way out or canonicalise the spellings inside the
+        document it echoes (deviation #41).
+
+
+        Create is not an upsert. An `id` that already exists is refused 422 with code 109
+        rather than replacing the stub that holds it, because an accidental collision would
+        otherwise silently replace another suite's stub on a shared deployment; `PUT` exists
+        for the deliberate case.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StubMapping'
+      responses:
+        '201':
+          description: The stub was registered and is being served by this replica already.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StubMapping'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          description: >-
+            The document names a field mockulus does not support, or is not a valid stub.
+            Every problem in the document is reported at once rather than the first one
+            (Appendix B), so one round of edits fixes the whole mapping.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    get:
+      tags: [mappings]
+      operationId: listStubMappings
+      summary: List the stub mappings this replica is serving.
+      description: >-
+        Answers WireMock's list envelope. The listing is read from this replica's compiled
+        snapshot rather than from the store, so it is the set of stubs this pod will actually
+        match against — which is the question a caller listing them has. A stub registered on
+        another replica appears within `sync_interval` (deviation #11).
+
+
+        `meta.total` counts the whole snapshot, not the page, so a paginating client can tell
+        when it has seen everything.
+      parameters:
+        - $ref: '#/components/parameters/MappingsLimit'
+        - $ref: '#/components/parameters/MappingsOffset'
+      responses:
+        '200':
+          description: The page requested, and the total the pagination is over.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StubMappingList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [mappings]
+      operationId: deleteAllStubMappings
+      summary: Delete every stub mapping, persistent ones included.
+      description: >-
+        Removes every stub in the deployment — not only this replica's, and not only the
+        non-persistent ones that `POST /__admin/mappings/reset` sweeps. On a shared
+        deployment this is the call SPEC §1 tells runners never to press; tag stubs with
+        `metadata` and clean up through `remove-by-metadata` instead.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/mappings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MappingId'
+    get:
+      tags: [mappings]
+      operationId: getStubMapping
+      summary: Read one stub mapping by id.
+      description: >-
+        Answers the document as registered. This replica's snapshot is consulted first and
+        the store second, so a stub another replica registered a moment ago resolves here
+        rather than reporting a 404 for a stub that demonstrably exists (SPEC §8).
+      responses:
+        '200':
+          description: The stub document, exactly as it was registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StubMapping'
+        '400':
+          $ref: '#/components/responses/NotAUuid'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UnknownStubId'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    put:
+      tags: [mappings]
+      operationId: updateStubMapping
+      summary: Replace an existing stub mapping in full.
+      description: >-
+        Replaces the whole document. The stub's insertion sequence is preserved, so an edit
+        does not change which stub a request matches — drawing a fresh sequence would
+        silently promote the edited stub above its equal-priority peers and turn an edit into
+        a precedence change (SPEC §5.3, §7.3).
+
+
+        The existence check precedes body parsing, so an invalid body against an unknown id
+        answers 404 rather than 422. An `id` in the body that disagrees with the path is
+        ignored: the path names the stub being replaced, and WireMock resolves the conflict
+        the same way.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StubMapping'
+      responses:
+        '200':
+          description: The replacement document, as stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StubMapping'
+        '400':
+          $ref: '#/components/responses/NotAUuid'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UnknownStubId'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    delete:
+      tags: [mappings]
+      operationId: deleteStubMapping
+      summary: Delete one stub mapping.
+      description: >-
+        Removes the stub and stops this replica serving it before the call returns. A second
+        delete of the same id answers the bodyless 404, because by then the id names nothing.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '400':
+          $ref: '#/components/responses/NotAUuid'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UnknownStubId'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/mappings/reset:
+    post:
+      tags: [mappings]
+      operationId: resetStubMappings
+      summary: Remove the non-persistent stub mappings.
+      description: >-
+        Sweeps every stub that did not ask to be persistent and leaves the persistent ones in
+        place. Takes no body.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/mappings/save:
+    post:
+      tags: [mappings]
+      operationId: saveStubMappings
+      summary: Mark every current stub mapping persistent.
+      description: >-
+        WireMock writes its in-memory stubs out to files here. mockulus has no per-node
+        filesystem to write to, so the equivalent durable act is clearing the TTL that would
+        otherwise expire them: every current stub reads back with `persistent: true`
+        afterwards and survives `POST /__admin/mappings/reset` (deviation #4). Takes no body.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/mappings/import:
+    post:
+      tags: [mappings]
+      operationId: importStubMappings
+      summary: Load a batch of stub mappings in one call.
+      description: >-
+        The whole batch is validated before anything is written, so a malformed mapping
+        halfway through cannot leave the store half-imported — WireMock applies its import
+        partially (deviation #21). An `OVERWRITE` preserves the replaced stub's precedence,
+        exactly as `PUT` does.
+
+
+        On success the answer is **200 with no body at all**, which is worth knowing before a
+        client tries to parse one: there is no import report. What the batch did is in the
+        server's log, and the resulting state is one `GET /__admin/mappings` away.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StubMappingImport'
+      responses:
+        '200':
+          description: >-
+            The batch was applied whole. The response carries no body and no `Content-Type`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          description: >-
+            One or more mappings in the batch were rejected, or the envelope itself was. Each
+            problem's `source.pointer` is rooted at the batch, as `/mappings/3/response/fault`,
+            so the offending element of the offending mapping is named outright. Nothing was
+            written.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/mappings/find-by-metadata:
+    post:
+      tags: [mappings]
+      operationId: findStubMappingsByMetadata
+      summary: Find stub mappings whose metadata satisfies a matcher.
+      description: >-
+        The body is one content matcher — the same matcher vocabulary a request criterion
+        uses — applied to each stub's `metadata` document. There is one definition of what
+        "matches" means across the product, so a matcher that works in `bodyPatterns` works
+        here unchanged.
+
+
+        Only stubs that **have** metadata are considered. An explicit `"metadata": null`
+        counts as having none, because WireMock drops a null on deserialization and the two
+        documents describe the same untagged stub — which is what stops a broad matcher from
+        sweeping up every untagged stub in a shared deployment (deviation #20).
+
+
+        Candidates come from the store rather than from this replica's snapshot, so a stub
+        another replica registered a moment ago is found.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContentMatcher'
+      responses:
+        '200':
+          description: >-
+            The matching stubs in registration order. `meta.total` is the size of this
+            answer, not of the deployment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StubMappingList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/mappings/remove-by-metadata:
+    post:
+      tags: [mappings]
+      operationId: removeStubMappingsByMetadata
+      summary: Delete stub mappings whose metadata satisfies a matcher.
+      description: >-
+        The same matcher and the same candidate set as `find-by-metadata`, followed by the
+        deletion. This is the cleanup path a CI runner sharing a deployment uses, so it
+        returns the documents it removed rather than only a count: WireMock answers `{}` here,
+        and the removed mappings are a catalogued extension rather than a compatibility diff
+        (deviation #20, SPEC §5.6).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContentMatcher'
+      responses:
+        '200':
+          description: The stubs that were removed, in registration order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StubMappingList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests:
+    get:
+      tags: [requests]
+      operationId: listServeEvents
+      summary: Read the request journal, newest first.
+      description: >-
+        Answers serve events — the whole recorded event, with the logged request nested inside
+        it. Half the endpoints in this group answer with serve events and half with the bare
+        logged requests inside them; this is one of the former, and `POST /__admin/requests/find`
+        is one of the latter.
+
+
+        `meta.total` counts the window the query considered rather than the page returned, so
+        `?limit=1` against a four-entry journal answers one request and a total of four — the
+        behaviour of the pinned oracle, and the field a client reads to decide whether it has
+        seen everything.
+
+
+        An entry becomes visible within `journal_flush_interval` plus index lag, typically
+        under 500 ms (deviation #10). A verification issued right after the traffic it verifies
+        should poll for the window it expects rather than assert once.
+      parameters:
+        - $ref: '#/components/parameters/JournalLimit'
+        - $ref: '#/components/parameters/JournalSince'
+      responses:
+        '200':
+          description: The serve events in the window, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServeEventList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/BadSince'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    delete:
+      tags: [requests]
+      operationId: clearRequestJournal
+      summary: Empty the request journal.
+      description: Removes every entry from this deployment's journal. Takes no body.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ServeEventId'
+    get:
+      tags: [requests]
+      operationId: getServeEvent
+      summary: Read one serve event by id.
+      description: >-
+        The id is the one carried on the event in a listing, so a client that read an id out
+        of `GET /__admin/requests` can ask for that entry directly.
+      responses:
+        '200':
+          description: The serve event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServeEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >-
+            No entry has that id. A bare 404 with no body and no `Content-Type`, for the
+            reason an unknown stub id gets one: this is the not-found a WireMock client library
+            already handles, and the id that was asked for is the whole story.
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    delete:
+      tags: [requests]
+      operationId: deleteServeEvent
+      summary: Delete one serve event.
+      description: >-
+        Removes the entry so it no longer appears in a journal query. The delete is
+        idempotent and does **not** report a missing entry: an id that names nothing answers
+        200 like any other, because the caller's goal — that entry not being in the journal —
+        holds either way.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests/reset:
+    post:
+      tags: [requests]
+      operationId: resetRequestJournal
+      summary: Empty the request journal (deprecated alias).
+      description: >-
+        WireMock's deprecated alias of `DELETE /__admin/requests`, implemented as exactly that
+        so a suite carrying the older call keeps working. Takes no body. New code should use
+        the DELETE.
+      deprecated: true
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests/count:
+    post:
+      tags: [requests]
+      operationId: countRequests
+      summary: Count the recorded requests that satisfy a request pattern.
+      description: >-
+        The body is a request pattern — the same model a stub's `request` is, compiled through
+        the same compiler. That is deliberate and not an implementation detail: a `verify()`
+        call and the stub it was copied from must describe the same requests, and if the two
+        models diverged a test could pass against a stub that would never have matched.
+
+
+        Criteria are evaluated in process over the newest `journal_query_scan_limit` entries
+        (10 000 by default). A count over a window wider than that under-reports by design —
+        the journal serves functional tests, not analytics (deviation #16).
+      parameters:
+        - $ref: '#/components/parameters/JournalSince'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestPattern'
+      responses:
+        '200':
+          description: How many recorded requests satisfied the pattern.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestCount'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests/find:
+    post:
+      tags: [requests]
+      operationId: findRequests
+      summary: Find the recorded requests that satisfy a request pattern.
+      description: >-
+        Answers the logged **requests**, not the serve events that hold them — measured against
+        the pinned oracle, where this endpoint and `/__admin/requests/unmatched` both answer
+        with bare request documents while `GET /__admin/requests` answers with serve events. A
+        client deserializes this into typed logged requests, so handing it a serve event would
+        leave every field it reads null.
+      parameters:
+        - $ref: '#/components/parameters/JournalSince'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestPattern'
+      responses:
+        '200':
+          description: >-
+            The matching logged requests. This envelope carries no `meta`, unlike the serve-event
+            listing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoggedRequestList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests/remove:
+    post:
+      tags: [requests]
+      operationId: removeRequests
+      summary: Delete the recorded requests that satisfy a request pattern.
+      description: >-
+        The same pattern as `count` and `find`, followed by the deletion. What was removed is
+        reported in full serve-event form under `serveEvents` — the one place a criteria query
+        answers with the whole event rather than the request inside it, because a caller
+        deleting entries is entitled to see what went.
+      parameters:
+        - $ref: '#/components/parameters/JournalSince'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestPattern'
+      responses:
+        '200':
+          description: The serve events that were removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemovedServeEvents'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests/unmatched:
+    get:
+      tags: [requests]
+      operationId: listUnmatchedRequests
+      summary: List the recorded requests that matched no stub.
+      description: >-
+        The first thing anyone looks at when a test fails. Answers logged requests in the same
+        envelope `find` uses, filtered to the entries whose `wasMatched` is false.
+      parameters:
+        - $ref: '#/components/parameters/JournalSince'
+      responses:
+        '200':
+          description: The unmatched logged requests in the window.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoggedRequestList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/BadSince'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/requests/unmatched/near-misses:
+    get:
+      tags: [requests, near-misses]
+      operationId: listUnmatchedNearMisses
+      summary: Score every unmatched recorded request against the current stubs.
+      description: >-
+        Takes each unmatched entry and reports the stubs that came closest to serving it,
+        computed on demand against this replica's snapshot. The answer is one flat list of
+        request-and-stub pairings rather than a list grouped by request, which is the shape
+        WireMock's clients deserialize.
+
+
+        The ranking is mockulus's own and WireMock's is not reproduced (deviation #28). Near-miss
+        output is a debugging aid outside the strict-compat surface, and no matching decision
+        depends on the order.
+      parameters:
+        - $ref: '#/components/parameters/JournalSince'
+      responses:
+        '200':
+          description: >-
+            Up to three closest stubs per unmatched entry, flattened into one list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NearMissList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/BadSince'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/near-misses/request:
+    post:
+      tags: [near-misses]
+      operationId: nearMissesForRequest
+      summary: Rank the current stub mappings against a described request.
+      description: >-
+        Hand it a request and it ranks the **stub mappings** against it. No journal is involved,
+        which is the point: this is the endpoint that works on a deployment that never turned
+        journaling on, and that is the deployment anyone debugging a stub that will not match is
+        standing in front of.
+
+
+        The `request` echoed back on each near miss is the server's reading of the description
+        that was supplied, so a caller can see what was understood before reading the distances.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DescribedRequest'
+      responses:
+        '200':
+          description: The three closest stub mappings, closest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NearMissList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+
+  /__admin/near-misses/request-pattern:
+    post:
+      tags: [near-misses]
+      operationId: nearMissesForRequestPattern
+      summary: Rank the recorded requests against a supplied request pattern.
+      description: >-
+        The mirror image of `/__admin/near-misses/request`: hand it a pattern and it ranks the
+        **recorded requests** against it, which is how a team asks "what did arrive, and how
+        close was it to what I expected?" after a verification came back empty. It reads the
+        journal, so it reports the journal-disabled error without one.
+
+
+        The pattern is compiled through the stub compiler for the reason the verification criteria
+        are: the pattern this ranks against has to mean exactly what it would have meant written
+        on a stub.
+      parameters:
+        - $ref: '#/components/parameters/JournalSince'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestPattern'
+      responses:
+        '200':
+          description: >-
+            The three closest recorded requests, closest first. Ties break on the entry id, which
+            is time-ordered, so the same journal and the same pattern produce the same answer
+            every time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NearMissList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/JournalDisabled'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/scenarios:
+    get:
+      tags: [scenarios]
+      operationId: listScenarios
+      summary: List the scenarios the current stubs define.
+      description: >-
+        A scenario exists because some stub names it, so this listing is derived from the
+        snapshot and disappears when the last stub referencing a scenario is deleted. Only the
+        current state is persisted.
+
+
+        WireMock additionally embeds every member stub under a `mappings` key; mockulus does not
+        (deviation #32). A scenario holding a hundred stubs would repeat all hundred inside a
+        listing whose caller wants a state name, and the same documents are one
+        `GET /__admin/mappings` away.
+      responses:
+        '200':
+          description: Every defined scenario, ordered by name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/scenarios/reset:
+    post:
+      tags: [scenarios]
+      operationId: resetScenarios
+      summary: Return every scenario to the Started state.
+      description: Clears every stored state, so all scenarios read back as `Started`. Takes no body.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/scenarios/{name}/state:
+    put:
+      tags: [scenarios]
+      operationId: setScenarioState
+      summary: Drive a scenario into a named state.
+      description: >-
+        Both the scenario and the target state are validated against what the stubs define.
+        Accepting an arbitrary state would let a test drive a scenario somewhere no stub can
+        match, which looks like a server defect rather than the typo it is.
+
+
+        `Started` is a possible state of every scenario, so setting it is always accepted.
+        WireMock derives `possibleStates` from the stubs alone and refuses to set `Started`
+        when no stub names it, even though it is the state the scenario is in until something
+        moves it (deviation #34).
+      parameters:
+        - $ref: '#/components/parameters/ScenarioName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioStateChange'
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '400':
+          description: >-
+            No stub in this scenario uses the requested state. Code 1031, where WireMock answers
+            422 with its code 11 — both refuse the write and both name the scenario and the state,
+            and 400 is the reading SPEC §5.1 and Appendix B commit to (deviation #33).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >-
+            No stub defines a scenario by that name, so there is nothing to drive. Carries the
+            error envelope with code 1031, unlike the bodyless 404s on the mappings and journal
+            id routes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/files:
+    get:
+      tags: [files]
+      operationId: listFiles
+      summary: List the stored response-body file names.
+      description: >-
+        Answers a **bare JSON array** of names rather than an envelope, which is the one listing
+        on this surface that does. A name may contain slashes, since the store holds names rather
+        than paths.
+      responses:
+        '200':
+          description: Every stored file name. An empty store answers `[]`, never `null`.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                examples:
+                  - ['order-created.json', 'fixtures/large.bin']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/files/{name}:
+    parameters:
+      - $ref: '#/components/parameters/FileName'
+    get:
+      tags: [files]
+      operationId: getFile
+      summary: Download a stored response-body file.
+      description: >-
+        Answers the bytes as they were stored, under `application/octet-stream`. Files hold
+        arbitrary response bodies, so the media type is not guessed at from the name — the stub
+        that references the file is where a `Content-Type` is declared.
+      responses:
+        '200':
+          description: The file's bytes, verbatim.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >-
+            No file is stored under that name. Unlike the bodyless 404 an unknown stub id gets,
+            this one carries the error envelope with code 10 and names the file that was asked
+            for.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    put:
+      tags: [files]
+      operationId: putFile
+      summary: Store a response-body file.
+      description: >-
+        Uploads the raw bytes under the given name, replacing anything already there. A stub
+        that already references the name resolves it on the next snapshot build, and on the
+        admin write itself, so the replica that handled this upload serves the new bytes on the
+        very next request.
+
+
+        The answer is **201 with no body**, on a create and on a replace alike.
+      requestBody:
+        required: true
+        description: The file's bytes. Any media type; the body is stored without interpretation.
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: >-
+            The file was stored. The response carries no body and no `Content-Type`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          description: >-
+            The name is not one the file store can hold — it is empty, over-long, or carries a
+            character that could never resolve. Existence of the *stub* that references it is
+            not checked here; registering a stub before uploading its file is legal and the
+            reference resolves at snapshot build (SPEC §6.9).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    delete:
+      tags: [files]
+      operationId: deleteFile
+      summary: Delete a stored response-body file.
+      description: >-
+        Removes the file. Stubs still referencing it start serving the body-file-missing error
+        (code 1022) on the next snapshot build rather than failing to load, so one deleted file
+        does not take a deployment's stubs down with it.
+
+
+        The delete is idempotent: a name that is not stored answers 200 like any other, and the
+        answer carries no body.
+      responses:
+        '200':
+          description: >-
+            The name is not in the store any more. The response carries no body and no
+            `Content-Type`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: The name is not one the file store can hold.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/reset:
+    post:
+      tags: [system]
+      operationId: resetAll
+      summary: Reset mappings, journal and scenarios in one call.
+      description: >-
+        Sweeps the non-persistent stubs, empties the journal and returns every scenario to
+        `Started`. The journal and the scenario states are swept only where they exist rather
+        than failing when they do not — journaling is off by default and a degraded start has no
+        scenario store, so the alternative would make the deployment-wide reset the one call that
+        does not work on the deployment mockulus ships with.
+
+
+        Being deployment-wide, this is the call SPEC §1 tells runners sharing an instance never
+        to press. Takes no body.
+      responses:
+        '200':
+          $ref: '#/components/responses/Acknowledged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/settings:
+    get:
+      tags: [system]
+      operationId: getSettings
+      summary: Read the deployment's global settings.
+      description: >-
+        The answer comes from the store rather than from this replica's snapshot. There is one
+        settings document for the whole deployment, and a replica that has not polled since
+        another replica's write would otherwise report the value it is about to stop serving —
+        a read that contradicts a write the caller already got a 200 for.
+
+
+        A deployment nobody has configured answers `{"settings": {}}` rather than a 404 or an
+        invented default.
+      responses:
+        '200':
+          description: The settings document as it was written, wrapped in WireMock's envelope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+    post:
+      tags: [system]
+      operationId: updateSettings
+      summary: Replace the deployment's global settings.
+      description: >-
+        Replace, not merge, because that is what WireMock does and because a merge would leave
+        no way to clear a key: posting `{}` is how a suite that set a global delay puts the
+        deployment back the way it found it.
+
+
+        The document is validated before anything is written, so a key mockulus does not
+        implement is refused 422 with code 1005 and a pointer at it rather than accepted and
+        quietly ignored — a global delay that silently did not apply would look like a mock
+        server that is merely fast. The write is epoch-bumped, so it reaches every replica
+        rather than the one that took the call.
+
+
+        The answer is **200 with no body**; read the settings back if the stored document is
+        wanted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Settings'
+      responses:
+        '200':
+          description: >-
+            The settings were stored and the epoch bumped. The response carries no body and no
+            `Content-Type`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          description: >-
+            An unrecognised settings key (code 1005), or a delay value that is not one — a
+            negative `fixedDelay`, a distribution missing a parameter. Every problem is reported
+            at once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /__admin/health:
+    get:
+      tags: [system]
+      operationId: health
+      summary: Report the deployment's health.
+      description: >-
+        Carries WireMock 3.2+'s health shape plus mockulus detail — the store driver, the number
+        of compiled stubs and this replica's snapshot epoch. The extra fields are a catalogued
+        extension rather than a compatibility diff (SPEC §5.6), and every WireMock-defined field
+        is present because a client reading any of them must keep working.
+
+
+        This is not the Kubernetes probe. Liveness and readiness are `/healthz` and `/readyz` on
+        the ops listener, outside the `/__admin` namespace and outside this contract.
+      responses:
+        '200':
+          description: The health document. The status is `healthy` whenever the handler answers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /__admin/version:
+    get:
+      tags: [system]
+      operationId: version
+      summary: Report the server version and the WireMock surface it mirrors.
+      description: >-
+        `guessedWireMockVersion` is the surface claim rather than a version number a client
+        should compare: mockulus implements a subset of WireMock 3, so it reads `3.x-subset`.
+        `goVersion` is an additive field, catalogued the same way the health extras are.
+      responses:
+        '200':
+          description: The version document.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /__admin/shutdown:
+    post:
+      tags: [system]
+      operationId: shutdown
+      summary: Begin the graceful drain.
+      description: >-
+        **Disabled by default** (deviation #8). When `admin_shutdown_enabled` is false the route
+        is not registered at all, so the call answers the ordinary unsupported-endpoint 404 with
+        code 1001 — the endpoint does not exist rather than existing and refusing. Kubernetes owns
+        the pod lifecycle in the deployment mockulus is built for, and an unauthenticated caller
+        that can stop a replica is a denial of service with an HTTP interface.
+
+
+        When it is enabled, the response is written before the drain starts, because a caller that
+        asked the process to stop still deserves to be told it will: draining takes
+        `shutdown_drain` seconds by design, and a client made to wait it out cannot tell a
+        graceful stop from a hang. Takes no body.
+      responses:
+        '200':
+          description: >-
+            The drain has begun. The response carries no body and no `Content-Type`, and the
+            listener stops accepting shortly afterwards.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >-
+            `admin_shutdown_enabled` is false, which is the default. The body is the standard
+            unsupported-endpoint envelope with code 1001.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
+components:
+  securitySchemes:
+    adminToken:
+      type: http
+      scheme: Token
+      description: >-
+        The admin API is open unless `admin_auth_token` is configured. When it is, every admin
+        request must carry `Authorization: Token <token>` — the scheme word is **`Token`**, not
+        `Bearer`, and a `Bearer` prefix is refused like any other wrong value. The comparison is
+        constant-time so the endpoint cannot be used as an oracle (SPEC §17).
+
+
+        A refusal is 401 carrying the error envelope with code 10. Because the check wraps the
+        whole router rather than each handler, a route added later is guarded by already
+        existing; the one deliberate exception is the embedded admin UI's own assets, which a
+        browser cannot put a header on, and which are code rather than data — every read and
+        write the UI performs is an ordinary admin call carrying the token the operator typed
+        into it.
+
+
+        This scheme is declared alongside an empty requirement in the global `security` block,
+        because a deployment with no token configured accepts an unauthenticated call and one
+        with a token configured does not. Both are real deployments and the contract describes
+        both.
+
+  parameters:
+    MappingsLimit:
+      name: limit
+      in: query
+      required: false
+      description: >-
+        How many mappings to return, counted after `offset`. Absent means all of them. A value
+        that is not a non-negative integer is treated as absent rather than refused, because
+        this parameter narrows a listing and a listing that returns too much is a nuisance
+        rather than a wrong answer — unlike `since` on a journal query, which is refused.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+    MappingsOffset:
+      name: offset
+      in: query
+      required: false
+      description: >-
+        How many mappings to skip, in the snapshot's own order: priority ascending, then
+        insertion sequence descending. An offset past the end answers an empty page rather than
+        an error.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+    JournalLimit:
+      name: limit
+      in: query
+      required: false
+      description: >-
+        How many serve events to return. It is the only pagination parameter on the journal, and
+        it exists on this one endpoint: `offset` is not read anywhere on `/__admin/requests**`,
+        and `limit` is not read on the unmatched or criteria endpoints. It trims the page after
+        the window is counted, which is why `meta.total` can exceed the array's length.
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+    JournalSince:
+      name: since
+      in: query
+      required: false
+      description: >-
+        Restricts the query to entries recorded at or after this RFC 3339 timestamp.
+
+
+        A `since` that is not a timestamp is **refused 422**, not dropped. Ignoring it would
+        answer a windowed verification with the entire journal, so a `verify(exactly(1))`
+        written to look at the last minute would silently count every call the deployment has
+        ever served. WireMock rejects it too, naming the same parameter.
+
+
+        It is accepted on every journal-backed endpoint, including the ones that take a request
+        pattern in the body, which is where a client is most likely to want it: a verification
+        that says "since the test started" is the shape that survives a shared deployment.
+      schema:
+        type: string
+        format: date-time
+      examples:
+        windowStart:
+          summary: The start of the window a suite wants to verify over.
+          value: '2026-07-29T10:15:00Z'
+    MappingId:
+      name: id
+      in: path
+      required: true
+      description: >-
+        The stub's identity. It must be the canonical 36-character UUID spelling, parsed
+        case-insensitively and resolved to lower case, so a client holding an id in upper case
+        addresses the same stub that registered it.
+
+
+        A segment that is not a UUID at all answers **400** with code 10, which is what WireMock
+        answers and is a different statement from 404: 404 says "no such stub" and invites a
+        caller to believe it once existed, while this segment could never have named one. That is
+        also why `GET /__admin/mappings/unmatched` — an endpoint mockulus does not implement —
+        answers 400 rather than the unsupported-endpoint 404; it falls into this route. A generated
+        client has no reason to construct it.
+      schema:
+        type: string
+        format: uuid
+        minLength: 36
+        maxLength: 36
+      example: 9c47901d-6bd5-4b7a-8896-c0ac9b8d0b4e
+    ServeEventId:
+      name: id
+      in: path
+      required: true
+      description: >-
+        A serve event's id, as carried on the event in a listing. It is a KSUID rather than a
+        UUID — the identifier is time-ordered so recency queries are cheap without a secondary
+        sort — and the same value is the event's storage key, so an id read out of a listing
+        resolves here.
+      schema:
+        type: string
+        minLength: 1
+      example: 2VZ8mQ0kZ9pQnR6b1cN3sT7yWxE
+    ScenarioName:
+      name: name
+      in: path
+      required: true
+      description: >-
+        The scenario's name, which is also its id — a scenario has no identity beyond the name
+        its stubs give it.
+      schema:
+        type: string
+        minLength: 1
+      example: order-flow
+    FileName:
+      name: name
+      in: path
+      required: true
+      description: >-
+        The file's name in the store. It may contain slashes and is matched as a whole rather
+        than segment by segment, so `fixtures/large.bin` is one name and not a nested route.
+        Names are store keys and nothing joins one onto a filesystem path, but the validation is
+        applied here anyway so that the day a driver does map names onto paths it inherits the
+        rule rather than having to remember it.
+      schema:
+        type: string
+        minLength: 1
+      example: order-created.json
+
+  responses:
+    Acknowledged:
+      description: >-
+        The operation was applied. The body is the empty JSON object WireMock answers with here,
+        which carries no information and is present so a client parsing every response finds
+        JSON.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Empty'
+    Unauthorized:
+      description: >-
+        `admin_auth_token` is configured and the request did not carry `Authorization: Token
+        <token>`. The envelope carries code 10.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    UnknownStubId:
+      description: >-
+        No stub has that id. A **bare 404 with no body and no `Content-Type`**, which is what
+        WireMock answers and the not-found its client libraries already handle. The error
+        envelope is deliberately not used: giving a WireMock client JSON where it expects none
+        makes mockulus the odd server out for no diagnostic gain, since the id that was asked for
+        is the whole story.
+    NotAUuid:
+      description: >-
+        The path segment is not a UUID, so it could never have named a stub. Code 10, matching
+        WireMock. Distinct from the 404 a well-formed id that names nothing gets.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ValidationFailed:
+      description: >-
+        The document was refused. Every problem is listed in one response rather than the first
+        one, so a caller fixes one document once (Appendix B). Each entry's `source.pointer` is a
+        JSON pointer into the submitted document.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    BadSince:
+      description: >-
+        The `since` query parameter is not an RFC 3339 timestamp. Refused rather than dropped, so
+        a windowed verification never silently widens to the whole journal.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    BodyTooLarge:
+      description: >-
+        The request body exceeds the 32 MiB admin cap. Code 1030. Stub documents are small; an
+        unbounded read on this surface would be a memory-exhaustion vector reachable by anyone
+        who can call the admin API.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    JournalDisabled:
+      description: >-
+        The request journal is off, which is the default (deviation #1). Code 1010, carried on a
+        500 because that is the shape and status WireMock answers with — a client library's
+        `verify()` must fail loudly here rather than read a zero count as "no calls were made".
+        Set `journal_enabled: true` to record and verify requests.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    StoreUnavailable:
+      description: >-
+        The stub store could not take the operation, so nothing was applied. Code 1020 (SPEC
+        §4.6). Three conditions share it: a Couchbase outage, a read-only driver — the file
+        driver serves a project directory as its source of truth, so a change belongs in those
+        files rather than in an admin call — and a replica that has bound its listener but not
+        yet connected the store during startup. The `detail` tells them apart.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+
+  schemas:
+    Empty:
+      type: object
+      title: Empty object
+      description: >-
+        The `{}` body an acknowledgement carries. Closed like everything else here, so a client
+        that starts reading fields out of it does not compile.
+      additionalProperties: false
+
+    ErrorCode:
+      type: integer
+      title: Catalog error code
+      description: >-
+        The error catalog of SPEC Appendix B, in full. Codes 10 and 109 are WireMock's own, kept
+        so a client that special-cases them keeps working; the rest are mockulus's and are
+        four-digit to stay out of WireMock's range.
+
+
+        Three of these are serve-time codes a caller will not see on this surface but will find
+        in a mock-port response body, and they are enumerated because the catalog is one table
+        and a client's error type should cover it: 1021 (scenario state unavailable during a
+        store outage), 1022 (a stub's `bodyFileName` has no file) and 1002/1003 as they arrive
+        from a stub that compiled once and no longer does.
+      enum:
+        - 10
+        - 109
+        - 1000
+        - 1001
+        - 1002
+        - 1003
+        - 1004
+        - 1005
+        - 1006
+        - 1010
+        - 1020
+        - 1021
+        - 1022
+        - 1030
+        - 1031
+      # Appendix B's table, carried alongside the enum so a reader of the
+      # contract does not need the spec open to know which status a code arrives
+      # with. The keys are quoted because a mapping key in a JSON-representable
+      # document is a string, and an OpenAPI document has to survive the round
+      # trip through JSON.
+      x-catalog:
+        '10': 422 — malformed JSON or schema violation (WireMock parity code)
+        '109': 422 — stub id already exists on create (WireMock parity code)
+        '1000': 422 — unsupported stub feature; the pointer names the field
+        '1001': 404 — unsupported admin endpoint; the detail links ROADMAP.md
+        '1002': 422 — unknown template helper or template parse error
+        '1003': 422 — regular expression does not compile on either engine
+        '1004': 422 — unknown transformer name
+        '1005': 422 — unknown settings key
+        '1006': 422 — a matchesJsonSchema operand that does not compile as a schema
+        '1010': 500 — the request journal is disabled
+        '1020': 503 — the stub store is unavailable
+        '1021': 500 — scenario state unavailable during a store outage
+        '1022': 500 — a stub's bodyFileName has no corresponding file
+        '1030': 413 — request body exceeds the cap
+        '1031': 400 — unknown scenario or invalid scenario state
+
+    ErrorSource:
+      type: object
+      title: Error source
+      description: Locates the offending element of the submitted document.
+      properties:
+        pointer:
+          type: string
+          description: >-
+            A JSON pointer into the request document, as `/request/bodyPatterns/0/matchesXPath`.
+            Two refusals do not carry a pointer into a body at all: an invalid `since` reports the
+            bare parameter name `since`, and a document that failed to parse as JSON reports the
+            empty pointer, which names the document itself.
+      required: [pointer]
+      additionalProperties: false
+
+    Error:
+      type: object
+      title: Catalog error
+      description: One problem with the request, named precisely enough to fix without guessing.
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        source:
+          $ref: '#/components/schemas/ErrorSource'
+        title:
+          type: string
+          description: The catalog code's fixed human-readable title, as `Unsupported feature`.
+        detail:
+          type: string
+          description: >-
+            What went wrong, in the terms the author of the document would use. A deferred feature's
+            detail names the feature and links ROADMAP.md, so a team learns what it is waiting for
+            rather than being told only "no".
+      required: [code, title]
+      additionalProperties: false
+
+    ErrorBody:
+      type: object
+      title: Error envelope
+      description: >-
+        WireMock's error envelope. Every 422 lists **all** the problems it found rather than
+        stopping at the first, so a CI user fixes everything in one round.
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+          minItems: 1
+      required: [errors]
+      additionalProperties: false
+      examples:
+        - errors:
+            - code: 1000
+              source:
+                pointer: /request/bodyPatterns/0/matchesXPath
+              title: Unsupported feature
+              detail: matchesXPath (XPath matching) is not supported in mockulus v1 — see ROADMAP.md
+
+    ContentMatcher:
+      type: object
+      title: Content matcher
+      description: >-
+        One criterion over a value. The same vocabulary is used in `bodyPatterns`, as the value of
+        a header, query parameter, cookie, path parameter or form parameter, by verification
+        criteria, and by `find-by-metadata` — there is one definition of what "matches" means
+        across the product (SPEC §5.2).
+
+
+        **Several matcher keys on one document are a conjunction**: `{"contains": "a",
+        "doesNotContain": "b"}` requires both. WireMock honours only the first key its binding
+        visits and discards the rest, so the same document means less there — silently, and in a
+        way that makes a stub match requests its author wrote a criterion to exclude (deviation
+        #26). A document carrying one key behaves identically on both servers.
+
+
+        A modifier — `caseInsensitive`, `ignoreArrayOrder`, `ignoreExtraElements`, `schemaVersion`,
+        `truncateExpected`, `truncateActual`, `applyTruncationLast`, `actualFormat` — is not a
+        matcher and is refused where it has no matcher to modify. WireMock accepts every one of
+        them anywhere and drops it silently, so a misspelled modifier there reads as though it had
+        been applied (deviations #49, #53).
+
+
+        `expression` is a member of the object form of `matchesJsonPath` and `doesNotMatchJsonPath`
+        and is refused anywhere else. It is declared on this shared schema because JSON Schema
+        cannot say "the members of that schema, plus this one" without repeating the whole matcher
+        vocabulary; the narrowing is stated here rather than hidden in a duplicated definition.
+      minProperties: 1
+      properties:
+        equalTo:
+          type: string
+          description: Exact string equality. Pair with `caseInsensitive` to fold case.
+        caseInsensitive:
+          type: boolean
+          description: >-
+            Folds case for `equalTo`. Folding is by Unicode simple case folding, where Java folds
+            per UTF-16 code unit; the two disagree in both directions and neither is more correct
+            (deviation #43).
+        binaryEqualTo:
+          type: string
+          contentEncoding: base64
+          description: >-
+            Exact byte equality against a base64 operand. It compares the subject's raw bytes, so
+            it is accepted **only in `bodyPatterns`** and only at the top level — WireMock declares
+            its combinators over string patterns, so a `binaryEqualTo` nested inside `not`, `and`,
+            `or` or the object form of `matchesJsonPath` is refused there and here.
+
+
+            Padding is optional, as it is in Java's decoder, so the unpadded spelling a Java
+            encoder produces is accepted.
+        contains:
+          type: string
+          description: The subject contains this substring.
+        doesNotContain:
+          type: string
+          description: >-
+            The subject does not contain this substring. Over a repeated header or query parameter
+            this is any-of like every other matcher and therefore **not** the complement of
+            `contains`: a key carrying `a` and `b` satisfies both at once (SPEC §6.6).
+        matches:
+          type: string
+          description: >-
+            A Java-compatible regular expression, matched in full against the subject — WireMock
+            anchors these, with DOTALL on and MULTILINE off. Patterns RE2 cannot express run on a
+            fallback engine with a match timeout, so pathological backtracking fails closed rather
+            than hanging (deviation #12). A pattern that compiles on neither engine is refused 422
+            with code 1003.
+        doesNotMatch:
+          type: string
+          description: The negated form of `matches`, any-of over a repeated key like its twin.
+        before:
+          type: string
+          description: >-
+            The subject parses as a date-time strictly earlier than this operand.
+
+
+            **The operand's type selects the comparison.** An operand carrying a zone compares
+            *instants*, honouring the actual's offset and resolving a zoneless actual in the pod's
+            zone; an operand with no zone compares *wall-clock fields* and discards the actual's
+            offset rather than converting it. So `2021-06-14T12:00:00` reports
+            `2021-06-14T13:00:00+03:00` as later, though that instant is earlier (SPEC §5.2).
+
+
+            Accepted spellings: ISO-8601 with a colon in any offset, a bare date, RFC 1123, and the
+            now-relative forms `now`, `now ±N units` and `±N units` with plural units from `seconds`
+            to `years` — there is no `weeks`. A spelling that could never match is refused 422 rather
+            than registering and failing every request with no diagnostic, which is what WireMock
+            does with thirteen of them (deviation #49).
+        after:
+          type: string
+          description: The subject parses as a date-time strictly later than this operand. Strict, as `before` is.
+        equalToDateTime:
+          type: string
+          description: >-
+            The subject parses as a date-time equal to this operand. Equality is instant-valued and
+            exact to the nanosecond, so `12:13:14Z` equals `12:13:14.000Z` and not `12:13:14.001Z`.
+
+
+            A **bare date matches that whole day**. WireMock reads a date-only operand as midnight,
+            so `"2021-06-14"` excludes almost every moment of the day it names — an answer nobody
+            writing that criterion means. The widening is confined to equality, because widening
+            `before` or `after` would refuse requests WireMock accepts (deviation #51).
+        truncateExpected:
+          $ref: '#/components/schemas/DateTimeTruncation'
+        truncateActual:
+          $ref: '#/components/schemas/DateTimeTruncation'
+        applyTruncationLast:
+          type: boolean
+          description: >-
+            Applies the truncation after the now-relative offset rather than before it. Order is
+            observable: with `now +3 days` and a first-day-of-month truncation the two orderings
+            name different days.
+        actualFormat:
+          type: string
+          description: >-
+            Replaces ISO-8601 parsing of the request's value — it does not extend it. `unix` reads
+            seconds and `epoch` reads milliseconds; anything else is a Java date pattern such as
+            `dd/MM/yyyy`. A pattern naming no date or time field can never match and is refused at
+            registration.
+
+
+            A non-numeric value under `unix` or `epoch` is a plain non-match. WireMock's parse is an
+            unguarded `Long.parseLong`, so the same value reaches the client as a 500 error page —
+            mock traffic is untrusted input that must not be able to produce a server error
+            (deviation #52).
+          examples: ['unix', 'epoch', 'dd/MM/yyyy']
+        equalToJson:
+          description: >-
+            Structural JSON equality against this operand, which may be written inline or as an
+            escaped JSON string. Numbers are compared by value, so `1` equals `1.0`.
+
+
+            json-unit placeholders are interpreted as WireMock interprets them — `ignore`,
+            `ignore-element`, `any-string`, `any-number`, `any-boolean` and `regex` — and an
+            **unrecognised** placeholder is refused at registration rather than compared as literal
+            text, which in WireMock makes the stub silently never match (deviation #5).
+
+
+            The operand is parsed by Go's strict JSON reader. A document with trailing content,
+            single-quoted names or comments registers on WireMock and is refused here (deviation
+            #35).
+        ignoreArrayOrder:
+          type: boolean
+          description: >-
+            Gives up array positions and keeps the count. Together with `ignoreExtraElements` an
+            expected array becomes a subset test resolved by maximum matching, so mockulus matches
+            some arrays WireMock reports as a mismatch — one-directional, and confined to arrays
+            holding an expected element strictly more permissive than another (deviation #25).
+        ignoreExtraElements:
+          type: boolean
+          description: >-
+            Forgives elements the expected document never accounted for, in **arrays as well as
+            objects**. Positionally those are the ones past the end, so expected `[1,2]` accepts
+            `[1,2,3]` and still refuses `[3,1,2]`, and an actual array shorter than the expected one
+            remains a mismatch.
+        matchesJsonPath:
+          $ref: '#/components/schemas/JsonPathCriterion'
+        doesNotMatchJsonPath:
+          $ref: '#/components/schemas/JsonPathCriterion'
+        matchesJsonSchema:
+          description: >-
+            Validates the subject against an embedded JSON Schema, written inline or as an escaped
+            string. The draft comes from `schemaVersion`, and a document's own `$schema` overrides
+            that field in both directions.
+
+
+            `$ref` resolves **within the document only**. A schema that does not compile, a
+            `schemaVersion` outside the five accepted spellings, an unrecognised `$schema` URI and a
+            `$ref` pointing outside the document are all refused 422 with code 1006 — WireMock
+            validates only that the operand is JSON, so `{"type":"banana"}` registers there and then
+            matches nothing ever (deviation #56).
+
+
+            A subject that is not a JSON document is a plain non-match. WireMock falls back to
+            validating the raw request text as a JSON *string*, which makes a schema and its own
+            negation both hold for the body `4` (deviation #55).
+        schemaVersion:
+          type: string
+          enum: [V4, V6, V7, V201909, V202012]
+          default: V202012
+          description: >-
+            The JSON Schema draft to compile the operand under. The set is exact and case-sensitive,
+            as it is in WireMock — `v7` and `"V7 "` are refused.
+
+
+            **`format` is asserted only under V4, V6 and V7.** 2019-09 and 2020-12 treat `format` as
+            an annotation, which is those drafts' own vocabulary boundary and means the default
+            asserts nothing about it. Valid only beside `matchesJsonSchema`.
+        absent:
+          type: boolean
+          const: true
+          description: >-
+            The key is not present. A key-level matcher, so it is meaningful on a header, cookie,
+            query parameter, form parameter or path parameter rather than on a body.
+
+
+            `{"absent": false}` is refused 422 rather than coerced. WireMock deserializes the field
+            as a presence flag and stores `absent: true` whatever value it was given, so a criterion
+            written to mean "this header must be present" silently becomes its exact opposite and the
+            stub never matches. `{"not": {"absent": true}}` is the supported spelling for "must be
+            present" (deviation #23).
+        and:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentMatcher'
+          minItems: 2
+          description: >-
+            Every operand must hold. Two operands minimum, as in WireMock — a one-operand form is
+            422 on both servers (deviation #27).
+        or:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentMatcher'
+          minItems: 2
+          description: At least one operand must hold. Two operands minimum, as with `and`.
+        not:
+          $ref: '#/components/schemas/ContentMatcher'
+        expression:
+          type: string
+          description: >-
+            The JSONPath expression of the object form of `matchesJsonPath` and
+            `doesNotMatchJsonPath`. Refused anywhere else — see this schema's own description for
+            why it is declared here rather than on a separate type.
+      additionalProperties: false
+
+    JsonPathCriterion:
+      title: JSONPath criterion
+      description: >-
+        Either a bare expression or an expression with an inner matcher.
+
+
+        The **bare form** matches when the path selects a present, non-empty result. Emptiness
+        applies to collections only: an empty array and an empty object do not match, but an empty
+        *string* does, as do `false` and `0`. A selected `null` never matches, and neither does a
+        path that selects nothing.
+
+
+        The **object form** is any-of over the selected values: the criterion holds when at least
+        one satisfies the inner matcher. A selected non-string is rendered to text first, exactly
+        — `5` becomes `"5"` and `5.0` becomes `"5.0"`. A path that selects an array *node*
+        evaluates the inner matcher against the node rather than element-wise, so
+        `{"expression": "$.tags", "equalTo": "red"}` does not match `{"tags": ["red"]}`; WireMock
+        cannot draw that distinction and applies the matcher to the elements (deviation #42).
+
+
+        Syntax outside the supported Jayway subset is refused at registration rather than becoming
+        a silent non-match (SPEC §6.7).
+      oneOf:
+        - type: string
+          description: The bare form — a JSONPath expression on its own.
+        - allOf:
+            - $ref: '#/components/schemas/ContentMatcher'
+            # `expression` is restated here so this branch says what it requires
+            # without the reader having to resolve the reference above it. The
+            # shared matcher schema is where it is really defined, and where the
+            # rule confining it to this form is written down.
+            - required: [expression]
+              properties:
+                expression:
+                  type: string
+          description: >-
+            The object form — an `expression` plus the members of one content matcher, applied to
+            each selected value.
+      examples:
+        - $.customer.id
+        - expression: $.customer.id
+          matches: '[A-Z]{2}[0-9]{6}'
+
+    DateTimeTruncation:
+      type: string
+      title: Date-time truncation
+      description: >-
+        One of WireMock's `DateTimeTruncation` values, applied to the expected side
+        (`truncateExpected`) or to the request's value (`truncateActual`). `LAST_DAY_OF_*` zeroes
+        the time of day as the `FIRST_` values do — it names a day, not the end of one.
+
+
+        WireMock upper-cases the value and turns spaces into underscores before its enum lookup, so
+        the server also accepts `first day of month` and the spelling a document was written with is
+        the spelling it reads back with (deviation #41). This contract enumerates the underscored
+        form alone, so a generated client has exactly one constant per truncation rather than a
+        family of spellings that mean the same thing.
+
+
+        A truncation that **could not take effect** is refused 422 rather than accepted:
+        `truncateExpected` does nothing on a literal expected value, and `truncateActual` does
+        nothing when `actualFormat` reads the value with a pattern (deviation #50).
+      enum:
+        - FIRST_SECOND_OF_MINUTE
+        - FIRST_MINUTE_OF_HOUR
+        - FIRST_HOUR_OF_DAY
+        - FIRST_DAY_OF_MONTH
+        - FIRST_DAY_OF_NEXT_MONTH
+        - FIRST_DAY_OF_YEAR
+        - FIRST_DAY_OF_NEXT_YEAR
+        - LAST_DAY_OF_MONTH
+        - LAST_DAY_OF_YEAR
+
+    BasicAuthCredentials:
+      type: object
+      title: Basic auth credentials
+      description: >-
+        Sugar over an `Authorization` header criterion. Both members are required: a half-written
+        credential is a criterion the author cannot have meant.
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required: [username, password]
+      additionalProperties: false
+
+    RequestPattern:
+      type: object
+      title: Request pattern
+      description: >-
+        A description of the requests a criterion covers. **One type, four uses**: a stub's
+        `request`, the body of `POST /__admin/requests/count`, `/find` and `/remove`, and the body of
+        `POST /__admin/near-misses/request-pattern`. The server compiles all four through the same
+        compiler, so the contract shares one schema — if the models diverged, a test could pass
+        against a stub that would never have matched.
+
+
+        A request matches when **every** stated criterion matches; an absent criterion is a
+        wildcard, so an empty pattern covers everything.
+
+
+        Two URL criteria on one pattern are refused 422. WireMock resolves them by a fixed field
+        precedence and its echo silently omits the criteria it discarded, so a stub matching on a
+        field its author did not intend reads back as though the others were never written
+        (deviation #47). The exclusivity is not expressed in this schema — a mutually exclusive
+        union of five variants would make the shared type unusable for the SDK — so it is a 422
+        rather than a type error, and it is the one place on this object where that is true.
+      properties:
+        method:
+          type: string
+          description: >-
+            The HTTP method, or `ANY` for a wildcard. Compared after trimming and upper-casing, so
+            `any` and `ANY` are one criterion. Any method name is accepted, including one WireMock's
+            own enumeration does not define, because a mock server exists to stand in for services
+            that have them.
+          examples: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE, ANY]
+        url:
+          type: string
+          description: >-
+            **Byte-exact** match on path and query as received, so query parameter order matters.
+            Must start with `/`.
+        urlPattern:
+          type: string
+          description: A regular expression matched in full against path and query together.
+        urlPath:
+          type: string
+          description: Exact match on the path alone, ignoring the query. Must start with `/`.
+        urlPathPattern:
+          type: string
+          description: A regular expression matched in full against the path alone.
+        urlPathTemplate:
+          type: string
+          description: >-
+            A WireMock 3 path template such as `/orders/{id}`, matched against the path and binding
+            each variable for `pathParameters`.
+          examples: ['/orders/{id}', '/tenants/{tenant}/orders/{id}']
+        pathParameters:
+          type: object
+          description: >-
+            A matcher per template variable. Requires a `urlPathTemplate`, and every name must be a
+            variable that template binds — both are refused 422. WireMock accepts the first and drops
+            the whole block, so an unsatisfiable criterion registers and the stub then matches *every*
+            request, which is the widest possible failure arrived at silently (deviation #54).
+          additionalProperties:
+            $ref: '#/components/schemas/ContentMatcher'
+        queryParameters:
+          type: object
+          description: >-
+            A matcher per query parameter. A repeated parameter matches when **any** of its values
+            satisfies the matcher; `?x=` and a bare `?x` are both present-with-empty-string, never
+            absent. Use `{"absent": true}` for "must not be present".
+          additionalProperties:
+            $ref: '#/components/schemas/ContentMatcher'
+        headers:
+          type: object
+          description: >-
+            A matcher per header. Names are case-insensitive in both directions; values are
+            case-sensitive unless the matcher sets `caseInsensitive`. A repeated header matches when
+            any of its values satisfies the matcher — WireMock instead picks the value at minimum
+            edit distance and matches that one, so mockulus matches strictly more here and no suite
+            that passes on WireMock can fail on this (deviation #29).
+          additionalProperties:
+            $ref: '#/components/schemas/ContentMatcher'
+        cookies:
+          type: object
+          description: A matcher per cookie name.
+          additionalProperties:
+            $ref: '#/components/schemas/ContentMatcher'
+        formParameters:
+          type: object
+          description: >-
+            A matcher per form field, for `application/x-www-form-urlencoded` bodies. The body is
+            parsed lazily, so a request matched by URL and method alone never pays for it.
+          additionalProperties:
+            $ref: '#/components/schemas/ContentMatcher'
+        basicAuthCredentials:
+          $ref: '#/components/schemas/BasicAuthCredentials'
+        bodyPatterns:
+          type: array
+          description: >-
+            Criteria over the request body. **All** of them must match. They are evaluated cheapest
+            first — equality before regex before anything that has to parse the body — which is an
+            ordering the server chooses and no stub needs to think about.
+          items:
+            $ref: '#/components/schemas/ContentMatcher'
+      additionalProperties: false
+
+    ResponseDefinition:
+      type: object
+      title: Response definition
+      description: >-
+        What a matching request is served. Every field here is resolved at registration — regexes
+        compiled, templates parsed, base64 decoded, body files inlined — so the request path only
+        ever evaluates (SPEC §16.3).
+      properties:
+        status:
+          type: integer
+          format: int32
+          minimum: 100
+          maximum: 599
+          default: 200
+          description: >-
+            The HTTP status. WireMock writes a positive out-of-range status unvalidated, producing a
+            malformed status line on the wire, and treats a non-positive one as unset; mockulus
+            refuses the first and normalises the second. This contract admits only the valid range,
+            because a client that can write `status: 0` and receive 200 is being handed the
+            accept-and-behave-differently shape the whole surface exists to refuse.
+
+
+            A `status` given as a string is refused 422 rather than coerced (deviation #36).
+        statusMessage:
+          type: string
+          description: >-
+            The HTTP/1.1 reason phrase. Setting it has a cost worth knowing before you do:
+            Go's `net/http` cannot choose a reason phrase, so a stub that sets this is written over a
+            hijacked connection and **the connection closes after the response** (deviation #7). A
+            stub that does not set it is untouched, and HTTP/2 carries no reason phrase at all.
+
+
+            The phrase is encoded once at registration exactly as WireMock encodes it: CR and LF each
+            become `?`, and a rune outside Latin-1 becomes `?`. So it can neither split the response
+            nor be refused for something WireMock accepts.
+        headers:
+          type: object
+          description: >-
+            The response headers. A value is one string or a non-empty array of strings; an empty
+            array names a header and gives it nothing to say, and is refused 422 as WireMock refuses
+            it.
+
+
+            Two spellings of one name are one header, folded into the first spelling the document
+            used — the stored document says so too, or it would stop describing the response the
+            server will serve. A one-element array is stored and echoed as an array where WireMock
+            collapses it to a string, which is a difference in the document and not on the wire
+            (deviation #44).
+
+
+            A `Content-Type` declared more than once — as an array of media types or under two
+            spellings of the name — is refused 422. A response carries exactly one Content-Type and
+            its value is one media type; two of them describes a message that cannot be sent, and
+            there is no reading of the pair more likely to be right than any other (deviation #48).
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: array
+                items:
+                  type: string
+                minItems: 1
+        body:
+          type: string
+          description: >-
+            An inline text body. **Exactly one** body form may be set — `body`, `jsonBody`,
+            `base64Body` or `bodyFileName` — and more than one is refused 422 naming both fields.
+            WireMock accepts the combination and silently discards all but `body` (deviation #19).
+            An explicit `null` reads as absence rather than as a competing form.
+
+
+            No `Content-Type` is emitted unless the stub sets one. A non-string `body` is refused
+            rather than coerced (deviation #36).
+        jsonBody:
+          description: >-
+            An inline JSON body, served as the tokens it was registered with — insignificant
+            whitespace is dropped and nothing else is rewritten. WireMock re-serializes the document,
+            so `1e2` becomes `100` and a `\u` escape becomes the character it names; the documents
+            are structurally equal either way and only the bytes differ (deviation #38).
+        base64Body:
+          type: string
+          contentEncoding: base64
+          description: >-
+            A binary body, base64-encoded. It is decoded at registration and, when the stub asks for
+            response templating, templated after decoding — WireMock never templates a `base64Body`,
+            so a payload encoded to keep it out of a template renders here and stays literal there
+            (deviation #46).
+        bodyFileName:
+          type: string
+          description: >-
+            The name of a file in the response-body file store. Resolved at snapshot build **and** on
+            the admin write that registers the stub, so the replica that handled the write serves the
+            file's bytes on the very next request rather than an empty body until the next reload.
+
+
+            Existence is deliberately not checked at registration: registering a stub before
+            uploading its file is legal. A name that is malformed *is* refused, because it could never
+            resolve at all. A stub whose file is missing when the snapshot is built serves 500 with
+            code 1022 until the file appears (SPEC §6.9).
+        fixedDelayMilliseconds:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            A fixed delay before the response is written. A negative or fractional value is refused
+            422 rather than normalised (deviation #36). A stub's own delay overrides the global one
+            from `POST /__admin/settings`; the fixed and distributed parts are summed.
+        delayDistribution:
+          $ref: '#/components/schemas/DelayDistribution'
+        chunkedDribbleDelay:
+          $ref: '#/components/schemas/ChunkedDribbleDelay'
+        fault:
+          type: string
+          enum:
+            - CONNECTION_RESET_BY_PEER
+            - EMPTY_RESPONSE
+            - MALFORMED_RESPONSE_CHUNK
+            - RANDOM_DATA_THEN_CLOSE
+          description: >-
+            Breaks the response deliberately, for testing a client's failure handling. A fault
+            replaces the response rather than decorating it, so combining one with a body is refused
+            422 — a stub asking for both is stating two different intents.
+
+
+            Faults are byte-faithful on HTTP/1.1 only. Over HTTP/2 there is no connection to hijack
+            and the best available answer is a stream reset, which is why h2c is off by default
+            (deviation #15).
+        transformers:
+          type: array
+          description: >-
+            The response transformers to run. Only `response-template` is recognised; any other name
+            is refused 422 with code 1004, because an unrecognised transformer would silently do
+            nothing.
+
+
+            Template parse errors and unknown helpers are refused at registration rather than
+            deferred to serve time (deviation #13), so a stub that registers renders.
+          items:
+            type: string
+            enum: [response-template]
+        transformerParameters:
+          type: object
+          description: >-
+            Arbitrary values exposed to templates as `parameters`. Open by design: this is the stub
+            author's own data and the server stores it verbatim.
+
+
+            `disableBodyTemplating` is a mockulus extension rather than parity — WireMock has no such
+            parameter and templates an inline body either way, and its own
+            `disableBodyFileTemplating` guards the `bodyFileName` path only. It earns its place
+            because a payload that is itself a Handlebars template is exactly the body a stub wants
+            to exempt, and a stub carrying it renders differently on the two servers (deviation #31).
+          properties:
+            disableBodyTemplating:
+              type: boolean
+              description: >-
+                Exempts the body from templating while leaving the headers templated. A value that is
+                not a boolean is refused 422 rather than read as absent, which would template the body
+                its author asked to exempt.
+          additionalProperties: true
+      additionalProperties: false
+
+    DelayDistribution:
+      title: Delay distribution
+      description: >-
+        A sampled delay, applied per matched response. Used on a stub's `response` and, identically,
+        in the deployment's global settings — one document, one parser, one answer to what a valid
+        distribution is.
+      oneOf:
+        - type: object
+          title: Uniform
+          properties:
+            type:
+              type: string
+              const: uniform
+            lower:
+              type: integer
+              format: int64
+              minimum: 0
+              description: The lower bound in milliseconds.
+            upper:
+              type: integer
+              format: int64
+              minimum: 0
+              description: The upper bound in milliseconds; it must not be below `lower`.
+          required: [type, lower, upper]
+          additionalProperties: false
+        - type: object
+          title: Log-normal
+          properties:
+            type:
+              type: string
+              const: lognormal
+            median:
+              type: integer
+              format: int64
+              minimum: 0
+              description: The median delay in milliseconds.
+            sigma:
+              type: number
+              minimum: 0
+              description: The standard deviation of the underlying normal distribution.
+          required: [type, median, sigma]
+          additionalProperties: false
+
+    ChunkedDribbleDelay:
+      type: object
+      title: Chunked dribble delay
+      description: >-
+        Writes the body in `numberOfChunks` pieces spread over `totalDuration`, which is how a client's
+        streaming and timeout behaviour gets exercised. Both members are required.
+      properties:
+        numberOfChunks:
+          type: integer
+          format: int32
+          minimum: 1
+        totalDuration:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The total time in milliseconds over which the chunks are written.
+      required: [numberOfChunks, totalDuration]
+      additionalProperties: false
+
+    StubMapping:
+      type: object
+      title: Stub mapping
+      description: >-
+        One stub: which requests it covers and what it serves. The document the server stores and
+        echoes is the document that was registered — mockulus does not fill in defaults on the way
+        out, and does not canonicalise the spellings inside it (deviation #41). Serving is
+        unaffected either way; only the document differs.
+      properties:
+        id:
+          type: string
+          format: uuid
+          minLength: 36
+          maxLength: 36
+          description: >-
+            The stub's identity, and an alias of `uuid` — both are echoed. It must be the canonical
+            36-character spelling, parsed case-insensitively and resolved to lower case; the server
+            generates a UUIDv4 when neither is given.
+
+
+            A 24-character base64 encoding of the raw bytes, which WireMock accepts and silently
+            rewrites into the dashed form, is refused (deviation #24), as are the dashless,
+            `urn:uuid:` and brace-wrapped spellings WireMock refuses too. Handing a client back an id
+            it did not choose is the quiet substitution this surface exists to prevent.
+        uuid:
+          type: string
+          format: uuid
+          minLength: 36
+          maxLength: 36
+          description: >-
+            An alias of `id`. Giving both is fine when they agree; an `id` and a `uuid` that
+            **disagree** are refused 422 naming `/uuid`. WireMock treats them as one field and lets
+            whichever spelling comes last in the document win, so the stub registers under an identity
+            the client did not necessarily choose and a later `PUT` or `DELETE` on the other id
+            silently hits nothing — or another suite's stub (deviation #22). Sending a single spelling
+            reproduces WireMock exactly.
+        name:
+          type: string
+          description: A human-readable label, stored, echoed and shown in near-miss output.
+        priority:
+          type: integer
+          format: int32
+          default: 5
+          description: >-
+            Selection order among matching stubs, lower first. An arbitrary signed integer compared
+            numerically — no clamping and no range validation, which is what the pinned oracle does.
+            Absent means 5.
+
+
+            Equal priorities break on insertion sequence, newest first, and that sequence is a
+            cluster-global counter, so "most recently added wins" holds across replicas (SPEC §5.3,
+            §7.3).
+        persistent:
+          type: boolean
+          default: false
+          description: >-
+            `true` stores a durable document. Absent or `false` stores one with a TTL
+            (`ephemeral_stub_ttl`, 24 h by default) that `POST /__admin/mappings/reset` also sweeps.
+
+
+            WireMock keeps non-persistent stubs until the process restarts; a TTL is the documented
+            equivalent for a long-running cluster that never restarts (deviation #3). A stub whose TTL
+            expires naturally may keep matching on replicas that already hold it for up to
+            `resync_interval`, because expiry does not bump the epoch — explicit deletes and resets
+            propagate within `sync_interval` (deviation #17).
+        metadata:
+          type: object
+          description: >-
+            Arbitrary JSON, stored and echoed untouched, and searchable through `find-by-metadata` and
+            `remove-by-metadata`. Open by design: this is the caller's own data.
+
+
+            Tagging every stub a run creates with a run id, and cleaning up through
+            `remove-by-metadata`, is the discipline SPEC §1 asks of suites sharing a deployment — the
+            alternative is a global reset that takes another team's stubs with it.
+          additionalProperties: true
+          examples:
+            - team: checkout
+              suite: smoke
+        scenarioName:
+          type: string
+          description: >-
+            The scenario this stub belongs to. A scenario exists because stubs name it, so this field
+            is what brings one into being and deleting the last stub that names it is what ends it.
+        requiredScenarioState:
+          type: string
+          description: >-
+            The stub matches only while its scenario is in this state; in any other state it is
+            treated as non-matching and iteration continues. Needs a `scenarioName` — stating a state
+            without one is refused 422 rather than ignored.
+        newScenarioState:
+          type: string
+          description: >-
+            The state the scenario moves to after this stub serves. Needs a `scenarioName`. The
+            transition is a compare-and-swap, so concurrent requests cannot both drive the same
+            step (SPEC §9.3).
+        request:
+          $ref: '#/components/schemas/RequestPattern'
+        response:
+          $ref: '#/components/schemas/ResponseDefinition'
+      additionalProperties: false
+      examples:
+        - id: 9c47901d-6bd5-4b7a-8896-c0ac9b8d0b4e
+          name: create order — happy path
+          priority: 3
+          persistent: true
+          scenarioName: order-flow
+          requiredScenarioState: Started
+          newScenarioState: order-created
+          metadata:
+            team: checkout
+            suite: smoke
+          request:
+            method: POST
+            urlPath: /api/orders
+            headers:
+              Content-Type:
+                contains: application/json
+              X-Legacy:
+                absent: true
+            queryParameters:
+              dryRun:
+                matches: 'true|false'
+            bodyPatterns:
+              - matchesJsonPath:
+                  expression: $.customer.id
+                  matches: '[A-Z]{2}[0-9]{6}'
+              - equalToJson: '{"channel":"web"}'
+                ignoreExtraElements: true
+          response:
+            status: 201
+            headers:
+              Content-Type: application/json
+            jsonBody:
+              orderId: "{{randomValue type='UUID'}}"
+              status: CREATED
+            transformers: [response-template]
+            fixedDelayMilliseconds: 40
+
+    StubMappingList:
+      type: object
+      title: Stub mapping list
+      description: WireMock's list envelope for stub mappings.
+      properties:
+        mappings:
+          type: array
+          items:
+            $ref: '#/components/schemas/StubMapping'
+        meta:
+          $ref: '#/components/schemas/ListMeta'
+      required: [mappings, meta]
+      additionalProperties: false
+
+    ListMeta:
+      type: object
+      title: List metadata
+      description: >-
+        The size of the set the listing is over. On `GET /__admin/mappings` that is the whole
+        snapshot rather than the page, so a paginating client can tell when it is done; on the
+        metadata searches it is the size of the answer itself.
+      properties:
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+      required: [total]
+      additionalProperties: false
+
+    StubMappingImport:
+      type: object
+      title: Stub mapping import
+      description: The batch and the options that govern how it is applied.
+      properties:
+        mappings:
+          type: array
+          description: >-
+            The stubs to import. Required: a `null` array is refused 422 where WireMock raises an
+            unhandled 500 (deviation #21). An empty array is legal and imports nothing, which still
+            lets `deleteAllNotInImport` clear the deployment.
+
+
+            The batch is applied back to front, so the **first** element of the array wins a tie
+            against the last — which is the end WireMock's importer picks, and a mappings file where
+            two stubs can answer one request is the ordinary shape of one.
+          items:
+            $ref: '#/components/schemas/StubMapping'
+        importOptions:
+          $ref: '#/components/schemas/ImportOptions'
+      required: [mappings]
+      additionalProperties: false
+
+    ImportOptions:
+      type: object
+      title: Import options
+      properties:
+        duplicatePolicy:
+          type: string
+          enum: [OVERWRITE, IGNORE]
+          default: OVERWRITE
+          description: >-
+            What to do when an imported stub's id is already taken. `OVERWRITE` replaces the stub in
+            place and preserves its precedence, exactly as `PUT` does; `IGNORE` leaves the existing
+            stub untouched.
+
+
+            An `importOptions` object present **without** this key is treated as the documented
+            default `OVERWRITE`; WireMock reads the absent policy as `IGNORE` and keeps the existing
+            stub. When the whole object is omitted the two agree on `OVERWRITE`, so the divergence is
+            only the partially-filled object (deviation #40).
+        deleteAllNotInImport:
+          type: boolean
+          default: false
+          description: >-
+            Removes every stub whose id is not in this payload, which turns an import into a
+            declaration of the deployment's whole stub set.
+      additionalProperties: false
+
+    LoggedRequest:
+      type: object
+      title: Logged request
+      description: >-
+        A request as recorded, or as the server understood a described one. The journal fills in
+        every field; the request echoed back by `POST /__admin/near-misses/request` fills in only
+        what a description can supply, which is why the journal-only members are optional here.
+      properties:
+        method:
+          type: string
+        url:
+          type: string
+          description: The path and query as received.
+        absoluteUrl:
+          type: string
+          description: The full URL including scheme and authority. Journal entries only.
+        clientIp:
+          type: string
+          description: The peer address the request arrived from. Journal entries only.
+        headers:
+          type: object
+          description: >-
+            The headers as they arrived, under the spellings they arrived with. A repeated header is
+            an array; a single-valued one is a bare string.
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: array
+                items:
+                  type: string
+        cookies:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: array
+                items:
+                  type: string
+        queryParams:
+          type: object
+          description: >-
+            The query parameters in WireMock's own shape — one object per name carrying that name and
+            every value it had. A client can deserialize this with the same type it uses for a
+            WireMock journal entry.
+          additionalProperties:
+            $ref: '#/components/schemas/QueryParameter'
+        body:
+          type: string
+          description: >-
+            The request body as text, capped at `journal_max_body` (64 KiB by default). A body-criteria
+            match past the cap under-reports by design (deviation #16).
+        bodyTruncated:
+          type: boolean
+          description: >-
+            Present and `true` when the body was cut at the cap. Flagged rather than silent: a
+            verification that matched a truncated body would be reporting something that did not
+            happen.
+        loggedDate:
+          type: integer
+          format: int64
+          description: When the request was recorded, in milliseconds since the epoch. Journal entries only.
+        loggedDateString:
+          type: string
+          description: The same instant in RFC 3339. Journal entries only.
+      required: [method, url, headers, cookies, queryParams, body]
+      additionalProperties: false
+
+    QueryParameter:
+      type: object
+      title: Query parameter
+      description: One query parameter name and every value it carried.
+      properties:
+        key:
+          type: string
+        values:
+          type: array
+          items:
+            type: string
+      required: [key, values]
+      additionalProperties: false
+
+    ServeEvent:
+      type: object
+      title: Serve event
+      description: >-
+        One journal entry: the request, what was served, and which stub served it. The shape mirrors
+        WireMock's `ServeEvent` so a client library can read it (SPEC §11.2).
+      properties:
+        id:
+          type: string
+          description: >-
+            The entry's identity, and its storage key. A client reads an id out of a listing and then
+            asks for or deletes that entry by it, so the two are deliberately one value.
+        request:
+          $ref: '#/components/schemas/LoggedRequest'
+        responseDefinition:
+          type: object
+          description: >-
+            What was served. mockulus records the status alone — the served response's headers and
+            body are the stub's, and the stub is one field away.
+          properties:
+            status:
+              type: integer
+              format: int32
+          required: [status]
+          additionalProperties: false
+        stubMapping:
+          type: object
+          description: >-
+            A summary of the stub that matched: its id and name, absent entirely when nothing matched.
+            The whole document is not repeated on every entry — a journal of ten thousand requests
+            against one stub would carry ten thousand copies of it, and `GET /__admin/mappings/{id}`
+            is one call away.
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+          required: [id, name]
+          additionalProperties: false
+        wasMatched:
+          type: boolean
+          description: Whether any stub matched. `GET /__admin/requests/unmatched` filters on this.
+        traceId:
+          type: string
+          description: >-
+            The W3C trace id of the span that served the request, present only when tracing is on and
+            the trace was sampled. An additive field with no WireMock equivalent, which the
+            differential gate ignores because it compares responses by subset (SPEC §5.6).
+      required: [id, request, responseDefinition, wasMatched]
+      additionalProperties: false
+
+    ServeEventList:
+      type: object
+      title: Serve event list
+      description: The envelope `GET /__admin/requests` answers with.
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServeEvent'
+        meta:
+          $ref: '#/components/schemas/ListMeta'
+        requestJournalDisabled:
+          $ref: '#/components/schemas/RequestJournalDisabled'
+      required: [requests, meta, requestJournalDisabled]
+      additionalProperties: false
+
+    LoggedRequestList:
+      type: object
+      title: Logged request list
+      description: >-
+        The envelope `POST /__admin/requests/find` and `GET /__admin/requests/unmatched` answer with.
+        It carries no `meta`, unlike the serve-event listing: both endpoints answer over the whole
+        scan window rather than a page of it, so there is no total that would say anything the array's
+        length does not.
+      properties:
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoggedRequest'
+        requestJournalDisabled:
+          $ref: '#/components/schemas/RequestJournalDisabled'
+      required: [requests, requestJournalDisabled]
+      additionalProperties: false
+
+    RemovedServeEvents:
+      type: object
+      title: Removed serve events
+      description: >-
+        What `POST /__admin/requests/remove` deleted. The key is `serveEvents` rather than `requests`
+        and the elements are whole events rather than the requests inside them — the one place a
+        criteria query answers with the full event.
+      properties:
+        serveEvents:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServeEvent'
+      required: [serveEvents]
+      additionalProperties: false
+
+    RequestCount:
+      type: object
+      title: Request count
+      description: The answer to a verification.
+      properties:
+        count:
+          type: integer
+          format: int32
+          minimum: 0
+        requestJournalDisabled:
+          $ref: '#/components/schemas/RequestJournalDisabled'
+      required: [count, requestJournalDisabled]
+      additionalProperties: false
+
+    RequestJournalDisabled:
+      type: boolean
+      title: Journal-disabled flag
+      description: >-
+        The flag WireMock puts on every verification envelope, which a client library reads before
+        trusting a count: a `verify()` against a deployment with no journal must fail loudly rather
+        than report zero calls.
+
+
+        On mockulus it is always `false` where it appears, because reaching an envelope at all means
+        the journal is on — the disabled path answers 500 with code 1010 instead of an envelope
+        (deviation #1). It is carried anyway so a WireMock client that checks it finds it.
+      const: false
+
+    Difference:
+      type: object
+      title: Near-miss difference
+      description: >-
+        One criterion that did not line up. WireMock reports its own diff as rendered prose on the
+        serve event, and a caller who has to parse prose to learn which header was wrong is being told
+        less than the scorer already knew — so these are structured. That makes them a mockulus
+        extension, and diagnostic output is explicitly outside the strict-compat surface (SPEC §6.8).
+      properties:
+        kind:
+          type: string
+          description: The criterion class — `method`, `url`, `header`, `query`, `cookie` or `body`.
+        name:
+          type: string
+          description: The header, cookie or parameter name. Absent for `method` and `url`.
+        expected:
+          type: string
+          description: What the stub or pattern asked for, rendered as the matcher describes itself.
+        actual:
+          type: string
+          description: What the request carried.
+      required: [kind, expected, actual]
+      additionalProperties: false
+
+    MatchResult:
+      type: object
+      title: Match result
+      description: How far one candidate was from matching.
+      properties:
+        distance:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: >-
+            0 for an exact match and 1 for nothing in common: the mean of the per-criterion distances,
+            so a stub differing in one of six criteria scores closer than one differing in four of
+            six. String-equality criteria contribute a normalized edit distance, which is what
+            separates "you asked for /api/order and the request was /api/orders" from "the url did not
+            match".
+        differences:
+          type: [array, 'null']
+          description: >-
+            The criteria that did not line up, or `null` when there were none — which is what an exact
+            match against a supplied pattern produces on
+            `POST /__admin/near-misses/request-pattern`.
+          items:
+            $ref: '#/components/schemas/Difference'
+      required: [distance, differences]
+      additionalProperties: false
+
+    NearMiss:
+      type: object
+      title: Near miss
+      description: >-
+        One pairing of a request and a candidate, with the distance between them. Which side is the
+        candidate depends on the endpoint: `/near-misses/request` and
+        `/requests/unmatched/near-misses` pair a request with a `stubMapping`, while
+        `/near-misses/request-pattern` pairs a recorded request with the `requestPattern` that was
+        supplied. Exactly one of the two is present.
+      properties:
+        request:
+          $ref: '#/components/schemas/LoggedRequest'
+        stubMapping:
+          $ref: '#/components/schemas/StubMapping'
+        requestPattern:
+          $ref: '#/components/schemas/RequestPattern'
+        matchResult:
+          $ref: '#/components/schemas/MatchResult'
+      required: [request, matchResult]
+      additionalProperties: false
+
+    NearMissList:
+      type: object
+      title: Near miss list
+      description: >-
+        The envelope every near-miss endpoint answers with. At most three candidates per request —
+        enough to show a pattern and few enough to read.
+      properties:
+        nearMisses:
+          type: array
+          items:
+            $ref: '#/components/schemas/NearMiss'
+      required: [nearMisses]
+      additionalProperties: false
+
+    DescribedRequest:
+      type: object
+      title: Described request
+      description: >-
+        A request to score the current stubs against. This is a *request*, not a request pattern: the
+        values are literal, and the query string is read out of `url` rather than declared separately.
+
+
+        The server ignores members it does not know here rather than refusing them; this contract
+        closes the object anyway, because a caller who writes `urlPath` on this endpoint has written a
+        criterion where a value belongs and would otherwise get three near misses computed against
+        `GET /` with no indication of why.
+      properties:
+        method:
+          type: string
+          default: GET
+          description: Defaults to `GET` when absent.
+        url:
+          type: string
+          default: /
+          description: The path and query, as a request would carry it. Defaults to `/`.
+        headers:
+          type: object
+          description: One literal value per header.
+          additionalProperties:
+            type: string
+        cookies:
+          type: object
+          description: One literal value per cookie.
+          additionalProperties:
+            type: string
+        body:
+          type: string
+      additionalProperties: false
+      examples:
+        - method: POST
+          url: /api/orders?dryRun=true
+          headers:
+            Content-Type: application/json
+          body: '{"customer":{"id":"GB123456"}}'
+
+    Scenario:
+      type: object
+      title: Scenario
+      description: One scenario, its current state, and the states its stubs name.
+      properties:
+        id:
+          type: string
+          description: The scenario's identity, which is its name — a scenario has no identity beyond that.
+        name:
+          type: string
+        state:
+          type: string
+          description: The current state. A scenario nothing has moved reads `Started`.
+        possibleStates:
+          type: array
+          description: >-
+            Every state the scenario's stubs name, plus `Started`, which is a possible state of every
+            scenario because it is the state the scenario is in until something moves it and the state
+            `POST /__admin/scenarios/reset` returns it to (deviation #34).
+          items:
+            type: string
+      required: [id, name, state, possibleStates]
+      additionalProperties: false
+
+    ScenarioList:
+      type: object
+      title: Scenario list
+      properties:
+        scenarios:
+          type: array
+          items:
+            $ref: '#/components/schemas/Scenario'
+      required: [scenarios]
+      additionalProperties: false
+
+    ScenarioStateChange:
+      type: object
+      title: Scenario state change
+      description: The target state, which must be one the scenario's stubs name.
+      properties:
+        state:
+          type: string
+          minLength: 1
+      required: [state]
+      additionalProperties: false
+
+    Settings:
+      type: object
+      title: Global settings
+      description: >-
+        The deployment-wide response delay, which is the whole of the supported settings surface.
+        WireMock's other settings — `proxyPassThrough` and its extended block — are refused by name
+        with code 1005 rather than accepted and ignored (SPEC §5.1).
+
+
+        The document is persisted and epoch-bumped, so it is cluster-wide and survives a restart. It
+        applies to matched responses only, and a stub's own delay overrides the global one within each
+        part.
+      properties:
+        fixedDelay:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            A fixed delay in milliseconds added to every matched response whose stub declares none. A
+            negative value is refused rather than accepted and then never waited out, which is what
+            WireMock does with one.
+        delayDistribution:
+          $ref: '#/components/schemas/DelayDistribution'
+      additionalProperties: false
+
+    SettingsEnvelope:
+      type: object
+      title: Settings envelope
+      description: >-
+        WireMock's wrapper around the settings document. A deployment nobody has configured answers an
+        empty `settings` object rather than a 404 or an invented default.
+      properties:
+        settings:
+          $ref: '#/components/schemas/Settings'
+      required: [settings]
+      additionalProperties: false
+
+    Health:
+      type: object
+      title: Health
+      description: >-
+        WireMock 3.2+'s health shape plus mockulus detail. The extras are a catalogued extension, and
+        every WireMock-defined field is present because a client reading any of them must keep working
+        (SPEC §5.6).
+      properties:
+        status:
+          type: string
+          const: healthy
+          description: >-
+            WireMock's health status. It reads `healthy` whenever this handler answers; a replica that
+            cannot answer is not reporting a degraded status, it is not answering, and that is what the
+            Kubernetes probes on `/healthz` and `/readyz` are for.
+        message:
+          type: string
+        version:
+          type: string
+          description: The mockulus version.
+        uptimeInSeconds:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+        store:
+          type: object
+          description: Which store driver this deployment resolved to — `memory`, `couchbase` or `file`.
+          properties:
+            driver:
+              type: string
+          required: [driver]
+          additionalProperties: false
+        stubs:
+          type: integer
+          format: int32
+          description: How many stubs this replica's snapshot holds.
+        epoch:
+          type: integer
+          format: int64
+          description: >-
+            This replica's snapshot epoch. Two replicas reporting different epochs are mid-propagation
+            rather than inconsistent (deviation #11).
+      required: [status, message, version, uptimeInSeconds, timestamp, store, stubs, epoch]
+      additionalProperties: false
+
+    VersionInfo:
+      type: object
+      title: Version
+      properties:
+        version:
+          type: string
+          description: The mockulus version.
+        guessedWireMockVersion:
+          type: string
+          description: >-
+            The WireMock surface claim, `3.x-subset`. It is a statement about which API is spoken
+            rather than a version to compare against, so a client should read it as a marker and not
+            parse it as semver.
+        goVersion:
+          type: string
+          description: The Go toolchain the binary was built with. An additive field with no WireMock equivalent.
+      required: [version, guessedWireMockVersion]
+      additionalProperties: false

@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-expected-type-dispatch-001
+behaviors:
+  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
+  - B-REQ-HEADERS
+  # This case also stands for §5.6 itself. The rule it pins is one nobody would
+  # have written from first principles — it was established by replaying against
+  # the pinned oracle and diffing, which is exactly what `wm: verified` means.
+  - B-PROSE-DIFFERENTIAL-ORACLE
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The trap, stated as one request answered four ways.
+#
+# Four stubs carry the same wall-clock expected value, `2021-06-14T12:00:00`,
+# two of them with a `Z` and two without. Nothing else about them differs. The
+# `Z` alone decides whether the comparison is over instants or over wall-clock
+# fields, and for the two actuals below those two readings give OPPOSITE
+# answers — so a single request gets served by the zoned `before` stub and the
+# zoneless `after` stub simultaneously.
+#
+# This is the case that fails if the comparison mode is dispatched on anything
+# other than the parsed type of the *expected* value. Normalising both sides to
+# instants makes all four stubs behave like the zoned pair; comparing both sides
+# as text makes all four behave like the zoneless pair. Either way half of the
+# eight assertions below invert, and no assertion here is redundant with another.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0005-0001-4000-8000-000000000001",
+         "name": "zoned expected, before",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-expected-type-dispatch-001/zoned-before",
+                     "headers": {"X-When": {"before": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "zoned-before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2021-06-14T12:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0005-0001-4000-8000-000000000002",
+         "name": "zoned expected, after",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-expected-type-dispatch-001/zoned-after",
+                     "headers": {"X-When": {"after": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "zoned-after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0005-0001-4000-8000-000000000003",
+         "name": "zoneless expected, before",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-expected-type-dispatch-001/zoneless-before",
+                     "headers": {"X-When": {"before": "2021-06-14T12:00:00"}}},
+         "response": {"status": 200, "body": "zoneless-before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2021-06-14T12:00:00"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0005-0001-4000-8000-000000000004",
+         "name": "zoneless expected, after",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-expected-type-dispatch-001/zoneless-after",
+                     "headers": {"X-When": {"after": "2021-06-14T12:00:00"}}},
+         "response": {"status": 200, "body": "zoneless-after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # ---- Actual `2021-06-14T13:00:00+03:00`: the instant 10:00Z, the wall clock
+  # 13:00. As an instant it is before the threshold; as wall-clock text it is
+  # after it. Both stubs that name the same threshold serve it, on opposite
+  # sides.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoned-before
+      headers: {X-When: "2021-06-14T13:00:00+03:00"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "zoned-before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoned-after
+      headers: {X-When: "2021-06-14T13:00:00+03:00"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoneless-after
+      headers: {X-When: "2021-06-14T13:00:00+03:00"}
+    expect: {status: 200, body: "zoneless-after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoneless-before
+      headers: {X-When: "2021-06-14T13:00:00+03:00"}
+    expect: {status: 404}
+
+  # ---- Actual `2021-06-14T11:00:00-05:00`: the instant 16:00Z, the wall clock
+  # 11:00. Every one of the four answers above flips, which rules out the
+  # reading that one of the two stub pairs is simply broken in one direction.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoned-after
+      headers: {X-When: "2021-06-14T11:00:00-05:00"}
+    expect: {status: 200, body: "zoned-after"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoned-before
+      headers: {X-When: "2021-06-14T11:00:00-05:00"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoneless-before
+      headers: {X-When: "2021-06-14T11:00:00-05:00"}
+    expect: {status: 200, body: "zoneless-before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-expected-type-dispatch-001/zoneless-after
+      headers: {X-When: "2021-06-14T11:00:00-05:00"}
+    expect: {status: 404}

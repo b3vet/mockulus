@@ -15,10 +15,34 @@ and the JSONPath evaluator of §6.7 were both planned as dependencies and are
 mockulus-authored instead, under Apache-2.0 like the rest of the tree, so there
 is no hand-curated section here to drift.
 
+The binary also embeds a static web UI (internal/adminui), built from the pnpm
+workspace under ui/. go-licenses reads the Go module graph and nothing else, so
+those npm packages are gated separately: scripts/check-npm-licenses.sh holds
+every package the lockfile resolves against a permissive allowlist and fails the
+build on anything outside it, with each exception named and argued in the script.
+The same CI job runs both halves.
+
+There is no "Embedded web UI" section listing those packages below, and the
+absence is a statement rather than an oversight. Such a section has to name the
+packages whose code is actually inlined into the shipped bundle, and that set
+cannot be read off the manifests: ui/package.json declares no runtime
+dependencies at all — Svelte is a compiler and Tailwind is a build step — so the
+dependencies/devDependencies split says nothing about what ships, and the great
+majority of what the lockfile resolves is toolchain that never reaches a browser.
+Picking a subset of it by hand would put an unverified license claim in the one
+file that exists to hold verified ones. The section belongs here, immediately
+below this paragraph, and it is added when the bundle's own module graph can be
+read out of the build rather than guessed at from a manifest.
+
 --------------------------------------------------------------------------------
 github.com/beorn7/perks/quantile
 License: MIT
 Source:  https://github.com/beorn7/perks/blob/v1.0.1/LICENSE
+
+--------------------------------------------------------------------------------
+github.com/cenkalti/backoff/v5
+License: MIT
+Source:  https://github.com/cenkalti/backoff/blob/v5.0.3/LICENSE
 
 --------------------------------------------------------------------------------
 github.com/cespare/xxhash/v2
@@ -81,6 +105,11 @@ License: BSD-2-Clause
 Source:  https://github.com/gorilla/websocket/blob/v1.5.3/LICENSE
 
 --------------------------------------------------------------------------------
+github.com/grpc-ecosystem/grpc-gateway/v2
+License: BSD-3-Clause
+Source:  https://github.com/grpc-ecosystem/grpc-gateway/blob/v2.27.7/LICENSE
+
+--------------------------------------------------------------------------------
 github.com/munnerz/goautoneg
 License: BSD-3-Clause
 Source:  https://github.com/munnerz/goautoneg/blob/a7dc8b61c822/LICENSE
@@ -111,6 +140,11 @@ License: Apache-2.0
 Source:  https://github.com/prometheus/procfs/blob/v0.21.1/LICENSE
 
 --------------------------------------------------------------------------------
+github.com/santhosh-tekuri/jsonschema/v6
+License: Apache-2.0
+Source:  https://github.com/santhosh-tekuri/jsonschema/blob/v6.0.2/LICENSE
+
+--------------------------------------------------------------------------------
 github.com/segmentio/ksuid
 License: MIT
 Source:  https://github.com/segmentio/ksuid/blob/v1.0.4/LICENSE.md
@@ -131,14 +165,34 @@ License: Apache-2.0
 Source:  https://github.com/open-telemetry/opentelemetry-go/blob/v1.40.0/LICENSE
 
 --------------------------------------------------------------------------------
+go.opentelemetry.io/otel/exporters/otlp/otlptrace
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/v1.40.0/exporters/otlp/otlptrace/LICENSE
+
+--------------------------------------------------------------------------------
+go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/otlptracehttp/v1.40.0/exporters/otlp/otlptrace/otlptracehttp/LICENSE
+
+--------------------------------------------------------------------------------
 go.opentelemetry.io/otel/metric
 License: Apache-2.0
 Source:  https://github.com/open-telemetry/opentelemetry-go/blob/metric/v1.40.0/metric/LICENSE
 
 --------------------------------------------------------------------------------
+go.opentelemetry.io/otel/sdk
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/sdk/v1.40.0/sdk/LICENSE
+
+--------------------------------------------------------------------------------
 go.opentelemetry.io/otel/trace
 License: Apache-2.0
 Source:  https://github.com/open-telemetry/opentelemetry-go/blob/trace/v1.40.0/trace/LICENSE
+
+--------------------------------------------------------------------------------
+go.opentelemetry.io/proto/otlp
+License: Apache-2.0
+Source:  https://github.com/open-telemetry/opentelemetry-proto-go/blob/otlp/v1.9.0/otlp/LICENSE
 
 --------------------------------------------------------------------------------
 go.uber.org/multierr
@@ -164,6 +218,11 @@ Source:  https://cs.opensource.google/go/x/sys/+/v0.47.0:LICENSE
 golang.org/x/text
 License: BSD-3-Clause
 Source:  https://cs.opensource.google/go/x/text/+/v0.40.0:LICENSE
+
+--------------------------------------------------------------------------------
+google.golang.org/genproto/googleapis/api/httpbody
+License: Apache-2.0
+Source:  https://github.com/googleapis/go-genproto/blob/8636f8732409/googleapis/api/LICENSE
 
 --------------------------------------------------------------------------------
 google.golang.org/genproto/googleapis/rpc

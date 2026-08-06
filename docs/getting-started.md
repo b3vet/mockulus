@@ -10,7 +10,7 @@ quietly ignored.
 **Who this is for.** You already have a WireMock deployment or a test suite that drives one, and you
 want it to survive horizontal scaling: dependency mocks under load tests, per-test stub registration
 in CI, or a long-lived mock of a downstream service in a dev or staging cluster. If your mappings
-use proxying, recording, webhooks, XML/XPath, or JSON Schema matching, mockulus v1 will reject them —
+use proxying, recording, webhooks, XML/XPath, or multipart matching, mockulus v1 will reject them —
 read [The subset, and what a refusal looks like](#the-subset-and-what-a-refusal-looks-like) before
 you plan a migration, not after, and then [Migrating from WireMock](migrating-from-wiremock.md) when
 you do.
@@ -318,9 +318,8 @@ $ curl -s http://localhost:8080/__admin/recordings/status
 
 ### What is not here
 
-Absent from v1 entirely, and rejected on sight: XML and XPath matching (`equalToXml`,
-`matchesXPath`), JSON Schema matching (`matchesJsonSchema`), date/time matchers (`before`, `after`,
-`equalToDateTime`), multipart matching, proxying (`proxyBaseUrl`), record and playback, webhooks
+Absent entirely, and rejected on sight: XML and XPath matching (`equalToXml`,
+`matchesXPath`), multipart matching, proxying (`proxyBaseUrl`), record and playback, webhooks
 (`postServeActions`), custom matchers, gRPC, browser proxying, Java-class extensions, and an admin
 UI. The full field-by-field matrix is [SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix);
 the endpoint matrix is [§5.1](../SPEC.md#51-admin-api-endpoint-matrix).

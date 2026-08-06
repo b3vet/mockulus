@@ -83,6 +83,57 @@ type Config struct {
 	Log LogConfig `yaml:"log"`
 
 	MetricsEnabled bool `yaml:"metrics_enabled" default:"true" doc:""`
+
+	// UIEnabled governs the embedded admin UI of §5.7. On by default, because
+	// the UI is the point of shipping one; off, the whole `/__admin/mockulus/ui`
+	// prefix answers the ordinary unsupported-endpoint 404 and the admin-port
+	// redirect disappears, so a hardened deployment can remove the surface
+	// rather than merely leave it unused.
+	UIEnabled bool `yaml:"ui_enabled" default:"true" doc:"Serve the embedded admin UI at ~/__admin/mockulus/ui/~ (§5.7)"`
+
+	Tracing TracingConfig `yaml:"tracing"`
+}
+
+// TracingConfig holds the optional OpenTelemetry tracing of SPEC §14.3.
+//
+// Tracing is configured here and nowhere else: the standard OTEL_* environment
+// variables the SDK can autoconfigure itself from are deliberately not read, so
+// that one mechanism owns every knob — the generated §13 table, validation at
+// startup, redaction in the config dump and the `_FILE` secret form all come
+// from these tags, and a second channel would bypass all four.
+type TracingConfig struct {
+	Enabled  bool   `yaml:"enabled" default:"false" doc:"Export OpenTelemetry traces (off by default; §14.3)"`
+	Endpoint string `yaml:"endpoint" default:"" doc:"OTLP/HTTP collector as ~host:port~ (e.g. ~otel-collector:4318~); required when enabled"`
+	Insecure bool   `yaml:"insecure" default:"false" doc:"Send over plain HTTP rather than HTTPS"`
+	Headers  string `yaml:"headers" default:"" secret:"true" doc:"Exporter headers as ~k=v,k=v~ (e.g. an ingestion token)"`
+	// SampleRatio governs root spans only. A request arriving with W3C trace
+	// context follows its caller's decision, which is what makes a mock's spans
+	// appear inside the trace of the test that drove it.
+	SampleRatio float64 `yaml:"sample_ratio" default:"0.1" doc:"Sampling ratio for traces this pod starts itself (0–1); a caller's decision always wins"`
+	ServiceName string  `yaml:"service_name" default:"mockulus" doc:"~service.name~ reported on exported spans"`
+}
+
+// ParsedHeaders decodes the `tracing.headers` value into the map the exporter
+// takes. The spelling is the one OTEL_EXPORTER_OTLP_HEADERS uses, so a value
+// copied from another deployment's environment means the same thing here.
+func (t TracingConfig) ParsedHeaders() (map[string]string, error) {
+	if strings.TrimSpace(t.Headers) == "" {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, pair := range strings.Split(t.Headers, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("%q is not a key=value pair", pair)
+		}
+		out[key] = strings.TrimSpace(value)
+	}
+	return out, nil
 }
 
 // CouchbaseConfig holds the settings of the `couchbase` store driver (SPEC §7.2).
@@ -309,6 +360,29 @@ func (c Config) Validate() error {
 	}
 	if c.TemplateMaxOutputBytes.B() <= 0 {
 		bad("template_max_output_bytes: must be positive")
+	}
+
+	// Tracing is validated rather than defaulted into: an exporter aimed at
+	// nothing would drop every batch it built, and the only evidence would be a
+	// counter nobody is looking at yet on a deployment that believes it is
+	// tracing (SPEC §14.3).
+	if c.Tracing.Enabled {
+		switch {
+		case c.Tracing.Endpoint == "":
+			bad("tracing.endpoint: required when tracing.enabled is set")
+		case strings.Contains(c.Tracing.Endpoint, "://"):
+			bad("tracing.endpoint: %q must be host:port without a scheme; use tracing.insecure to choose http over https",
+				c.Tracing.Endpoint)
+		}
+		if c.Tracing.ServiceName == "" {
+			bad("tracing.service_name: must not be empty")
+		}
+	}
+	if r := c.Tracing.SampleRatio; r < 0 || r > 1 {
+		bad("tracing.sample_ratio: %v is outside 0–1", r)
+	}
+	if _, err := c.Tracing.ParsedHeaders(); err != nil {
+		bad("tracing.headers: %v", err)
 	}
 
 	// TLS is checked here, against the filesystem, rather than left to the

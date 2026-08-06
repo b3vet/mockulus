@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-placement-cookies-001
+behaviors:
+  - B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT
+  - B-REQ-COOKIES
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# The matchers work on `cookies`, with the same semantics.
+#
+# The cookie position is worth its own case rather than being assumed from the
+# header one: the value arrives inside a `Cookie` header that has to be split on
+# `;` and `=` first, and a date carries `:` and `+` characters that a split could
+# plausibly mangle. So one step sends the cookie among others, and one sends a
+# value carrying an offset — which is where a mishandled split would show up as a
+# non-match.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0010-0001-4000-8000-000000000001",
+         "name": "after, on a cookie",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-placement-cookies-001/after",
+                     "cookies": {"when": {"after": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          cookies:
+            when: {after: "2021-06-14T12:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0010-0001-4000-8000-000000000002",
+         "name": "equalToDateTime, on a cookie",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-placement-cookies-001/equal",
+                     "cookies": {"when": {"equalToDateTime": "2021-06-14T12:00:00Z"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/after
+      headers: {Cookie: "when=2021-06-14T13:00:00Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "after"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/after
+      headers: {Cookie: "when=2021-06-14T11:00:00Z"}
+    expect: {status: 404}
+
+  # Strict at this position too.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/after
+      headers: {Cookie: "when=2021-06-14T12:00:00Z"}
+    expect: {status: 404}
+
+  # Found among several pairs, so the header really is being split rather than
+  # compared whole.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/after
+      headers: {Cookie: "other=1; when=2021-06-14T13:00:00Z; last=z"}
+    expect: {status: 200, body: "after"}
+
+  # No such cookie is a non-match, as an absent header is.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/after
+      headers: {Cookie: "other=1"}
+    expect: {status: 404}
+
+  # Equality by instant, on a cookie value carrying an offset — the characters
+  # most likely to be lost on the way through the cookie header.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/equal
+      headers: {Cookie: "when=2021-06-14T15:00:00+03:00"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/equal
+      headers: {Cookie: "when=2021-06-14T12:00:00+03:00"}
+    expect: {status: 404}
+
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-placement-cookies-001/equal
+      headers: {Cookie: "when=2021-06-14T12:00:00Z"}
+    expect: {status: 200, body: "equal"}

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: cov-jsonpath-scan-decodes-node-001
-behaviors: [B-MATCH-MATCHESJSONPATH]
+behaviors: [B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH]
 # Reading a definite path off the undecoded body is mockulus's own mechanism
 # (D-OPEN-14); WireMock has one evaluator and no equivalent to diff against.
 # What the steps hold is the rule that mechanism was allowed to land under: the

@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-schema-overrides-version-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# into the echoed pattern whatever the stub asked for (deviation #41). Every
+# served response is still diffed in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# A `$schema` declared inside the document beats the `schemaVersion` field. The
+# document wins, in both directions.
+#
+# This matters because a schema pasted from a file usually carries its own
+# `$schema`, and a stub author who then also sets `schemaVersion` has written two
+# answers to the same question. Only one of them is honoured, and it is the one
+# they are least likely to be looking at.
+#
+# `format` is the discriminator, because it is the keyword whose behaviour
+# genuinely flips at the draft boundary: asserted under draft-07, ignored under
+# 2020-12. So each stub below names one draft in the field and the *opposite*
+# draft in the document, and the answer says which was used — an arrangement the
+# "both were consulted" and "the field won" hypotheses cannot both survive.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0007-0001-4000-8000-000000000001",
+         "name": "draft-07 in the document, V202012 in the field",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-schema-overrides-version-001/doc-draft07",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "$schema": "http://json-schema.org/draft-07/schema#",
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}},
+                       "schemaVersion": "V202012"}]},
+         "response": {"status": 200, "body": "doc-draft07",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0007-0001-4000-8000-000000000002",
+         "name": "2020-12 in the document, V7 in the field",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-schema-overrides-version-001/doc-2020",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}},
+                       "schemaVersion": "V7"}]},
+         "response": {"status": 200, "body": "doc-2020",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Both controls first: a well-formed address is accepted under either
+  # resolution, so the two answers below differ because of `format` and not
+  # because one of the stubs is inert.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schema-overrides-version-001/doc-draft07
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "doc-draft07"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schema-overrides-version-001/doc-2020
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "doc-2020"}
+
+  # The document said draft-07, so `format` is asserted even though the field
+  # named the draft that ignores it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schema-overrides-version-001/doc-draft07
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 404}
+
+  # And the mirror image: the document said 2020-12, so `format` is ignored even
+  # though the field named draft 7. One direction alone would be explained by
+  # "the newer draft always wins"; the pair is not.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schema-overrides-version-001/doc-2020
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 200, body: "doc-2020"}
+
+  # Whichever draft is in force, the rest of the schema is still enforced.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schema-overrides-version-001/doc-draft07
+      headers: {Content-Type: "application/json"}
+      body: '{}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-schema-overrides-version-001/doc-2020
+      headers: {Content-Type: "application/json"}
+      body: '{"email": 7}'
+    expect: {status: 404}

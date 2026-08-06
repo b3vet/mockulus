@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-jsonschema-body-semantics-001
+behaviors:
+  - B-DEV-DEVIATION-55
+  - B-MATCH-MATCHESJSONSCHEMA
+# WireMock answers differently on every step below, so there is no compatible
+# answer to diff. It falls back to validating the raw request text as a JSON
+# *string* when the body does not parse — so `not json at all` satisfies
+# `{"type":"string"}` there — and for a number, boolean or null body it tries
+# both that reading and the parsed one, matching if either succeeds. The
+# consequence is a matcher that contradicts itself: `{"type":"number"}` and
+# `{"not":{"type":"number"}}` both match the body `4` on WireMock, which was
+# reproduced against the oracle before this case was written.
+#
+# A criterion whose result cannot be reasoned about is not worth reproducing, so
+# a subject that is not a JSON document is simply a non-match here — the answer
+# §6.7 already gives a body that is not JSON.
+wm: n/a
+steps:
+  # A schema that accepts every JSON document there is. A non-match against it
+  # can therefore only mean the body never became a document at all.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d55d55d5-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-body-semantics-001/any",
+                     "bodyPatterns": [{"matchesJsonSchema": true}]},
+         "response": {"status": 200, "body": "any"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-body-semantics-001/any
+      headers: {Content-Type: application/json}
+      body: '{"a":1}'
+    expect: {status: 200, body: "any"}
+
+  # Not JSON: a non-match here, a match on WireMock via the raw-text reading.
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-body-semantics-001/any
+      body: 'not json at all'
+    expect: {status: 404}
+
+  # Trailing content after a complete document is not a document — the same
+  # strictness deviation #35 records for equalToJson and matchesJsonPath.
+  # WireMock reads the first value and ignores the rest.
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-body-semantics-001/any
+      headers: {Content-Type: application/json}
+      body: '{"a":1} trailing'
+    expect: {status: 404}
+
+  # The self-contradiction, made concrete. A string-typed schema against the
+  # number 4: WireMock matches it through the raw-text reading, and so would
+  # also match its negation. Here it is one answer.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d55d55d5-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-body-semantics-001/str",
+                     "bodyPatterns": [{"matchesJsonSchema": {"type": "string"}}]},
+         "response": {"status": 200, "body": "string"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-body-semantics-001/str
+      headers: {Content-Type: application/json}
+      body: '4'
+    expect: {status: 404}
+
+  # A real JSON string still satisfies it, so the schema is live and the step
+  # above is about the body rather than about the matcher being broken.
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-body-semantics-001/str
+      headers: {Content-Type: application/json}
+      body: '"4"'
+    expect: {status: 200, body: "string"}
+
+  # And the negation is the other half of the contradiction: exactly one of the
+  # two answers 200 here, where WireMock answers 200 to both.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d55d55d5-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-jsonschema-body-semantics-001/notstr",
+                     "bodyPatterns": [{"matchesJsonSchema": {"not": {"type": "string"}}}]},
+         "response": {"status": 200, "body": "not-string"}}
+    expect: {status: 201}
+
+  - request:
+      method: POST
+      path: /e2e/deviation-jsonschema-body-semantics-001/notstr
+      headers: {Content-Type: application/json}
+      body: '4'
+    expect: {status: 200, body: "not-string"}

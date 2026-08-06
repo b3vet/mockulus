@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,8 +55,16 @@ func StartWireMock(ctx context.Context, versionFile string) (*WireMock, error) {
 
 	// Port 0 lets Docker pick, and `docker port` reports what it picked, so
 	// concurrent runs on one machine do not collide.
+	//
+	// TZ is pinned because both servers resolve a local date-time against the
+	// zone they are running in, and a differential run compares their answers.
+	// Left unset the two zones are whatever each container and each developer's
+	// machine happened to have, so a case about local time would pass in CI and
+	// fail on a laptop for a reason that has nothing to do with either server.
+	// UTC is also what a container defaults to, so this pins the common case
+	// rather than choosing an unusual one.
 	run := exec.CommandContext(ctx, "docker", "run", "-d", "--name", name,
-		"-p", "0:8080", image)
+		"-e", "TZ=UTC", "-p", "0:8080", image)
 	out, err := run.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("start %s: %w: %s", image, err, out)
@@ -100,7 +109,73 @@ func StartWireMock(ctx context.Context, versionFile string) (*WireMock, error) {
 		_ = wm.Stop()
 		return nil, err
 	}
+	if err := wm.assertIdentity(ctx, image); err != nil {
+		_ = wm.Stop()
+		return nil, err
+	}
 	return wm, nil
+}
+
+// assertIdentity confirms the oracle is the WireMock this run pinned, before a
+// single expectation is derived from it.
+//
+// The container is started here and its port read back from `docker port`, so
+// nothing should be able to answer in its place — this is not closing a live
+// hole. It is mechanising a rule that was paid for once: a stray process
+// answering on a guessed port was mistaken for the oracle, and a batch of
+// confident, wrong findings was recorded from it before `/__admin/version`
+// settled what was actually listening. The rule that came out of that is in
+// AGENTS.md, and a rule the harness itself does not follow is one nobody else
+// will either.
+//
+// The check is deliberately about identity rather than a version match. The
+// pinned tag is what `WIREMOCK_VERSION` names and the reported version is what
+// the image says of itself; requiring the two strings to agree would fail on an
+// image whose tag is a digest or a floating alias, for no gain. What must be
+// true is that something answering as WireMock is there — a mockulus answering
+// this endpoint reports its own shape, which is exactly the confusion that
+// happened.
+func (w *WireMock) assertIdentity(ctx context.Context, image string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.Addr+"/__admin/version", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ask the oracle at %s what it is: %w", w.Addr, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return fmt.Errorf("read the oracle's version at %s: %w", w.Addr, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("the oracle at %s answered %d to /__admin/version; "+
+			"expectations must not be derived from a service that cannot say what it is "+
+			"(pinned image %s)", w.Addr, resp.StatusCode, image)
+	}
+
+	var reported struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(body, &reported); err != nil {
+		return fmt.Errorf("the oracle at %s answered /__admin/version with something that is "+
+			"not JSON, so it is not the pinned WireMock %s: %q", w.Addr, image, string(body))
+	}
+	// mockulus answers this endpoint too, and says so: it reports
+	// `guessedWireMockVersion` beside its own version. That field is how the
+	// original confusion was finally resolved, so it is what is checked for.
+	if bytes.Contains(body, []byte("guessedWireMockVersion")) {
+		return fmt.Errorf("the service at %s is a mockulus, not the pinned WireMock %s — "+
+			"something else is answering on the oracle's port, and every expectation "+
+			"derived from it would be mockulus agreeing with itself", w.Addr, image)
+	}
+	if reported.Version == "" {
+		return fmt.Errorf("the oracle at %s reported no version, so it cannot be confirmed "+
+			"as the pinned WireMock %s", w.Addr, image)
+	}
+	return nil
 }
 
 func (w *WireMock) waitReady(ctx context.Context) error {
@@ -264,6 +339,10 @@ func diffBodies(theirs, ours *NormalizedResponse, ignore []string, mockPort bool
 			theirs.Status == http.StatusNotFound && ours.Status == http.StatusNotFound {
 			return nil
 		}
+		if entry == IgnoreRegisteredMapping && !mockPort &&
+			theirs.Status == http.StatusCreated && ours.Status == http.StatusCreated {
+			return nil
+		}
 		if entry == CompareListingByIdentity {
 			if diffs, isListing := diffListings(theirs.Body, ours.Body); isListing {
 				return diffs
@@ -318,6 +397,22 @@ const IgnoreUnmatchedBody = "$unmatched-body"
 // otherwise use IgnoreUnmatchedBody, which keeps the matched bodies under
 // comparison. Status and headers are still compared either way.
 const IgnoreWholeBody = "$body"
+
+// IgnoreRegisteredMapping skips body comparison on the response that echoes a
+// newly created stub, and only there.
+//
+// That echo is the one admin body the two servers are known to spell
+// differently, and deliberately so: WireMock normalises parts of the document on
+// the way out — a bare `now` operand becomes `now +0 seconds`, a truncation value
+// becomes its lowercase-with-spaces form — while mockulus returns what was
+// registered (deviation #41). Neither difference reaches a matching decision;
+// both servers match identically on every one of those stubs.
+//
+// It is narrow for the reason IgnoreUnmatchedBody is: the blunt $body would also
+// stop comparing the served responses, which is what compatibility actually
+// means. Mappings create is the only admin endpoint that answers 201 with a body,
+// so the status alone identifies it.
+const IgnoreRegisteredMapping = "$registered-mapping"
 
 // CompareListingByIdentity compares a deployment-global listing entry by entry
 // instead of position by position.

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 id: cov-matchers-jsonpath-shapes-001
 behaviors:
-  - B-MATCH-MATCHESJSONPATH
+  - B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH
   - B-REQ-BODYPATTERNS
   - B-ERR-10
 wm: verified

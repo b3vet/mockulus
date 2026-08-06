@@ -1,0 +1,174 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-actual-unparseable-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# An actual value the matcher cannot read is a PLAIN NON-MATCH — a 404 down the
+# ordinary unmatched path, never a 4xx complaint and never a 500. That is the
+# answer §6.7 gives every other matcher fed input of the wrong shape, and it is
+# the one thing about these matchers that a client can trigger at will, so it is
+# worth pinning per spelling rather than once.
+#
+# The bracket is the same one the parsing case uses, and it is what makes each
+# 404 mean "did not parse": these two stubs accept every instant of this century
+# between them, so nothing that parsed can be refused by both.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000c-0001-4000-8000-000000000001",
+         "name": "before a threshold far in the future",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-unparseable-001/upper",
+                     "headers": {"X-When": {"before": "2030-01-01T00:00:00Z"}}},
+         "response": {"status": 200, "body": "upper",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "2030-01-01T00:00:00Z"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000c-0001-4000-8000-000000000002",
+         "name": "after a threshold far in the past",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-unparseable-001/lower",
+                     "headers": {"X-When": {"after": "2000-01-01T00:00:00Z"}}},
+         "response": {"status": 200, "body": "lower",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e000c-0001-4000-8000-000000000003",
+         "name": "equalToDateTime on an instant inside the window",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-actual-unparseable-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The controls, so the 404s below are attributable to the value rather than to
+  # the stubs.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/upper
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "upper"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/lower
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "lower"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/equal
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "equal"}
+
+  # Outright garbage.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/upper
+      headers: {X-When: "not-a-date"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/lower
+      headers: {X-When: "not-a-date"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/equal
+      headers: {X-When: "not-a-date"}
+    expect: {status: 404}
+
+  # A colon-less offset, which is the spelling most likely to be assumed
+  # equivalent to `+03:00` and is not read at all.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/upper
+      headers: {X-When: "2021-06-14T12:13:14+0300"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/lower
+      headers: {X-When: "2021-06-14T12:13:14+0300"}
+    expect: {status: 404}
+
+  # A time with no date.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/upper
+      headers: {X-When: "12:13:14"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/lower
+      headers: {X-When: "12:13:14"}
+    expect: {status: 404}
+
+  # A bare epoch, in seconds and in milliseconds. Numeric input is readable only
+  # through `actualFormat: unix`/`epoch`; without the keyword it is just a
+  # string that is not a date.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/upper
+      headers: {X-When: "1623672794"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/lower
+      headers: {X-When: "1623672794"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/upper
+      headers: {X-When: "1623672794000"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/lower
+      headers: {X-When: "1623672794000"}
+    expect: {status: 404}
+
+  # An ISO-shaped value with impossible fields. The shape is not what is being
+  # accepted; the value has to be a real instant.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/upper
+      headers: {X-When: "2021-13-45T99:99:99Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/lower
+      headers: {X-When: "2021-13-45T99:99:99Z"}
+    expect: {status: 404}
+
+  # Nothing here probes a whitespace-padded value. A header field value has its
+  # surrounding whitespace stripped by the HTTP parser before any matcher sees
+  # it, so the request that would ask the question cannot be sent from a case —
+  # the step would be asserting on RFC 7230 rather than on the matcher.
+  #
+  # The last step closes the other half of the claim: a value that fails to
+  # parse and a value that parses and simply does not satisfy the criterion are
+  # both this same 404, with nothing in the response telling them apart. That is
+  # the behaviour, and it is why an unreadable date is so easy to mistake for a
+  # criterion that is merely unmet.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-actual-unparseable-001/equal
+      headers: {X-When: "2021-06-14T12:13:15Z"}
+    expect: {status: 404}

@@ -3,8 +3,8 @@
 This is the document for whoever gets paged. It covers the deployment shapes
 mockulus supports and when each is right, what the chart will and will not let
 you install, how Couchbase has to be set up, what readiness actually means here,
-what a rolling restart does, what breaks when the store goes away, and which
-metrics are worth waking someone up for.
+what a rolling restart does, what breaks when the store goes away, which metrics
+are worth waking someone up for, and when tracing is worth the switch.
 
 Two things to hold in your head before anything else.
 
@@ -563,6 +563,11 @@ grace period expires the kubelet sends SIGKILL, the journal batch is not flushed
 and in-flight responses are cut off mid-write. The two numbers have to move
 together.
 
+**Tracing adds a small fourth term.** Spans are flushed after the listeners
+close, under a fixed budget of at most 5 s — deliberately not a second
+`shutdown_timeout`, so an unreachable collector cannot push termination past the
+grace period. Section 9 says why that number is what it is.
+
 `preStop.sleep` is the native Kubernetes sleep action, which is enabled by
 default from Kubernetes 1.30. On older clusters replace it with an `exec` hook —
 but note that the distroless image has no shell, so that means changing the base
@@ -752,6 +757,7 @@ These are the ones worth a rule.
 | **The fleet has stopped converging** | `rate(mockulus_snapshot_reload_failures_total[5m]) > 0` | Reloads are being abandoned; pods are serving a snapshot that is getting older. Page if it persists past a couple of `sync_interval`s. |
 | **Stubs are being silently excluded** | `rate(mockulus_snapshot_quarantined_total[15m]) > 0` | Someone registered or edited a document that does not compile on this build. Ticket, not a page — but it explains a 404 nobody can account for. Rate, not total: the counter re-increments on every build while the document is there. |
 | **Verification is under-reporting** | `rate(mockulus_journal_dropped_total[5m]) > 0` | Only meaningful with `journal_enabled: true`. Suites will get wrong `verify()` answers. |
+| **Traces are not reaching the collector** | `rate(mockulus_trace_export_failures_total[5m]) > 0` | Only meaningful with `tracing.enabled: true`. Counts export *batches* the collector did not accept. Mock traffic is unaffected — this is a lost signal, never a lost response. Section 9. |
 | **Someone is guessing the admin token** | `rate(mockulus_admin_requests_total{code="401"}[5m]) > 0` | Refusals are counted deliberately, so a deployment being probed does not look idle. |
 | **Latency SLO** | `histogram_quantile(0.99, sum by (le) (rate(mockulus_http_request_duration_seconds_bucket[5m])))` | The SLO targets in SPEC §16.1 (p99 < 2 ms for exact-URL matches at 20 k RPS) hold on the reference rig — 1 pod, 2 vCPU, 512 MiB. Set your own threshold against your own measurement. |
 | **Unmatched-request rate** | `mockulus_http_requests_total{matched="false"}` vs `{matched="true"}` | A sudden jump usually means a reset destroyed someone's stubs, or a rollout brought up pods that have not converged. Very good early warning; noisy as a page. |
@@ -774,7 +780,333 @@ teams put real credentials in their mocks.
 
 ---
 
-## 9. Security posture
+## 9. Tracing
+
+Tracing is optional and off by default, and until a collector is configured
+nothing about it exists in the process at all. The keys are walked through in
+[configuration.md](configuration.md#tracing) and the contract is
+[SPEC §14.3](../SPEC.md#143-profiling--tracing). This section is the operational
+half: when it earns the switch, what it costs, how to point it at a collector,
+and how to tell a working exporter from a broken one.
+
+### When to turn it on
+
+Metrics tell you that some fraction of requests went unmatched. They cannot tell
+you *which* request, from *which* caller, against *which* snapshot — that is the
+gap tracing closes, and it is worth closing in three situations.
+
+**A 404 nobody can account for.** This is the incident the unmatched-request row
+of section 8 warns you about, and the one the metrics are worst at explaining. A
+span carries `mockulus.matched` and `mockulus.snapshot.epoch` together, which
+separates the two causes that look identical from the client: the stub was never
+registered anywhere, or this particular pod had not converged yet (section 7).
+Without that pair you are comparing `/__admin/health` across pods and hoping the
+problem happens again while you are watching.
+
+**A latency investigation crossing several services.** When the mock is one hop
+of many, the useful question is not "what is mockulus's p99" — section 8 answers
+that — but "was mockulus the slow hop in *this* request". Only a trace can say,
+and only if the mock's spans land inside the caller's trace, which is exactly
+what the parent-based sampling below is for.
+
+**A shared environment with several consumers.** `mockulus.stub.id` and
+`mockulus.stub.name` on the span name the stub that answered, so "whose stub is
+intercepting my call" becomes a lookup rather than an argument.
+
+Leave it off for load tests. The S1–S10 targets of SPEC §16.1 are measured with
+tracing off, and a load test that turns it on is measuring a different system.
+Leave it off, too, wherever nobody has a trace backend they will actually open.
+
+### What it costs
+
+Off, a request loads one atomic pointer, finds it nil, and carries on. That is
+the whole cost of the feature existing, and it is why the SLOs are stated for the
+default.
+
+On, the cost lands in three places, and none of them is between the match and the
+write:
+
+- Starting a span per request, with its method and path. The match outcome, the
+  stub identifiers and the snapshot epoch are added only when the span is
+  actually recording, so an unsampled request does not pay for attributes nobody
+  will read.
+- A batching span processor and one background exporter goroutine.
+- An outbound HTTP connection to the collector, kept alive between batches.
+
+**Export is never on the request path.** Spans are handed to the batcher and
+leave the process on a background goroutine, so a collector that is slow,
+refusing or entirely gone costs served requests nothing but the spans it dropped.
+That is the property that makes it safe to leave tracing on in an environment
+where the collector is less reliable than the mock server — a rule the journal
+follows for the same reason, and the reason neither can turn an observability
+outage into a serving one.
+
+`sample_ratio` is what bounds the rest. It is parent-based, so it does not
+throttle what your callers asked to be traced; it throttles only the traces
+mockulus starts on its own behalf, which is the traffic arriving with no trace
+context — health checkers, load generators, clients that do not propagate. The
+default of `0.1` is what stops "we enabled tracing" on a deployment serving tens
+of thousands of requests a second from becoming an export storm.
+
+### Pointing it at a collector
+
+The ordinary shape is an OpenTelemetry Collector in the cluster, OTLP over HTTP
+on `4318`, cleartext between pods:
+
+```yaml
+tracing:
+  enabled: true
+  endpoint: otel-collector.observability.svc:4318
+  insecure: true
+  sample_ratio: 0.1
+  service_name: mockulus
+```
+
+`insecure: true` is a statement about that one hop, not a posture. Pod-to-pod
+inside a cluster on a port the collector serves in cleartext is exactly what the
+key is for; a collector outside the cluster, or reached across anything you do
+not control, gets `false` and an HTTPS listener. The endpoint is `host:port` with
+no scheme — mockulus refuses one at startup rather than reinterpreting it, so
+this is a mistake you find at rollout rather than in a trace backend that is
+mysteriously empty.
+
+The collector needs its OTLP receiver's HTTP protocol enabled. mockulus speaks
+OTLP/HTTP only and will not fall back to gRPC on `4317`:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+```
+
+The chart surfaces the keys under `tracing`:
+
+```console
+$ helm template mockulus deploy/chart \
+    --set couchbase.connstr=couchbase://cb.mockulus.svc \
+    --set couchbase.existingSecret=mockulus-couchbase \
+    --set tracing.enabled=true \
+    --set tracing.endpoint=otel-collector.observability.svc:4318 \
+    | grep -A 1 MOCKULUS_TRACING
+            - name: MOCKULUS_TRACING_ENABLED
+              value: "true"
+            - name: MOCKULUS_TRACING_ENDPOINT
+              value: "otel-collector.observability.svc:4318"
+            - name: MOCKULUS_TRACING_INSECURE
+              value: "true"
+            - name: MOCKULUS_TRACING_SAMPLE_RATIO
+              value: "0.1"
+            - name: MOCKULUS_TRACING_SERVICE_NAME
+              value: "mockulus"
+```
+
+Turning tracing on without an endpoint fails at render rather than at rollout,
+for the same reason the binary refuses it at startup: the failure is worth
+having before a pod is running, not after.
+
+A hosted backend usually wants an ingestion token in `tracing.headers`, and that
+is a credential, so the chart treats it as one. It goes into a Secret and reaches
+the container by `secretKeyRef` — never as a literal value in the pod spec. Set
+`tracing.existingSecret` to bring your own, which is the form to prefer, since a
+token passed as `tracing.headers` is a token in the release history — the same
+objection section 2 raises against `adminAuth.token`:
+
+```console
+$ kubectl create secret generic mockulus-tracing --from-literal=headers='authorization=Bearer <token>'
+$ helm upgrade --install mockulus deploy/chart \
+    --set tracing.enabled=true \
+    --set tracing.endpoint=otlp.example.com:4318 \
+    --set tracing.insecure=false \
+    --set tracing.existingSecret=mockulus-tracing
+```
+
+### Verifying it works
+
+Three checks, in the order that narrows fastest.
+
+**One — the exporter was built.** Tracing announces itself at startup, and the
+line is the only proof that this pod is exporting at all:
+
+```console
+$ grep 'tracing enabled' mockulus.log
+{"time":"2026-07-29T17:56:57.306019+03:00","level":"INFO","msg":"tracing enabled",
+ "endpoint":"127.0.0.1:14318","sample_ratio":0.1,"service_name":"mockulus"}
+```
+
+No line, no tracing. Note what this does *not* mean: the exporter is constructed
+eagerly but nothing has been sent yet, so the line proves the configuration was
+accepted, not that the collector is reachable.
+
+**Two — the failure counter.** It is a registered series whether or not tracing
+is on, so a zero here proves nothing on its own:
+
+```console
+$ curl -s http://127.0.0.1:19325/metrics | grep trace_export
+# HELP mockulus_trace_export_failures_total Trace export batches the collector did not accept.
+# TYPE mockulus_trace_export_failures_total counter
+mockulus_trace_export_failures_total 0
+```
+
+Read it together with check one. Startup line present and counter flat is a
+healthy exporter; startup line present and counter climbing is the next
+subsection.
+
+**Three — drive a trace you can look up.** This is the check worth knowing,
+because it takes sampling out of the question entirely. Send a request
+carrying a `traceparent` you chose, with the sampled flag set, and the parent
+decision wins over `sample_ratio` whatever it is set to:
+
+```console
+$ curl -s -o /dev/null \
+    -H 'traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' \
+    http://127.0.0.1:19324/hello
+```
+
+Then search the backend for trace `4bf92f3577b34da6a3ce929d0e0e4736`. The span is
+named `mock GET`, its parent is `00f067aa0ba902b7`, and it carries the stub that
+answered:
+
+```
+mock GET  http.request.method=GET  url.path=/hello  http.response.status_code=200
+          mockulus.matched=true  mockulus.stub.name=greeting
+          mockulus.stub.id=4e348e86-cbf1-40d1-9b23-3b6e95b46f05
+          mockulus.snapshot.epoch=0
+```
+
+If that span is missing, the problem is between mockulus and the collector, and
+not sampling — which is otherwise the first thing everyone suspects and the
+hardest to rule out.
+
+### When the collector is broken
+
+A dead collector looks like nothing at all from the mock side, which is the
+design and also the trap: traces silently stop and requests carry on being
+served. `mockulus_trace_export_failures_total` is what makes it visible.
+
+```console
+$ curl -s http://127.0.0.1:19323/metrics | grep -v '^#' | grep trace_export
+mockulus_trace_export_failures_total 15
+```
+
+The reason is in the log, at **most once a minute**:
+
+```
+{"time":"2026-07-29T17:55:10.597146+03:00","level":"WARN",
+ "msg":"trace export failed; spans are being dropped",
+ "error":"traces export: Post \"http://otel-collector:4318/v1/traces\": dial tcp: lookup otel-collector: no such host"}
+```
+
+That split is deliberate and it changes how you read the two. The counter carries
+the *rate* — it increments once per failed batch, so it climbs steadily under
+traffic — while the log carries the *reason* once a minute so a collector outage
+does not bury everything else in the pipeline. The instance above logged twice
+while the counter reached 15. **Alert on the counter's rate; read the log for the
+diagnosis.**
+
+The error text names the failure, and in practice it is one of four:
+
+| What the error ends with | What it means |
+|---|---|
+| `dial tcp: lookup otel-collector: no such host` | The endpoint's DNS name is wrong, or the collector Service does not exist in the namespace you are resolving from. |
+| `connect: connection refused` | The name resolves but nothing is listening — usually the collector's OTLP **HTTP** receiver is not enabled, or the endpoint is aimed at `4317` (gRPC) rather than `4318`. |
+| `http: server gave HTTP response to HTTPS client` | `tracing.insecure` is `false` against a cleartext collector. |
+| `failed to send to …/v1/traces: 401 Unauthorized` | The collector or backend rejected the credentials. `tracing.headers` is missing, wrong, or the `_FILE` path does not hold what you think it does. |
+
+Retries are bounded: the exporter gives a batch fifteen seconds of elapsed retry
+and then abandons it, which is what the `max retry time elapsed` prefix on some
+of these errors is telling you. That ceiling is deliberate — a drain waiting on a
+minute of retries per batch would turn a rolling restart into a stall — and it is
+why the counter, rather than a longer queue, is the answer to an outage.
+
+Nothing needs doing to mockulus when the collector comes back. The next batch
+exports, the counter stops climbing, and the spans lost in between are simply
+gone; they were never buffered to disk and there is nothing to reconcile.
+
+### Tracing and the drain
+
+Pending spans are flushed **after** the listeners have drained, so the last
+requests a pod served are exported rather than thrown away. With a healthy
+collector that flush is imperceptible — a SIGTERM at `shutdown_drain: 1s` exits
+in two seconds, code 0, the same as it would with tracing off.
+
+With an unreachable collector it is not imperceptible, and this is the one thing
+in this section that can hurt the mock server rather than the telemetry. The
+flush gets its **own** `shutdown_timeout` budget, on top of the one section 5
+accounts for, and an exporter retrying into a black hole spends all of it. The
+same instance, `shutdown_drain: 1s`, with its collector made unroutable, took
+sixteen seconds to exit after SIGTERM — one second of drain and fifteen of flush
+— and exited **non-zero**:
+
+```
+mockulus: shut down tracer provider: context deadline exceeded
+```
+
+Kubernetes surfaces that as a container terminating in error, on every pod of a
+rolling restart.
+
+So the arithmetic of section 5 gains one term, and it is a bounded one:
+
+```
+preStopSleepSeconds (3) + shutdown_drain (5) + shutdown_timeout (15)
+                        + the trace flush (at most 5) = 28 s
+terminationGracePeriodSeconds = 30 s
+```
+
+The flush budget is a fixed 5 s — or `shutdown_timeout` when that is smaller,
+so a pod configured to stop quickly still does — rather than another full
+`shutdown_timeout`. That choice is deliberate and worth stating, because the
+alternative is worse than a slow shutdown: past the grace period the kubelet
+sends SIGKILL, which cuts off in-flight responses and leaves the journal batch
+unflushed. A telemetry backend that has gone away must not be able to turn a
+rolling restart into a mock-server incident, so the last spans get a few seconds
+and no more. The trade is that a collector outage loses the final batch, which
+is the right way round: those spans are already the least valuable thing the pod
+is holding.
+
+You still need the section 5 rule if you raise `shutdown_drain` — the drain and
+the grace period move together whether or not tracing is on.
+
+### What reaches your trace backend
+
+A trace backend is usually a wider audience than the cluster — often a hosted
+one — so it is worth being precise about what leaves the pod.
+
+**No stub body, no request body, no header value, ever.** Not in a span name, not
+in an attribute. This is the same line the logs hold (section 8): teams put real
+credentials in their mocks, and the whole point of keeping them out of the log
+pipeline is lost if they go out over OTLP instead. What a span does carry is the
+method, the path, the status, whether anything matched, the serving stub's id and
+name, and the snapshot epoch — identifiers and outcomes, not payloads.
+
+Note that the **path** is an attribute. A deployment whose stub URLs embed
+identifiers — customer numbers, account ids — is exporting those identifiers, the
+same way it already puts them in an access log when `log.requests` is on. That is
+usually fine and occasionally is not; it is the one thing on the list worth
+checking against your own data policy.
+
+**`tracing.headers` is a secret key.** It takes the `_FILE` form for a mounted
+secret and it prints as `[redacted]` in the startup configuration dump, alongside
+`admin_auth_token` and `couchbase.password`. An ingestion token is the one value
+in this group worth stealing, and a debug-level config dump is a log line that
+travels.
+
+**Span names cannot be minted by traffic.** An unrecognised request method
+becomes `mock _OTHER` with the original as an attribute, and admin spans are
+named by endpoint group rather than path. This is the cardinality guard the
+metric labels have (SPEC §14.1) applied to the other signal: mock traffic can no
+more mint span names than it can mint series, so no client can turn your trace
+backend's bill into a denial of service.
+
+**The admin span covers authentication**, so a 401 is a span rather than a gap —
+which is exactly the request an operator investigating a locked-down deployment
+wants to find. `/__admin` served on the mock port produces its admin span and no
+mock span, the same exclusion the mock-port metrics make.
+
+---
+
+## 10. Security posture
 
 The full statement is [SPEC §17](../SPEC.md#17-security) and
 [SECURITY.md](../SECURITY.md). Operationally:
@@ -791,6 +1123,46 @@ process is holding — which is exactly what the token exists to protect.
 `/healthz`, `/readyz` and `/metrics` stay open whatever the token setting: the
 kubelet and Prometheus cannot present one, and none of the three carries stub
 content.
+
+**One exemption, and it is worth understanding rather than discovering.** The
+admin UI's static assets — the HTML, JavaScript and CSS under
+`/__admin/mockulus/ui/` — are served without the token check. Every call the UI
+then makes is checked normally, with the token the operator typed into it.
+
+The reason is mechanical rather than a judgement that assets are harmless: a
+browser cannot attach an `Authorization` header to a page load or to the script
+tags that page pulls in, so a token in front of the assets makes the interface
+unreachable in precisely the deployments that set one. What is exempt is code;
+the data behind it is not, and a request for a stub, a scenario or a journal
+entry is refused without a token exactly as it was before the UI existed.
+
+What this means for you, stated precisely because the loose version of it is
+wrong: **with a token set, the UI assets are the only thing on the admin port
+that answers an unauthenticated caller at all.** Every other path — including
+`/__admin/version` and `/__admin/health` — is `401`. So the exemption does
+disclose something that was previously behind the token: that this is a
+mockulus, and that its UI is enabled. The page title says as much.
+
+It discloses no more than that. The version is fetched by the UI at runtime from
+`/__admin/version`, which is refused like everything else, so an unauthenticated
+visitor gets an interface that cannot load anything and a token prompt. No stub
+content, no configuration, no journal. And it widens nothing an unauthenticated
+caller can *do* — every action still goes through the guarded API.
+
+If that disclosure is unacceptable for your deployment — a mock server whose
+existence is itself worth hiding — `ui_enabled: false` removes it, and the
+prefix goes back to answering `404` like any other unclaimed path. A
+NetworkPolicy that keeps the admin port inside the namespace does the same job
+for the whole surface, which is the posture SPEC §17 recommends regardless.
+
+If you would rather the surface not exist at all, `ui_enabled: false` removes
+it: the whole prefix answers the ordinary unsupported-endpoint `404` and the
+admin port's root stops redirecting. The admin API is unaffected.
+
+**The UI is an in-cluster tool.** The admin listener has no TLS — TLS is
+mock-port only — so reaching it means being inside the cluster or holding a
+`kubectl port-forward`. Exposing it through an ingress is a decision to make
+deliberately, and one that should arrive with the token set.
 
 ```console
 $ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:19315/__admin/mappings
@@ -847,9 +1219,15 @@ retention story, but for the window it exists it is real traffic on disk.
 file, environment, network or system access. A stub cannot read a secret out of
 the pod because there is no helper that reads anything.
 
+**Tracing, when enabled, is an egress path** — the only one besides the store
+that carries request-derived data out of the pod. Spans carry no body and no
+header value, and `tracing.headers` is redacted in the config dump like any other
+secret, but request **paths** do leave the cluster if your collector is outside
+it. Section 9 has the detail.
+
 ---
 
-## 10. Quick reference
+## 11. Quick reference
 
 Ports and paths:
 
