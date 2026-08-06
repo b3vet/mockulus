@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: Apache-2.0
+id: ui-auth-exemption-001
+behaviors: [B-PROSE-UI-ASSET-AUTH-EXEMPTION]
+config: authed
+# The token is ours and so is the UI; WireMock has neither, so a differential
+# replay would report a designed difference as a diff.
+wm: n/a
+#
+# The one exemption to §17's "the guard wraps the mux, so a route added later is
+# protected by existing" — and the case that has to prove it is exactly as wide
+# as §5.7 says and no wider.
+#
+# Both halves are asserted here together, deliberately. "The assets answer 200"
+# on its own is indistinguishable from a deployment with no token configured at
+# all, and "the API answers 401" on its own is the behavior that already existed
+# and is already covered by security-auth-late-routes-001. The claim §5.7 makes
+# is the *pair*: on one running instance, with one token set, unauthenticated
+# assets are served and unauthenticated data is refused. Split across two cases
+# neither half would mean anything.
+#
+# The exemption is mechanical rather than a judgement that assets are harmless.
+# A browser cannot attach an Authorization header to a page load or to the
+# script and stylesheet requests that page issues, so a token in front of the
+# assets makes the UI unreachable in precisely the deployments that set one.
+# What is exempt is code; the data behind it is not.
+steps:
+  # The exempt half. No Authorization header, and the UI is served.
+  - admin:
+      method: GET
+      path: /__admin/mockulus/ui/
+      headers: {Authorization: ""}
+    expect:
+      status: 200
+      headers: {Content-Type: "text/html; charset=utf-8"}
+
+  # Including deep links, which are the same document and need the same
+  # treatment — a bookmarked UI route is a page load like any other.
+  - admin:
+      method: GET
+      path: /__admin/mockulus/ui/stubs/7f3a
+      headers: {Authorization: ""}
+    expect: {status: 200}
+
+  - admin:
+      method: GET
+      path: /__admin/mockulus/ui
+      headers: {Authorization: ""}
+    expect: {status: 200}
+
+  # And on the mock port's admin surface too, since that is the deployment shape
+  # where a UI is most likely to be the only way in.
+  - request:
+      port: mock
+      method: GET
+      path: /__admin/mockulus/ui/
+      headers: {Authorization: ""}
+    expect: {status: 200}
+
+  # The guarded half, in the same case, on the same instance, with the same
+  # absent header. This is what makes the steps above a statement about the
+  # exemption rather than about a deployment that forgot its token.
+  - admin:
+      method: GET
+      path: /__admin/mappings
+      headers: {Authorization: ""}
+    expect: {status: 401}
+
+  - admin:
+      method: GET
+      path: /__admin/health
+      headers: {Authorization: ""}
+    expect: {status: 401}
+
+  # Reads and writes alike. The UI performs both, and both carry the token the
+  # operator typed into it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      headers: {Authorization: ""}
+      body: '{"request": {"method": "GET", "url": "/unreachable"}, "response": {"status": 200}}'
+    expect: {status: 401}
+
+  # The exemption cannot be reached by dressing a data request up as a UI one.
+  # A query string is not a path, so this is refused like any other API call —
+  # without this step the prefix test could be a substring search over the whole
+  # URL and nothing here would catch it.
+  - admin:
+      method: GET
+      path: /__admin/mappings?ui=/__admin/mockulus/ui/
+      headers: {Authorization: ""}
+    expect: {status: 401}
+
+  # Nor by sitting next to the prefix rather than under it.
+  - admin:
+      method: GET
+      path: /__admin/mockulus/uievil
+      headers: {Authorization: ""}
+    expect: {status: 401}
+
+  - admin:
+      method: GET
+      path: /__admin/mockulus
+      headers: {Authorization: ""}
+    expect: {status: 401}
+
+  # The same token still opens the API, so every 401 above is the guard doing
+  # its job and not a deployment that is broken for everyone.
+  - admin: {method: GET, path: /__admin/mappings}
+    expect: {status: 200}
+
+  # A 401 is counted under the group it was aimed at, and the exempt requests
+  # are not counted as refusals — an operator watching this counter to see
+  # whether their token is being guessed must not have it moved by every
+  # browser that loads the UI.
+  - metricsprobe:
+      series: 'mockulus_admin_requests_total{endpoint_group="mockulus/ui",code="401"}'
+      present: false
+  - metricsprobe:
+      series: 'mockulus_admin_requests_total{endpoint_group="mockulus/ui",code="200"}'
+      at_least: 3

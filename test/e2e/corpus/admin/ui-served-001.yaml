@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+id: ui-served-001
+behaviors:
+  - B-PROSE-UI-SERVED
+  - B-PROSE-UI-ROOT-REDIRECT
+  - B-PROSE-MOCKULUS-NAMESPACE
+# The admin UI is a mockulus extension; WireMock has no UI and answers 404 for
+# every path in this namespace, so a differential replay would report the whole
+# feature as a diff.
+wm: n/a
+#
+# The serving contract of SPEC §5.7, minus the token behavior — that lives in
+# ui-auth-exemption-001, on the authed variant, because it needs a token set.
+#
+# One thing to know while reading this: the assertions here hold whether or not
+# `make ui-build` ran before the binary was compiled. The repository commits only
+# a placeholder in `internal/adminui/dist`, so a plain `go build` produces a
+# binary that serves the "built without a UI" notice, and CI produces one that
+# serves the real application. What §5.7 promises is the same either way — the
+# prefix answers 200 with the security headers, a deep link boots rather than
+# 404s, and the namespace around it stays a contract — so this case asserts the
+# contract rather than the bundle. Asserting on the bundle's contents would fail
+# on every contributor machine and pass only in CI, which is a case that tests
+# the build rather than the server.
+steps:
+  # The application root, on the admin port.
+  - admin: {method: GET, path: /__admin/mockulus/ui/}
+    expect:
+      status: 200
+      headers: {Content-Type: "text/html; charset=utf-8"}
+      # The document is revalidated every time. A build renames every asset, so
+      # this response is the only thing that has to be re-fetched for a deploy
+      # to take effect anywhere.
+      headers_contain: {Cache-Control: "no-cache"}
+
+  # The security headers of §5.7, on the document. `script-src 'self'` with no
+  # inline allowance is the load-bearing half: the UI renders stub names, URLs
+  # and request bodies, all of which arrive from whoever is driving the mock,
+  # and this is the layer under the framework's escaping.
+  - admin: {method: GET, path: /__admin/mockulus/ui/}
+    expect:
+      status: 200
+      headers_contain:
+        Content-Security-Policy: "script-src 'self'"
+        X-Content-Type-Options: "nosniff"
+        Referrer-Policy: "no-referrer"
+
+  # Framing and base-URI are closed too, so a page that does get something past
+  # the escaping cannot rewrite where relative requests go or be wrapped by a
+  # site the operator did not visit.
+  - admin: {method: GET, path: /__admin/mockulus/ui/}
+    expect:
+      status: 200
+      headers_contain:
+        Content-Security-Policy: "frame-ancestors 'none'"
+
+  # The bare prefix without its trailing slash is the same place.
+  - admin: {method: GET, path: /__admin/mockulus/ui}
+    expect: {status: 200}
+
+  # A deep link is a path the server has never heard of. The client router runs
+  # in history mode, so it has to boot rather than 404 — this is what makes a
+  # bookmarked or shared URL work at all.
+  - admin: {method: GET, path: /__admin/mockulus/ui/stubs}
+    expect: {status: 200, headers: {Content-Type: "text/html; charset=utf-8"}}
+  - admin: {method: GET, path: /__admin/mockulus/ui/journal/near-misses/7f3a}
+    expect: {status: 200, headers: {Content-Type: "text/html; charset=utf-8"}}
+
+  # The UI is on both listeners, because a deployment that exposes only the mock
+  # port with admin_on_mock_port still has an admin API and should still have a
+  # way to look at it.
+  - request:
+      port: mock
+      method: GET
+      path: /__admin/mockulus/ui/
+    expect: {status: 200, headers: {Content-Type: "text/html; charset=utf-8"}}
+
+  # The admin port's root sends a browser to the UI. Asserted as a redirect
+  # rather than by following it: where it points is the behavior, and a case
+  # that followed would pass just as well if it pointed somewhere else.
+  - admin: {method: GET, path: /}
+    expect:
+      status: 302
+      headers: {Location: "/__admin/mockulus/ui/"}
+
+  # The mock port's root is untouched, and this is the half that matters. A
+  # redirect there would answer a request a stub was entitled to match, which is
+  # the one thing the mock port must never do — so it is still the ordinary
+  # unmatched 404 of §5.4.
+  - request:
+      port: mock
+      method: GET
+      path: /
+    expect: {status: 404}
+
+  # …and a stub really can claim it, which is what proves the step above is the
+  # matching path rather than a coincidence.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "url": "/"},
+         "response": {"status": 200, "body": "the root belongs to the stubs"}}
+    expect: {status: 201}
+  - request:
+      port: mock
+      method: GET
+      path: /
+    expect: {status: 200, body: "the root belongs to the stubs"}
+  - admin: {method: DELETE, path: /__admin/mappings/a1000001-0000-4000-8000-000000000001}
+    expect: {status: 200}
+
+  # The namespace is a contract rather than a catch-all: nothing under
+  # /__admin/mockulus is claimed except the UI, and an unclaimed path answers
+  # the same unsupported-endpoint 404 as any other.
+  - admin: {method: GET, path: /__admin/mockulus/chaos}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+  - admin: {method: GET, path: /__admin/mockulus}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+
+  # A path that merely starts with the same letters is not the UI. Without this
+  # the prefix test could be a substring search and nothing here would notice.
+  - admin: {method: GET, path: /__admin/mockulus/uievil}
+    expect:
+      status: 404
+      body_json_subset: {errors: [{code: 1001}]}
+
+  # Every asset request collapses to one metric label. The bundle emits a
+  # fingerprinted file name per build, so grouping by path would mint a new
+  # label value on every deploy — unbounded cardinality arriving through a door
+  # the rest of the grouping logic was built to close.
+  - metricsprobe:
+      series: 'mockulus_admin_requests_total{endpoint_group="mockulus/ui",code="200"}'
+      at_least: 5

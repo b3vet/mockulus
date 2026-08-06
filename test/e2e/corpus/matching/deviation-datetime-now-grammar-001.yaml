@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-datetime-now-grammar-001
+behaviors: [B-DEV-DEVIATION-49, B-ERR-10]
+# Mockulus-specific by construction: WireMock answers 201 to every spelling
+# below and then never matches, so there is no compatible answer to diff. The
+# spellings it can act on — `now`, `now +2 days`, a bare `-3 hours` — are parity
+# and are pinned by wmv-datetime-now-relative-operands-001.
+wm: n/a
+#
+# Deviation #49, the now-relative half. The grammar is exact and unforgiving:
+# single spaces, the unit in the plural, nothing before or after. Every near
+# miss below registers on WireMock and then fails every request silently, and
+# the near misses are the spellings a person actually writes — the spaces look
+# like formatting, and "1 week" is a unit every other date library has.
+#
+# The refusals are specific rather than one blanket message, because the fix
+# differs: a doubled space is a typo, a singular unit is a vocabulary error, and
+# `weeks` is a unit WireMock genuinely does not have.
+steps:
+  # No spaces at all. The most natural spelling, and dead on WireMock.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/nospace",
+                     "headers": {"X-When": {"before": "now+2days"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+      body_regex: 'now\+2days'
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-now-grammar-001/nospace
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d7000102-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # A space around the sign, which is how the same expression reads in prose.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/spaced-sign",
+                     "headers": {"X-When": {"after": "now + 2 days"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/after"}
+      body_regex: 'now \+ 2 days'
+
+  # Whitespace around a keyword that is otherwise exactly right. There is no
+  # operand trimming, so this is a different string from `now`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/padded",
+                     "headers": {"X-When": {"before": "  now  "}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+
+  # A singular unit. WireMock's own answer here is a 422 naming a Java enum
+  # constant, so this is one of the two spellings it does refuse — the refusal
+  # is kept, and the message is rewritten into something a stub author can act
+  # on.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000004",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/singular",
+                     "headers": {"X-When": {"before": "now +2 day"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+      body_regex: 'plural'
+
+  # A unit WireMock does not have. Seconds, minutes, hours, days, months and
+  # years are the whole vocabulary; weeks is the gap.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000005",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/weeks",
+                     "headers": {"X-When": {"after": "now +1 weeks"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/after"}
+      body_regex: 'weeks'
+
+  # Trailing text after an otherwise valid expression.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000006",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/trailing",
+                     "headers": {"X-When": {"before": "now +2 days extra"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+
+  # A JSON null operand, which is the one shape WireMock also refuses. Keeping
+  # it here scopes the deviation: the refusals above are additions to WireMock's
+  # behaviour, not a replacement of it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000007",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/null",
+                     "headers": {"X-When": {"before": null}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/before"}
+
+  # The spelling the grammar does accept, so the case is not merely proving that
+  # everything is refused.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000102-0000-4000-8000-000000000008",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-now-grammar-001/valid",
+                     "headers": {"X-When": {"before": "now +2 days"}}},
+         "response": {"status": 200, "body": "valid",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-now-grammar-001/valid
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, body: "valid"}

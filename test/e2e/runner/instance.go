@@ -374,6 +374,11 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 		"MOCKULUS_ADMIN_PORT=0",
 		"MOCKULUS_LOG_FORMAT=json",
 		"MOCKULUS_LOG_LEVEL=info",
+		// The same zone the oracle container is pinned to, and for the same
+		// reason: a local date-time resolves against the process' zone, so a
+		// differential comparison is only meaningful when both sides agree on
+		// it. See StartWireMock.
+		"TZ=UTC",
 	)
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
@@ -418,6 +423,14 @@ func StartInstance(ctx context.Context, binary, topology, variant string,
 		client: &http.Client{
 			Timeout:   30 * time.Second,
 			Transport: transport,
+			// Redirects are answers, not detours. Following them silently makes
+			// a 302 unassertable — the case sees whatever the target returned
+			// and cannot say where it was sent, which for the admin-port root
+			// of §5.7 is the entire behavior. A case that wants the target
+			// requests the target.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 

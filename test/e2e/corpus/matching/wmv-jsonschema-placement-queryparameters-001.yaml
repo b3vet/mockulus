@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-placement-queryparameters-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-QUERYPARAMETERS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# the client never sent (deviation #41). Every served response is still diffed
+# in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# The matcher works on `queryParameters`, with the same semantics it has on a
+# header. This position is worth pinning separately rather than assuming from the
+# header one, because the value has to survive percent-decoding before any
+# matcher sees it: a JSON document written into a query string is almost all
+# reserved characters — `{`, `}`, `"`, `:`, `,` — and a value that arrived still
+# encoded would parse as nothing at all and turn every step below into a
+# non-match.
+#
+# So every request here sends the document percent-encoded, which is what a
+# client library does, and the matching steps are what show the decoding
+# happened. The decoded documents are object-shaped throughout: JSON scalars are
+# where the two servers genuinely disagree (§5.5) and that belongs to its own
+# deviation case.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e000d-0001-4000-8000-000000000001",
+         "name": "a schema over a query parameter value",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-jsonschema-placement-queryparameters-001/filter",
+                     "queryParameters": {"q": {"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["field", "op"],
+                        "properties": {"field": {"type": "string", "minLength": 1},
+                                       "op": {"enum": ["eq", "ne", "gt"]}}}}}},
+         "response": {"status": 200, "body": "filter",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          urlPath: /e2e/wmv-jsonschema-placement-queryparameters-001/filter
+
+  # Conforming: {"field":"name","op":"eq"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-placement-queryparameters-001/filter?q=%7B%22field%22%3A%22name%22%2C%22op%22%3A%22eq%22%7D"
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "filter"}
+
+  # The `enum` violated: {"field":"name","op":"like"}. A criterion that stopped at
+  # the top-level type would accept this one.
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-placement-queryparameters-001/filter?q=%7B%22field%22%3A%22name%22%2C%22op%22%3A%22like%22%7D"
+    expect: {status: 404}
+
+  # A required property missing: {"field":"name"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-placement-queryparameters-001/filter?q=%7B%22field%22%3A%22name%22%7D"
+    expect: {status: 404}
+
+  # The wrong type: {"field":7,"op":"eq"}
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-placement-queryparameters-001/filter?q=%7B%22field%22%3A7%2C%22op%22%3A%22eq%22%7D"
+    expect: {status: 404}
+
+  # A value that is not JSON, and the parameter absent entirely: both
+  # non-matches, and the second is what shows the criterion is not satisfied by
+  # a missing key.
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-placement-queryparameters-001/filter?q=name"
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: "/e2e/wmv-jsonschema-placement-queryparameters-001/filter"
+    expect: {status: 404}

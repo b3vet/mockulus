@@ -80,6 +80,28 @@ adminAuth:
   existingSecret: ""
   tokenKey: token
 
+# OpenTelemetry tracing (SPEC §14.3). Off by default: turned off it costs a
+# served request one atomic load, so the SLOs are the ones measured without it.
+tracing:
+  enabled: false
+  # The collector as host:port — no scheme, since `insecure` chooses that.
+  endpoint: ""
+  # true for an in-cluster collector on a cleartext port, which is the usual
+  # shape; false speaks TLS.
+  insecure: true
+  # Traces this pod starts itself. A request arriving with W3C trace context
+  # follows its caller's decision instead, so a sampled test always carries the
+  # mock spans it caused.
+  sampleRatio: 0.1
+  serviceName: mockulus
+  # Exporter headers as k=v,k=v — an ingestion token belongs here, and so it is
+  # carried in a Secret like every other credential in this chart rather than
+  # as a plain environment value. Prefer existingSecret: a value passed here is
+  # a value in the release history.
+  headers: ""
+  existingSecret: ""
+  headersKey: headers
+
 resources:
   requests:
     cpu: 100m

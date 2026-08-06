@@ -188,7 +188,14 @@ func splitRow(line string) []string {
 
 // headingAnchor reproduces GitHub's heading-to-anchor slug, which is what the
 // catalog's `spec` field points at.
-var anchorDrop = regexp.MustCompile(`[^a-z0-9\- ]`)
+//
+// The underscore is kept because GitHub keeps it. Dropping it made no
+// difference for as long as no heading contained one, and then §5.7 named the
+// `/__admin/mockulus/**` namespace in its title: the gate would have demanded
+// an anchor with the underscores stripped, which is a link that resolves here
+// and 404s in a browser. A slug that disagrees with the renderer is worse than
+// no slug, because it passes.
+var anchorDrop = regexp.MustCompile(`[^a-z0-9\-_ ]`)
 
 func headingAnchor(heading string) string {
 	s := strings.ToLower(heading)

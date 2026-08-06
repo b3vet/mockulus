@@ -47,7 +47,7 @@ func match(t *testing.T, snap *Snapshot, method, target string, body string, hea
 	pr := AcquireRequest(req, []byte(body))
 	defer ReleaseRequest(pr)
 
-	cs := snap.Match(pr, nil, nil)
+	cs := snap.Match(context.Background(), pr, nil, nil)
 	if cs == nil {
 		return ""
 	}
@@ -460,7 +460,7 @@ func TestBasicAuthAcceptsAnyOfSeveralAuthorizationHeaders(t *testing.T) {
 		pr := AcquireRequest(req, nil)
 		defer ReleaseRequest(pr)
 
-		cs := snap.Match(pr, nil, nil)
+		cs := snap.Match(context.Background(), pr, nil, nil)
 		if cs == nil {
 			return ""
 		}
@@ -604,15 +604,15 @@ func TestScenarioGateSkipsAndContinues(t *testing.T) {
 	defer ReleaseRequest(pr)
 
 	// The gate accepts: the newer, gated stub wins.
-	allow := ScenarioGate(func(*stub.ScenarioRef, *ParsedRequest) bool { return true })
-	if cs := snap.Match(pr, allow, nil); cs == nil || cs.ID != "gated" {
+	allow := ScenarioGate(func(context.Context, *stub.ScenarioRef, *ParsedRequest) bool { return true })
+	if cs := snap.Match(context.Background(), pr, allow, nil); cs == nil || cs.ID != "gated" {
 		t.Errorf("with the gate open, selected %v, want gated", idOf(cs))
 	}
 
 	// The gate refuses: iteration continues to the ungated stub rather than
 	// falling through to a 404.
-	deny := ScenarioGate(func(*stub.ScenarioRef, *ParsedRequest) bool { return false })
-	if cs := snap.Match(pr, deny, nil); cs == nil || cs.ID != "plain" {
+	deny := ScenarioGate(func(context.Context, *stub.ScenarioRef, *ParsedRequest) bool { return false })
+	if cs := snap.Match(context.Background(), pr, deny, nil); cs == nil || cs.ID != "plain" {
 		t.Errorf("with the gate closed, selected %v, want plain", idOf(cs))
 	}
 }
@@ -666,7 +666,7 @@ func TestCandidateCountReflectsWork(t *testing.T) {
 	defer ReleaseRequest(pr)
 
 	evaluated := 0
-	cs := snap.Match(pr, nil, &evaluated)
+	cs := snap.Match(context.Background(), pr, nil, &evaluated)
 	if cs == nil || cs.ID != "c" {
 		t.Fatalf("selected %v, want c", idOf(cs))
 	}
@@ -695,7 +695,7 @@ func BenchmarkMatchExactURL(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		pr := AcquireRequest(req, nil)
-		if cs := snap.Match(pr, nil, nil); cs == nil {
+		if cs := snap.Match(context.Background(), pr, nil, nil); cs == nil {
 			b.Fatal("expected a match")
 		}
 		ReleaseRequest(pr)

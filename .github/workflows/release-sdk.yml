@@ -1,0 +1,150 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Publishes @mockulus/admin-sdk to npm using trusted publishing (OIDC).
+#
+# There is no publish token here and there should never be one again. npm is
+# retiring token-based automation: from early August 2026 a 2FA-bypass token can
+# no longer perform sensitive account, package or organization actions, and from
+# January 2027 it loses the ability to publish directly at all — it will only be
+# able to stage a publish for a human to approve. Trusted publishing is the
+# replacement npm names, and it is strictly better besides: the credential is a
+# short-lived token minted for this workflow, on this repository, for this run,
+# so there is nothing to leak, nothing to rotate, and nothing an attacker can
+# lift out of a log and reuse.
+#
+# The registry decides whether to trust a run by matching the OIDC claims
+# against what was configured on npmjs.com: the organization, the repository,
+# **this file's name**, and the environment below. Renaming this file breaks
+# publishing until the trusted publisher is updated to match — which is worth
+# knowing before somebody tidies it.
+#
+# Separate from release.yml, and triggered by its own tag prefix, because the
+# SDK versions independently of the server (SOW decision K6): it will iterate
+# faster than the server does at first, and a client fix should not need a
+# server release to reach anyone. `v1.2.0` releases the server; `ts-sdk/v0.1.1`
+# releases the client; neither waits for the other.
+name: release sdk
+
+on:
+  push:
+    tags:
+      - 'ts-sdk/v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # The same shape as release.yml: gate first, publish second, and the publish
+  # job is the only one holding credentials. A tag is not a reason to skip the
+  # checks — it is the last moment they are cheap.
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      # The contract lint is a Go program and it gates the SDK's own source of
+      # truth: if api/openapi.yaml no longer describes the server, the types
+      # generated from it describe nothing anybody can rely on.
+      - run: make contract-lint
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The committed types are regenerated and diffed. A published package
+      # whose types disagree with the contract is worse than an unpublished one.
+      - run: pnpm run sdk:gen:check
+
+      - run: pnpm run sdk:check
+      - run: pnpm run sdk:test
+
+      # The integration lane needs a server, and it is the only check that
+      # proves the client can still talk to one. A package that type-checks
+      # against the contract can still send something the server refuses.
+      - run: go build -trimpath -o bin/mockulus ./cmd/mockulus
+      - run: pnpm run sdk:test:integration
+
+      # Every npm package in the workspace, against the allowlist. The Go gate
+      # cannot see them.
+      - run: ./scripts/check-npm-licenses.sh
+
+      # The tag and the manifest have to agree. Publishing 0.1.0 from a tag that
+      # says 0.1.1 produces a registry entry nobody can trace back to a commit,
+      # and npm will not let you replace it.
+      - name: the tag matches the version in package.json
+        run: |
+          tag_version="${GITHUB_REF_NAME#ts-sdk/v}"
+          pkg_version="$(node -p "require('./sdk/typescript/package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "tag ts-sdk/v${tag_version} does not match sdk/typescript/package.json ${pkg_version}" >&2
+            echo "Bump the manifest and re-tag; a published version cannot be replaced." >&2
+            exit 1
+          fi
+          echo "publishing @mockulus/admin-sdk ${pkg_version}"
+
+  publish:
+    name: publish
+    needs: gate
+    runs-on: ubuntu-latest
+    # Named here and again in the trusted publisher on npmjs.com: the registry
+    # checks the environment claim, so a run outside this environment cannot
+    # publish even from this repository and this workflow.
+    environment: release
+    permissions:
+      contents: read
+      # The whole credential. Without it there is no OIDC token to exchange and
+      # the publish is refused; with it, npm mints one scoped to this run.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          # No dependency cache in a release build. A cache is a place for
+          # something to be substituted between the gate that checked the tree
+          # and the job that ships it, and this job runs once per release —
+          # there is nothing to save worth that.
+          registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 and 23 both ship npm 10.x, and trusted publishing needs 11.5.1
+      # or later. Without this the publish fails at the registry with an
+      # authentication error rather than a version one, which sends you looking
+      # in the wrong place — so the version is asserted here, loudly, before
+      # anything is uploaded.
+      - name: npm new enough for trusted publishing
+        run: |
+          npm install -g npm@^11.5.1
+          have=$(npm --version)
+          node -e "
+            const [a,b,c] = process.argv[1].split('.').map(Number);
+            const ok = a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1)));
+            if (!ok) { console.error('npm ' + process.argv[1] + ' is below the 11.5.1 trusted-publishing floor'); process.exit(1); }
+            console.log('npm ' + process.argv[1] + ' supports trusted publishing');
+          " "$have"
+
+      - run: pnpm install --frozen-lockfile
+
+      # Built here rather than carried from the gate job: the tarball that goes
+      # to the registry should be produced by the job that publishes it, in one
+      # step, so there is no window where an artifact could be substituted.
+      - run: pnpm run sdk:build
+
+      - name: publish
+        working-directory: sdk/typescript
+        # No NODE_AUTH_TOKEN, and no --provenance. The first would be the thing
+        # this flow exists to remove; the second is implied — a trusted publish
+        # attaches a provenance attestation on its own, and passing the flag
+        # says nothing extra.
+        run: npm publish

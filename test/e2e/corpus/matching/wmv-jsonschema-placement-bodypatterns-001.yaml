@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-placement-bodypatterns-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# the client never sent (deviation #41). Every served response is still diffed
+# in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# `bodyPatterns` is a list, and every entry in it has to hold. A schema is one
+# entry like any other: it is combined with its neighbours by AND, and it
+# neither short-circuits them nor is short-circuited by them.
+#
+# That is the claim this case makes and the baseline case cannot. A single-entry
+# list cannot tell "the schema decided" from "the list decided", and a matcher
+# implemented as a whole-body special case rather than as an ordinary body
+# pattern would pass every other case in this family and fail here.
+#
+# So the stub carries the schema beside a `matchesJsonPath` and a `contains`,
+# with the three criteria chosen to be independent — the schema does not require
+# `region`, the path asks for exactly that property, and the text `eu` is a value
+# rather than a key. Each is then violated on its own while the other two still
+# hold, which is the only arrangement that pins all three as live.
+#
+# Evaluation order is deliberately not asserted. The servers are free to run the
+# entries in any order and mockulus sorts them by cost (SPEC §6.5); every
+# assertion here is about the conjunction, not the sequence.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e000b-0001-4000-8000-000000000001",
+         "name": "a schema among other body patterns",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-placement-bodypatterns-001/order",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                                          "type": "object",
+                                          "required": ["id"],
+                                          "properties": {"id": {"type": "integer", "minimum": 1},
+                                                         "region": {"type": "string"}}}},
+                                      {"matchesJsonPath": "$.region"},
+                                      {"contains": "eu"}]},
+         "response": {"status": 200, "body": "order",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # All three hold.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-placement-bodypatterns-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "region": "eu"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "order"}
+
+  # Only the schema is violated — `$.region` still resolves and the text `eu` is
+  # still there — so a match here would mean the schema was never consulted.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-placement-bodypatterns-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 0, "region": "eu"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-placement-bodypatterns-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"region": "eu"}'
+    expect: {status: 404}
+
+  # Only the JSONPath entry is violated: `region` is optional in the schema, so
+  # the document satisfies it, and `eu` is still present as a value.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-placement-bodypatterns-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "zone": "eu"}'
+    expect: {status: 404}
+
+  # Only the `contains` entry is violated: the schema holds and `$.region`
+  # resolves, and a schema that had somehow replaced its neighbours would answer
+  # 200 here.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-placement-bodypatterns-001/order
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 1, "region": "us"}'
+    expect: {status: 404}

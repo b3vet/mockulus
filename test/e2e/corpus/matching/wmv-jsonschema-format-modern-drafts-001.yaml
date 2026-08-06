@@ -1,0 +1,150 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-format-modern-drafts-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# even into the stub that named no version at all (deviation #41). Every served
+# response is still diffed in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# `format` is an annotation under 2019-09 and 2020-12, and the default draft is
+# 2020-12 — so out of the box `{"type":"string","format":"email"}` accepts
+# `"not-an-email"`.
+#
+# This is the trap in `matchesJsonSchema` and the reason it is worth three
+# separate corpus cases. A stub author writes `"format": "email"`, names no
+# version because there is no obvious reason to, and gets a matcher that checks
+# the property is a string and nothing more. The companion case pins the other
+# side — the same schema under V4, V6 and V7, where the address is checked.
+#
+# The absent-version stub is the one that matters most, because it is what
+# everybody writes. It is pinned here rather than inferred from V202012: the
+# claim is that the *default* is 2020-12, and only a stub that names nothing can
+# make it.
+#
+# Each stub carries the valid-email step as a control and a shape violation as a
+# second one. Without them "the address is not checked" would be
+# indistinguishable from "nothing is checked", which is a different and much
+# worse behaviour.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0006-0001-4000-8000-000000000001",
+         "name": "format under draft 2019-09",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-format-modern-drafts-001/v201909",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}},
+                       "schemaVersion": "V201909"}]},
+         "response": {"status": 200, "body": "v201909",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0006-0001-4000-8000-000000000002",
+         "name": "format under draft 2020-12",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-format-modern-drafts-001/v202012",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}},
+                       "schemaVersion": "V202012"}]},
+         "response": {"status": 200, "body": "v202012",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0006-0001-4000-8000-000000000003",
+         "name": "format with no schemaVersion at all",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-format-modern-drafts-001/default",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["email"],
+                        "properties": {"email": {"type": "string", "format": "email"}}}}]},
+         "response": {"status": 200, "body": "default",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The control: a well-formed address is accepted, as it must be.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/v201909
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v201909"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/v202012
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "v202012"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/default
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "ada@example.com"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "default"}
+
+  # `format` ignored: the same string the older drafts refuse is accepted here,
+  # including — and especially — by the stub that named no version.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/v201909
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 200, body: "v201909"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/v202012
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 200, body: "v202012"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/default
+      headers: {Content-Type: "application/json"}
+      body: '{"email": "not-an-email"}'
+    expect: {status: 200, body: "default"}
+
+  # Ignoring `format` is not ignoring the schema. The type and the required
+  # property are still enforced under all three.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/v201909
+      headers: {Content-Type: "application/json"}
+      body: '{"email": 7}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/v202012
+      headers: {Content-Type: "application/json"}
+      body: '{"email": 7}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/default
+      headers: {Content-Type: "application/json"}
+      body: '{"email": 7}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-format-modern-drafts-001/default
+      headers: {Content-Type: "application/json"}
+      body: '{}'
+    expect: {status: 404}

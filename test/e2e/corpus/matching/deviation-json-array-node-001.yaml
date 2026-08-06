@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: deviation-json-array-node-001
-behaviors: [B-DEV-DEVIATION-42, B-MATCH-MATCHESJSONPATH]
+behaviors: [B-DEV-DEVIATION-42, B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH]
 # Deviation #42. A `matchesJsonPath` in its nested form evaluates the inner
 # matcher against what the expression SELECTS, and a definite expression ending
 # at an array selects the array node — not its elements. So

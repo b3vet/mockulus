@@ -1,0 +1,24 @@
+{
+  "name": "mockulus-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "pnpm workspace root for the JavaScript side of mockulus: the embedded admin UI and the TypeScript admin SDK.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --filter @mockulus/admin-sdk run build && pnpm --filter mockulus-ui run build",
+    "dev": "pnpm --filter mockulus-ui run dev",
+    "check": "pnpm --filter @mockulus/admin-sdk run build && pnpm --filter mockulus-ui run check",
+    "test": "pnpm --filter @mockulus/admin-sdk run build && pnpm --filter mockulus-ui run test",
+    "sdk:build": "pnpm --filter @mockulus/admin-sdk run build",
+    "sdk:check": "pnpm --filter @mockulus/admin-sdk run check",
+    "sdk:test": "pnpm --filter @mockulus/admin-sdk run test",
+    "sdk:gen": "pnpm --filter @mockulus/admin-sdk run gen",
+    "sdk:gen:check": "pnpm --filter @mockulus/admin-sdk run gen:check",
+    "sdk:test:integration": "pnpm --filter @mockulus/admin-sdk run test:integration"
+  }
+}

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 id: cov-jsonpath-syntax-422-001
-behaviors: [B-MATCH-MATCHESJSONPATH, B-ERR-10]
+behaviors: [B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH, B-ERR-10]
 # The 422-at-registration contract is mockulus's own. WireMock compiles a
 # JsonPath lazily and reports a bad one differently, so there is no oracle to
 # diff this against; SPEC §6.7 states the rule this case holds — "unsupported

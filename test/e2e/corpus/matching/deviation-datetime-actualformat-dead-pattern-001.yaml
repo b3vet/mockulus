@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-datetime-actualformat-dead-pattern-001
+behaviors: [B-DEV-DEVIATION-53, B-ERR-10]
+# Mockulus-specific by construction: both patterns compile on WireMock, so it
+# answers 201 and then never matches anything. There is no compatible answer to
+# diff — refusing is the difference.
+wm: n/a
+#
+# Deviation #53, the pattern half. WireMock validates an `actualFormat` only by
+# whether it *compiles*, which is a weaker question than whether it can ever
+# resolve a date. `""` and `qqqq` both compile, both register, and both produce
+# a matcher that fails every request for ever.
+#
+# `actualFormat: ""` is the one that reads most like a mistake worth catching:
+# it looks like "no format", the way an empty string usually does, and it is
+# instead a format that names no field. A stub carrying it is not a stub with
+# default parsing — it is a stub that cannot match.
+#
+# The test is "does this pattern name a date or time field", not "does it
+# compile", so a pattern that is mostly punctuation is still fine as long as one
+# field survives — which is what the last stub here pins, so the refusal cannot
+# quietly grow into a rejection of unusual but working patterns.
+#
+# Every pointer below names `actualFormat` rather than the matcher it rides on.
+# That is the rule for the whole modifier family and it is pinned rather than
+# incidental: `equalToDateTime` is not what has to change, and an author sent to
+# it would be looking at the one part of the criterion that is correct.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000107-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-dead-pattern-001/empty",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "actualFormat": ""}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/actualFormat"}
+      body_regex: 'actualFormat'
+
+  # An empty `actualFormat` is not "no actualFormat": the stub does not exist,
+  # so the ISO value the criterion names does not reach anything either.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-actualformat-dead-pattern-001/empty
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d7000107-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # A pattern made only of letters that are not field patterns. It compiles —
+  # `q` is a legal quarter-of-year letter in Java — and resolves nothing an
+  # instant can be built from.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000107-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-dead-pattern-001/qqqq",
+                     "headers": {"X-When": {"before": "2021-06-14T12:13:14Z",
+                                            "actualFormat": "qqqq"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/actualFormat"}
+      body_regex: 'qqqq'
+
+  - admin: {method: GET, path: /__admin/mappings/d7000107-0000-4000-8000-000000000002}
+    expect: {status: 404}
+
+  # Punctuation alone, for the same reason and by the same rule.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000107-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-dead-pattern-001/punct",
+                     "headers": {"X-When": {"after": "2021-06-14T12:13:14Z",
+                                            "actualFormat": "--/--"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/actualFormat"}
+
+  # The boundary the refusal must not cross: a pattern that is nearly all
+  # punctuation but names one real field is accepted and works. The test is
+  # whether a field survives the translation, not how much of the pattern is
+  # made of letters.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000107-0000-4000-8000-000000000004",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-actualformat-dead-pattern-001/sparse",
+                     "headers": {"X-When": {"equalToDateTime": "2021-01-01T00:00:00",
+                                            "actualFormat": "--/yyyy/--"}}},
+         "response": {"status": 200, "body": "sparse",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-actualformat-dead-pattern-001/sparse
+      headers: {X-When: "--/2021/--"}
+    expect: {status: 200, body: "sparse"}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-actualformat-dead-pattern-001/sparse
+      headers: {X-When: "--/2022/--"}
+    expect: {status: 404}

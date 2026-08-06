@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-datetime-operand-rfc1123-001
+behaviors: [B-MATCH-BEFORE-AFTER-EQUALTODATETIME-TRUNCATEEXPECTED-ACTUALFORMAT, B-REQ-HEADERS]
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18). Status, headers and every matched body are still diffed.
+wm_ignore: ["$unmatched-body"]
+#
+# An RFC 1123 date — the spelling HTTP itself uses in `Date` and `Last-Modified`
+# — is an accepted expected operand. It is the least obvious entry in the grammar
+# and the easiest to implement as an accidental non-matcher, so the assertions
+# here are about where it lands rather than merely that it registers:
+#
+#   * it resolves to the exact second, not to the minute or the day — the two
+#     one-second steps get opposite answers and the `.001Z` step is `after`;
+#   * its `GMT` puts it on the instants branch, so an actual written with a
+#     `+03:00` offset three hours later compares EQUAL to it.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0009-0001-4000-8000-000000000001",
+         "name": "before an RFC 1123 date",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-operand-rfc1123-001/before",
+                     "headers": {"X-When": {"before": "Mon, 14 Jun 2021 12:13:14 GMT"}}},
+         "response": {"status": 200, "body": "before",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect:
+      status: 201
+      body_json_subset:
+        request:
+          headers:
+            X-When: {before: "Mon, 14 Jun 2021 12:13:14 GMT"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0009-0001-4000-8000-000000000002",
+         "name": "after the same RFC 1123 date",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-operand-rfc1123-001/after",
+                     "headers": {"X-When": {"after": "Mon, 14 Jun 2021 12:13:14 GMT"}}},
+         "response": {"status": 200, "body": "after",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "da7e0009-0001-4000-8000-000000000003",
+         "name": "equalToDateTime on the same RFC 1123 date",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/wmv-datetime-operand-rfc1123-001/equal",
+                     "headers": {"X-When": {"equalToDateTime": "Mon, 14 Jun 2021 12:13:14 GMT"}}},
+         "response": {"status": 200, "body": "equal",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The instant it names, written in ISO: both directions refuse it and equality
+  # holds. That triple is what says it resolved to 12:13:14Z and not to the
+  # minute, the hour or the day.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/before
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/after
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/equal
+      headers: {X-When: "2021-06-14T12:13:14Z"}
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "equal"}
+
+  # One second either side of that instant.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/before
+      headers: {X-When: "2021-06-14T12:13:13Z"}
+    expect: {status: 200, body: "before"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/after
+      headers: {X-When: "2021-06-14T12:13:15Z"}
+    expect: {status: 200, body: "after"}
+
+  # A millisecond past it is already `after`, which no whole-minute or
+  # whole-second-truncating reading of the operand produces.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/after
+      headers: {X-When: "2021-06-14T12:13:14.001Z"}
+    expect: {status: 200, body: "after"}
+
+  # The operand carries a zone, so this is the instants branch: the same instant
+  # written with an offset is equal to it, and the same wall clock written with
+  # an offset is not.
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/equal
+      headers: {X-When: "2021-06-14T15:13:14+03:00"}
+    expect: {status: 200, body: "equal"}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/equal
+      headers: {X-When: "2021-06-14T12:13:14+03:00"}
+    expect: {status: 404}
+  - request:
+      method: GET
+      path: /e2e/wmv-datetime-operand-rfc1123-001/before
+      headers: {X-When: "2021-06-14T12:13:14+03:00"}
+    expect: {status: 200, body: "before"}

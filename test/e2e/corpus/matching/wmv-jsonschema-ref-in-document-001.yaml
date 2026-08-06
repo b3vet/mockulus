@@ -1,0 +1,152 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-ref-in-document-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# the client never sent (deviation #41). Every served response is still diffed
+# in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# `$ref` resolves inside the document, by JSON pointer, and the three places a
+# real schema puts a reusable subschema all work: `$defs` (2019-09 onwards),
+# `definitions` (the older spelling, still what most published schemas carry),
+# and a pointer straight at a sibling — `#/properties/…` — which is how a schema
+# says "this field is shaped like that one" without factoring anything out.
+#
+# Every stub carries a negative probe aimed at a constraint that lives ONLY
+# behind the reference. That is the whole design of the case: a `$ref` that
+# silently resolved to nothing, or to the empty schema, would still accept the
+# conforming document and would still reject a document that violates the
+# surrounding schema. Only a violation of the referenced subschema tells the two
+# apart, so each stub has one.
+#
+# `definitions` is paired with V7 and `$defs` with the default draft, which is
+# how each is written in practice.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0008-0001-4000-8000-000000000001",
+         "name": "a $ref into $defs",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-ref-in-document-001/defs",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id"],
+                        "properties": {"id": {"$ref": "#/$defs/positiveInteger"}},
+                        "$defs": {"positiveInteger": {"type": "integer", "minimum": 1}}}}]},
+         "response": {"status": 200, "body": "defs",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0008-0001-4000-8000-000000000002",
+         "name": "a $ref into definitions, the draft-07 spelling",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-ref-in-document-001/definitions",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["id"],
+                        "properties": {"id": {"$ref": "#/definitions/positiveInteger"}},
+                        "definitions": {"positiveInteger": {"type": "integer", "minimum": 1}}},
+                       "schemaVersion": "V7"}]},
+         "response": {"status": 200, "body": "definitions",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e0008-0001-4000-8000-000000000003",
+         "name": "a $ref at a sibling JSON pointer",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-ref-in-document-001/sibling",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "required": ["primary", "backup"],
+                        "properties": {"primary": {"type": "string", "minLength": 4},
+                                       "backup": {"$ref": "#/properties/primary"}}}}]},
+         "response": {"status": 200, "body": "sibling",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # $defs: conforming, then the two ways to violate the referenced subschema and
+  # nothing else.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/defs
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 5}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "defs"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/defs
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 0}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/defs
+      headers: {Content-Type: "application/json"}
+      body: '{"id": "five"}'
+    expect: {status: 404}
+
+  # definitions: the same shape, under the draft that spells it that way.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/definitions
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 5}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "definitions"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/definitions
+      headers: {Content-Type: "application/json"}
+      body: '{"id": 0}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/definitions
+      headers: {Content-Type: "application/json"}
+      body: '{"id": "five"}'
+    expect: {status: 404}
+
+  # The sibling pointer. `backup` has no constraints of its own, so the two
+  # refusals below can only come from `#/properties/primary` having been
+  # resolved and applied to it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/sibling
+      headers: {Content-Type: "application/json"}
+      body: '{"primary": "alpha", "backup": "bravo"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "sibling"}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/sibling
+      headers: {Content-Type: "application/json"}
+      body: '{"primary": "alpha", "backup": "bra"}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/sibling
+      headers: {Content-Type: "application/json"}
+      body: '{"primary": "alpha", "backup": 7}'
+    expect: {status: 404}
+
+  # And the target of the pointer still applies where it was written, so the
+  # reference did not move the constraint, it copied it.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-ref-in-document-001/sibling
+      headers: {Content-Type: "application/json"}
+      body: '{"primary": "abc", "backup": "bravo"}'
+    expect: {status: 404}

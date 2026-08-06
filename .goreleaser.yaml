@@ -9,6 +9,21 @@ version: 2
 before:
   hooks:
     - go mod tidy
+    # The admin UI, built into internal/adminui/dist before anything compiles.
+    # internal/adminui embeds that directory, and the repository commits only a
+    # placeholder into it so that a plain `go build` works without Node — which
+    # means a release that skipped this step would produce binaries that come up
+    # showing the "built without UI" notice, and would produce them silently.
+    #
+    # This is a hook rather than a step in the release workflow so that the
+    # guarantee belongs to the release configuration instead of to one YAML file
+    # in .github. `goreleaser build`, `goreleaser release --snapshot` and a
+    # future pipeline on some other CI all get it, and when the UI build breaks
+    # it is goreleaser reporting a failed hook rather than an earlier step
+    # passing and goreleaser cheerfully shipping the placeholder. The cost is
+    # that a machine running goreleaser needs Node; a machine cutting releases
+    # is the one machine where that is a fair thing to ask.
+    - make ui-build
 
 builds:
   - id: mockulus

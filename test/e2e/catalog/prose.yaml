@@ -36,11 +36,130 @@ contracts:
 
   - id: "B-PROSE-JOURNAL-CONSISTENCY"
     section: "11"
-    section_hash: "67ecface6bd34f38"
+    section_hash: "7f9a9e3887d171c7"
     spec: "#11-request-journal--verification"
     kind: "distributed"
     impl_milestone: "M5"
     summary: "Journal entries become visible to verification eventually, and never block the request path"
     evidence: "a verification call finds the entry within a bounded polling window, not immediately"
     evidence_tokens: ["expect_eventually", "/__admin/requests"]
+    status: "ok"
+
+  # SPEC §14.4 states three separate claims, so it carries three contracts
+  # rather than one: a lumped evidence contract would be satisfied by a case
+  # that proved only the easiest of them.
+  - id: "B-PROSE-TRACING-SPAN-MODEL"
+    section: "14"
+    section_hash: "7629811302794038"
+    spec: "#144-span-model--correlation"
+    kind: "observability"
+    impl_milestone: "M7"
+    summary: "A served request's phases become child spans of its server span, and only when the phase ran"
+    evidence: "match, scenario.read, scenario.transition, template.render and delay appear as children of the request's span, and a stub that uses none of them produces none of them"
+    evidence_tokens: ["scenario.transition", "template.render", "delay"]
+    status: "ok"
+
+  - id: "B-PROSE-TRACING-BACKGROUND-ROOT"
+    section: "14"
+    section_hash: "7629811302794038"
+    spec: "#144-span-model--correlation"
+    kind: "observability"
+    impl_milestone: "M7"
+    summary: "Background work roots its own trace rather than joining the request that triggered it"
+    evidence: "a snapshot rebuild has no parent span and is in a different trace from the admin write that caused it"
+    evidence_tokens: ["snapshot.rebuild"]
+    status: "ok"
+
+  - id: "B-PROSE-TRACING-CORRELATION"
+    section: "14"
+    section_hash: "7629811302794038"
+    spec: "#144-span-model--correlation"
+    kind: "observability"
+    impl_milestone: "M7"
+    summary: "A journal entry carries the trace id of the request it records, when that request was sampled"
+    evidence: "a journal entry recorded under tracing carries a traceId member"
+    evidence_tokens: ["traceId"]
+    status: "ok"
+
+  # §5.6 is the section the compatibility claim rests on and it had no catalog
+  # entry of any kind until now — which is how a promised `--record-wm` flag
+  # survived the whole of v1 without existing. Pinned here so the rest of its
+  # claims cannot go the same way.
+  - id: "B-PROSE-DIFFERENTIAL-ORACLE"
+    section: "5.6"
+    section_hash: "71402ffaa59c37f9"
+    spec: "#56-differential-compatibility-verification-the-compat-tiebreaker"
+    kind: "functional"
+    impl_milestone: "M1"
+    summary: "Compatibility truth is established differentially: wm:verified cases are replayed against the pinned oracle and diffed with subset semantics, over a fresh connection per case"
+    evidence: "a case tagged wm: verified is replayed against the pinned WireMock and its response diffed, and the pinned version is the one named in test/e2e/WIREMOCK_VERSION"
+    evidence_tokens: ["wm: verified"]
+    status: "ok"
+
+  # §5.7 is the mockulus-extension namespace and the admin UI inside it. It is
+  # pinned here for the reason §5.6 is: the completeness gate derives its
+  # universe from the structured tables of §5.1, §5.2, §4.6, §10.3, §13 and
+  # Appendix B, and §5.7's own table is not one of those. An unpinned section
+  # can promise anything, which is exactly how a `--record-wm` flag that did not
+  # exist survived a whole release.
+  - id: "B-PROSE-UI-SERVED"
+    section: "5.7"
+    section_hash: "24281fbde46eccf7"
+    spec: "#571-the-admin-ui"
+    kind: "functional"
+    impl_milestone: "M7"
+    summary: "The admin UI is served at /__admin/mockulus/ui/ on both listeners, with a CSP that forbids inline script, and any path below the prefix that is not an asset boots the client router"
+    evidence: "the prefix answers 200 with a Content-Security-Policy naming script-src 'self', and a deep link that is not a file also answers 200 rather than 404"
+    evidence_tokens: ["/__admin/mockulus/ui/", "Content-Security-Policy"]
+    status: "ok"
+
+  - id: "B-PROSE-UI-ASSET-AUTH-EXEMPTION"
+    section: "5.7"
+    section_hash: "24281fbde46eccf7"
+    spec: "#571-the-admin-ui"
+    kind: "functional"
+    impl_milestone: "M7"
+    summary: "With admin_auth_token set, the UI assets are served without it while every admin API path still refuses without it"
+    # Both halves in one case on purpose. "Assets answer 200" alone is
+    # indistinguishable from a deployment with no token at all, and "the API
+    # answers 401" alone is the behavior that already existed. The claim is the
+    # pair, so the evidence has to be the pair.
+    evidence: "on the authed variant, a request with no Authorization header answers 200 under the UI prefix and 401 on /__admin/mappings, in the same case"
+    evidence_tokens: ["/__admin/mockulus/ui/", "401"]
+    status: "ok"
+
+  - id: "B-PROSE-UI-DISABLED"
+    section: "5.7"
+    section_hash: "24281fbde46eccf7"
+    spec: "#571-the-admin-ui"
+    kind: "functional"
+    impl_milestone: "M7"
+    summary: "ui_enabled: false removes the surface: every path under the prefix answers the standard 404 code 1001 and the admin-port root redirect is not registered"
+    evidence: "with ui_enabled off the prefix answers 404 code 1001, a deep link under it answers the same, and the admin port's root is a 404 rather than a redirect"
+    evidence_tokens: ["MOCKULUS_UI_ENABLED", "1001"]
+    status: "ok"
+
+  - id: "B-PROSE-UI-ROOT-REDIRECT"
+    section: "5.7"
+    section_hash: "24281fbde46eccf7"
+    spec: "#571-the-admin-ui"
+    kind: "functional"
+    impl_milestone: "M7"
+    summary: "The admin listener's root redirects to the UI; the mock listener's root is unchanged and still belongs to the stubs"
+    # The mock-port half is the load-bearing one. A redirect there would answer
+    # a request a stub was entitled to match, which is the one thing the mock
+    # port must never do.
+    evidence: "GET / on the admin port is a 302 to the UI prefix, and GET / on the mock port is still matched against the stubs"
+    evidence_tokens: ["302", "port: mock"]
+    status: "ok"
+
+  - id: "B-PROSE-MOCKULUS-NAMESPACE"
+    section: "5.7"
+    section_hash: "24281fbde46eccf7"
+    spec: "#57-mockulus-extensions-the-__adminmockulus-namespace"
+    kind: "functional"
+    impl_milestone: "M7"
+    summary: "/__admin/mockulus/** is a reserved namespace rather than a catch-all: an unclaimed path under it answers the standard 404 code 1001"
+    evidence: "a path under /__admin/mockulus that nothing claims answers 404 code 1001, the same as any other unsupported endpoint"
+    evidence_tokens: ["/__admin/mockulus/", "1001"]
     status: "ok"

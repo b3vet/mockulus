@@ -38,6 +38,13 @@ func renderCaseAssertions(c *Case) string {
 		return ""
 	}
 	var sb strings.Builder
+	// The oracle tag is part of what a case asserts, not just bookkeeping: a
+	// `wm: verified` case is one whose expectations are re-derived against pinned
+	// WireMock on every differential run, which is the mechanism §5.6 describes.
+	// A prose contract for that section has nothing else to key on.
+	if c.WM != "" {
+		sb.WriteString("wm: " + c.WM + "\n")
+	}
 	if c.Config != "" {
 		sb.WriteString("config: " + c.Config + "\n")
 	}

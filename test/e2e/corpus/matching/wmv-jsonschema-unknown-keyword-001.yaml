@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-jsonschema-unknown-keyword-001
+behaviors:
+  - B-MATCH-MATCHESJSONSCHEMA
+  - B-REQ-BODYPATTERNS
+wm: verified
+# The non-matching steps land on a 404 body that differs by design
+# (deviation #2/#18), and the 201 that echoes a created stub differs too —
+# WireMock canonicalises the schema and injects `"schemaVersion": "V202012"`
+# the client never sent (deviation #41). Every served response is still diffed
+# in full.
+wm_ignore: ["$unmatched-body", "$registered-mapping"]
+#
+# A keyword the validator does not recognise is ignored, and the rest of the
+# schema still applies. That is what the specification requires — unknown
+# keywords are annotations, and refusing them would break every schema carrying
+# a `description`, an `example`, or a vendor extension like `x-internal`.
+#
+# The tempting failure modes are at both ends and both are refused here. A
+# validator that rejected the schema would answer 422 at registration, so the
+# first step asserts 201. A validator that gave up on a schema it did not fully
+# understand — treating the unknown keyword as a reason to accept everything —
+# would pass the conforming step and fail every step after it.
+#
+# Two flavours of unknown keyword are used: one that reads like a real
+# constraint (`banana`, holding a value that would be nonsense for any keyword)
+# and the documentation keywords a generated schema actually carries.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "5c4e000a-0001-4000-8000-000000000001",
+         "name": "an unknown keyword beside real ones",
+         "request": {"method": "POST",
+                     "urlPath": "/e2e/wmv-jsonschema-unknown-keyword-001/unknown",
+                     "bodyPatterns": [{"matchesJsonSchema": {
+                        "type": "object",
+                        "banana": "split",
+                        "x-internal": true,
+                        "description": "an account, with keywords no validator knows",
+                        "required": ["account"],
+                        "properties": {"account": {"type": "string",
+                                                   "minLength": 3,
+                                                   "banana": {"nested": [1, 2]},
+                                                   "example": "acct-1"}}}}]},
+         "response": {"status": 200, "body": "unknown",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The schema registers and takes the conforming document.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-unknown-keyword-001/unknown
+      headers: {Content-Type: "application/json"}
+      body: '{"account": "acct-1"}'
+    expect: {status: 200, headers: {Content-Type: text/plain}, body: "unknown"}
+
+  # And the surrounding schema is still enforced — at the top level …
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-unknown-keyword-001/unknown
+      headers: {Content-Type: "application/json"}
+      body: '[1, 2, 3]'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-unknown-keyword-001/unknown
+      headers: {Content-Type: "application/json"}
+      body: '{}'
+    expect: {status: 404}
+
+  # … and inside the subschema that carries an unknown keyword of its own, which
+  # is where a validator that bailed out on the first thing it did not recognise
+  # would stop checking.
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-unknown-keyword-001/unknown
+      headers: {Content-Type: "application/json"}
+      body: '{"account": 7}'
+    expect: {status: 404}
+  - request:
+      method: POST
+      path: /e2e/wmv-jsonschema-unknown-keyword-001/unknown
+      headers: {Content-Type: "application/json"}
+      body: '{"account": "ab"}'
+    expect: {status: 404}

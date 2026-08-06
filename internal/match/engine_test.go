@@ -243,13 +243,13 @@ func TestAnUnreadableScenarioStateIsReportedRatherThanFallenThrough(t *testing.T
 	// falls through to the next candidate, and only a gate that could not read
 	// at all stops the request.
 	refusing, _ := testEngine(t, config.Config{}, gated, plain)
-	refusing.SetScenarioGate(func(*stub.ScenarioRef, *ParsedRequest) bool { return false })
+	refusing.SetScenarioGate(func(context.Context, *stub.ScenarioRef, *ParsedRequest) bool { return false })
 	if rec := serve(refusing, get(t, "/g")); rec.Body.String() != "plain" {
 		t.Fatalf("a refused gate served %q, want the next candidate plain", rec.Body.String())
 	}
 
 	unreadable, _ := testEngine(t, config.Config{}, gated, plain)
-	unreadable.SetScenarioGate(func(_ *stub.ScenarioRef, req *ParsedRequest) bool {
+	unreadable.SetScenarioGate(func(_ context.Context, _ *stub.ScenarioRef, req *ParsedRequest) bool {
 		req.FailScenarioRead(errors.New("couchbase unreachable"))
 		return false
 	})
@@ -307,7 +307,7 @@ func TestOnlyAStubDeclaringANewStateAdvancesTheScenario(t *testing.T) {
 	e, _ := testEngine(t, config.Config{}, advancing, member)
 	tr := &recordingTransitioner{}
 	e.SetTransitioner(tr)
-	e.SetScenarioGate(func(*stub.ScenarioRef, *ParsedRequest) bool { return true })
+	e.SetScenarioGate(func(context.Context, *stub.ScenarioRef, *ParsedRequest) bool { return true })
 
 	if rec := serve(e, get(t, "/read")); rec.Body.String() != "read" {
 		t.Fatalf("body = %q, want read", rec.Body.String())
@@ -337,7 +337,7 @@ func TestAFailedTransitionStillServesTheMatchedResponse(t *testing.T) {
 		`{"scenarioName":"order","requiredScenarioState":"Started","newScenarioState":"created",
 		  "request":{"urlPath":"/advance"},"response":{"status":201,"body":"advanced"}}`))
 	e.SetTransitioner(&recordingTransitioner{fail: errors.New("cas conflict exhausted")})
-	e.SetScenarioGate(func(*stub.ScenarioRef, *ParsedRequest) bool { return true })
+	e.SetScenarioGate(func(context.Context, *stub.ScenarioRef, *ParsedRequest) bool { return true })
 
 	rec := serve(e, get(t, "/advance"))
 	if rec.Code != http.StatusCreated || rec.Body.String() != "advanced" {
@@ -355,7 +355,7 @@ type recordingRecorder struct {
 	entries []recordedRequest
 }
 
-func (r *recordingRecorder) Record(req *http.Request, body []byte, matched *stub.CompiledStub, status int) {
+func (r *recordingRecorder) Record(req *http.Request, body []byte, matched *stub.CompiledStub, status int, _ string) {
 	id := ""
 	if matched != nil {
 		id = matched.ID

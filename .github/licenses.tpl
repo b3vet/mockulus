@@ -17,6 +17,25 @@ Nothing is vendored into this repository. The templating engine of SPEC §10.1
 and the JSONPath evaluator of §6.7 were both planned as dependencies and are
 mockulus-authored instead, under Apache-2.0 like the rest of the tree, so there
 is no hand-curated section here to drift.
+
+The binary also embeds a static web UI (internal/adminui), built from the pnpm
+workspace under ui/. go-licenses reads the Go module graph and nothing else, so
+those npm packages are gated separately: scripts/check-npm-licenses.sh holds
+every package the lockfile resolves against a permissive allowlist and fails the
+build on anything outside it, with each exception named and argued in the script.
+The same CI job runs both halves.
+
+There is no "Embedded web UI" section listing those packages below, and the
+absence is a statement rather than an oversight. Such a section has to name the
+packages whose code is actually inlined into the shipped bundle, and that set
+cannot be read off the manifests: ui/package.json declares no runtime
+dependencies at all — Svelte is a compiler and Tailwind is a build step — so the
+dependencies/devDependencies split says nothing about what ships, and the great
+majority of what the lockfile resolves is toolchain that never reaches a browser.
+Picking a subset of it by hand would put an unverified license claim in the one
+file that exists to hold verified ones. The section belongs here, immediately
+below this paragraph, and it is added when the bundle's own module graph can be
+read out of the build rather than guessed at from a manifest.
 {{ range . }}
 --------------------------------------------------------------------------------
 {{ .Name }}

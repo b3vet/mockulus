@@ -145,3 +145,13 @@ behaviors:
     evidence: "a create over an existing id is 422 with code 109"
     evidence_tokens: ["109", "422"]
     status: "ok"
+  - id: "B-ERR-1006"
+    spec_row: "spec:B:error-catalog|1006"
+    spec_hash: "8187229b93e07871"
+    spec: "#appendix-b--error-catalog"
+    kind: "functional"
+    impl_milestone: "M7"
+    summary: "1006"
+    evidence: "a matchesJsonSchema operand that does not compile as a schema is 422 with code 1006"
+    evidence_tokens: ["1006", "422"]
+    status: "ok"

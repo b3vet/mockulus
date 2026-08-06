@@ -54,7 +54,7 @@ This document is the authoritative implementation guide. Where it conflicts with
 
 ### What v1 is NOT
 
-No XML/XPath matching, no proxying, no record/playback, no webhooks, no gRPC, no browser proxying, no Java-class extensions, no multipart matching, no JSON Schema matching, no admin UI. All are catalogued with design sketches in [ROADMAP.md](ROADMAP.md). Stubs that use these features are rejected with 422 + error detail (never silently ignored).
+No XML/XPath matching, no proxying, no record/playback, no webhooks, no gRPC, no browser proxying, no Java-class extensions, no multipart matching. All are catalogued with design sketches in [ROADMAP.md](ROADMAP.md). Stubs that use these features are rejected with 422 + error detail (never silently ignored).
 
 ### Primary use cases
 
@@ -293,10 +293,10 @@ Content matchers (used in `bodyPatterns`, and as values in `headers`/`queryParam
 | `binaryEqualTo` | ✅ | Base64 operand |
 | `contains`, `doesNotContain` | ✅ | |
 | `matches`, `doesNotMatch` | ✅ | Java-regex compat strategy §6.6 |
-| `before`, `after`, `equalToDateTime` (+`truncateExpectedTo` etc.) | ❌ 422 | Roadmap (date-time matchers) |
+| `before`, `after`, `equalToDateTime` (+`truncateExpected`, `actualFormat`) | 🔶 | **The expected value's type selects the comparison.** An expected carrying a zone compares *instants* — the actual's offset is honoured and a zoneless actual resolves in the pod's zone; an expected with no zone compares *wall-clock fields* and the actual's offset is discarded rather than converted. So `2021-06-14T12:00:00` reports `2021-06-14T13:00:00+03:00` as later, though that instant is earlier. `before`/`after` are strict; equality is instant-valued and exact to the nanosecond, so `12:13:14Z` equals `12:13:14.000Z`. Operands: ISO-8601 (an offset must carry a colon), a bare date, RFC 1123, and the now-relative forms `now`, `now ±N units`, `±N units` with plural units from `seconds`…`years` (no `weeks`). Modifiers: `truncateExpected`, `truncateActual`, `applyTruncationLast`, `actualFormat` — there is **no** offset parameter, an offset is written into the expected value. `actualFormat` replaces ISO parsing rather than extending it; `unix` is seconds and `epoch` is milliseconds. An unparseable actual is a non-match. Deviations #49–#53 |
 | `equalToJson` (+`ignoreArrayOrder`, `ignoreExtraElements`) | ✅ | Structural JSON equality; numbers compared by value, so `1` equals `1.0`. `ignoreExtraElements` forgives elements the expected document never accounted for in **arrays as well as objects**: positionally those are the ones past the end, so expected `[1,2]` accepts `[1,2,3]` and still refuses `[3,1,2]`, and an actual array *shorter* than the expected one remains a mismatch. `ignoreArrayOrder` gives up the positions and keeps the count; together they are a subset test — each expected element pairs with a distinct actual element, the unclaimed ones are ignored, and duplicates still have to go round (deviation #25). json-unit placeholders are interpreted as WM does: `ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, and `regex` (full match); in an array a placeholder occupies a slot rather than excusing one. An **unrecognised** placeholder is rejected at registration (deviation #5) |
-| `matchesJsonPath` | ✅ | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. JSONPath dialect: §6.7 |
-| `matchesJsonSchema` | ❌ 422 | Roadmap |
+| `matchesJsonPath`, `doesNotMatchJsonPath` | ✅ | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. `doesNotMatchJsonPath` negates the whole criterion in either form, so a path that selects nothing satisfies it. JSONPath dialect: §6.7 |
+| `matchesJsonSchema` | 🔶 | Validates the subject against an embedded JSON Schema, inline or as an escaped string. Draft from `schemaVersion` — exactly `V4`, `V6`, `V7`, `V201909`, `V202012`, defaulting to `V202012` — and a document's own `$schema` overrides that field in both directions. **`format` is asserted only under V4/V6/V7**; 2019-09 and 2020-12 treat it as an annotation, which is the spec's own vocabulary boundary and means the default asserts nothing. `$ref` resolves **within the document only** (`$defs`, `definitions`, JSON pointers, `$anchor`, `$id`); WireMock does not fetch a remote one either, it just fails silently. A subject that is not a JSON document is a non-match. Deviations #55–#57 |
 | `equalToXml`, `matchesXPath` | ❌ 422 | Roadmap |
 | `absent` | ✅ | Key-level matcher |
 | `and`, `or`, `not` | ✅ | Combinators over the above |
@@ -363,19 +363,19 @@ Every deviation is deliberate, documented here, and (where sensible) has a confi
 26. Several matcher keys on **one** matcher document are a conjunction: `{"contains": "a", "doesNotContain": "b"}` requires both. WM honours only the first key its binding visits and discards the rest, so the same document means less there — the stub matches requests its author wrote a criterion to exclude, with nothing said. Conjunction is what a person writing two criteria intends, and it is the direction that refuses more rather than less; a document carrying one key reproduces WM exactly.
 27. `and` and `or` need at least two operands, as in WM — a one-operand form is 422 there and here. (Recorded because the arity is part of the accepted surface, not because the two differ.)
 28. Near-miss diagnostics list the stubs closest to an unmatched request, ordered by a distance mockulus defines (§6.8). WM's ordering is its own and is not reproduced: the ranking is a debugging aid outside the strict-compat surface, and no matching decision depends on it.
-29. Selection among the values of a repeated header or query parameter is plain any-of, including under `caseInsensitive`: the criterion holds when *any* value satisfies it. WM instead picks the value at minimum edit distance and matches that one, so a key carrying a near miss alongside an exact match can answer differently there. Reproducing it would put a distance computation on the matching hot path against §16.3 rule 1, for a corner needing all three of a multi-valued key, `caseInsensitive`, and a sibling at non-zero distance.
+29. Selection among the values of a repeated header or query parameter is plain any-of, including under `caseInsensitive`: the criterion holds when *any* value satisfies it. WM instead picks the value at minimum edit distance and matches that one, so a key carrying a near miss alongside an exact match can answer differently there. Reproducing it would put a distance computation on the matching hot path against §16.3 rule 1, for a corner needing all three of a multi-valued key, `caseInsensitive`, and a sibling at non-zero distance. The date-time matchers make the same difference easier to reach. WireMock picks one value and matches it, and where it cannot rank them it takes the first that parses: a `before` or `after` criterion over `?when=13:00Z&when=11:00Z` answers on the 13:00 alone and refuses, while the two values in the opposite order match. Unparseable values are skipped rather than deciding. `equalToDateTime` is unaffected, because an equality can report a distance and so participates in the ranking — which is what makes the corner an ordering question for two of the three matchers and not for the third. Ours is any-of throughout, so mockulus matches strictly more here: no suite that passes on WireMock can fail on this.
 30. A response that does not set `statusMessage` gets Go's canonical reason phrase (`500` → `Internal Server Error`, `222` → `status code 222`); WM sends Jetty's (`500` → `Server Error`, `222` → `222`, `420` → `Enhance your Calm`). Matching the table would mean writing every status line by hand, which is what deviation #7's connection-close follows from — so the phrase is only chosen when a stub asks for one. No client is known to read it, and HTTP/2 does not carry it at all.
 31. `transformerParameters.disableBodyTemplating` is a mockulus extension, not parity: WM has no such parameter and templates an inline body either way. Its own `disableBodyFileTemplating` guards the `bodyFileName` path only. The extension earns its place — a payload that is itself a Handlebars template is exactly the body a stub wants to exempt — but a stub carrying it renders differently on the two servers. A value that is not a boolean is refused 422 rather than ignored (§10.1).
 32. `GET /__admin/scenarios` returns `id`, `name`, `state` and `possibleStates`; WM additionally embeds every member stub under `mappings`. A scenario holding a hundred stubs would repeat all hundred inside a listing whose caller wants a state name, and the same documents are one `GET /__admin/mappings` away.
 33. `PUT /__admin/scenarios/{name}/state` naming an unsupported state answers 400 with error code 1031; WM answers 422 with its code 11. Both refuse the write and both name the scenario and the state, so the failure is loud either way; 400 is the reading §5.1 and Appendix B commit to for a path parameter naming a state that does not exist.
 34. `Started` is a possible state of every scenario, so `PUT {"state": "Started"}` is always accepted. WM derives `possibleStates` from the stubs alone and refuses to set `Started` when no stub names it — even though it is the state the scenario is in until something moves it, and the state `POST /__admin/scenarios/reset` returns it to. Ours keeps the listing, the request path and the two ways of going back to the beginning agreeing with each other.
-35. WireMock's JSON parser is more permissive than `encoding/json`, and mockulus does not follow it. A request body carrying trailing content after a complete document (`{"a":1} tail`), single-quoted member names or values, or `/* */` and `//` comments is parsed there and refused here — so `equalToJson` and `matchesJsonPath` match there and do not here. The same leniency applies to the `equalToJson` *operand*, which registers there and is 422 here. Strictness is the deliberate half: a body that is not JSON is a fact about the request worth reporting, not a shape to guess at.
+35. WireMock's JSON parser is more permissive than `encoding/json`, and mockulus does not follow it. A request body carrying trailing content after a complete document (`{"a":1} tail`), single-quoted member names or values, or `/* */` and `//` comments is parsed there and refused here — so `equalToJson` and `matchesJsonPath` match there and do not here. The same leniency applies to the `equalToJson` *operand*, which registers there and is 422 here. Strictness is the deliberate half: a body that is not JSON is a fact about the request worth reporting, not a shape to guess at. The same strictness governs `matchesJsonSchema`: a subject carrying anything after a complete JSON document is not a document, where WireMock reads the first value and ignores the rest (§5.2, deviation #55).
 36. A `fixedDelayMilliseconds`, `status`, `body` or `base64Body` that WireMock silently normalises is refused 422 instead — a negative or fractional delay, a `status` given as a string, a non-string `body`. WireMock coerces each and serves something; the value it serves is not the one the author wrote, which is what P3 refuses to do. The cost is real and is stated here rather than hidden: a mappings file using those spellings registers there and not here.
 37. A header value outside US-ASCII is compared and emitted as UTF-8, where Jetty renders header bytes as ISO-8859-1 — so a criterion whose operand carries such a character matches the encoding WireMock refuses and refuses the one it matches, and a response header goes out under a different encoding. Nothing on the wire declares an encoding for a header value, so neither is wrong; there is no parameter to read the way there is for a body (§5.2, `Content-Type` charset).
 38. A `jsonBody` is served as the tokens it was registered with — insignificant whitespace between them is dropped, and nothing else is rewritten. WireMock re-serializes the document, so exponent notation becomes plain decimal (`1e2` → `100`), a `\u` escape is emitted as the character it names, and the hex digits of an escape it does keep are normalised to upper case. mockulus preserves the spelling it was given in each of those. The documents are structurally equal either way, which is what §5.6 compares; only the bytes differ.
 39. A helper that finds nothing renders nothing: `lookup` with a key absent from its subject, and `substring` over an empty body, both produce the empty string. WireMock renders the whole subject's `toString` for the first (`{tier=gold}`) and `0` for the second. Rendering an internal representation into a response body is not an outcome worth reproducing.
 40. `importOptions` present without `duplicatePolicy` is treated as the documented default OVERWRITE; WireMock treats the absent policy as IGNORE and keeps the existing stub. When the whole `importOptions` object is omitted the two agree on OVERWRITE — the divergence is only the partially-filled object (§5.1).
-41. The stored and echoed mapping is the document that was registered. WireMock fills in defaults on the way out: an absent `response` becomes `{"status": 200}`, a `response` without `status` gains one, and an absent `request` becomes `{"method": "ANY"}`. Serving agrees in all three cases; only the document differs, and under §5.6's subset rule WireMock's added members would fail any diff that touched such a stub.
+41. The stored and echoed mapping is the document that was registered. WireMock fills in defaults on the way out: an absent `response` becomes `{"status": 200}`, a `response` without `status` gains one, and an absent `request` becomes `{"method": "ANY"}`. Serving agrees in all three cases; only the document differs, and under §5.6's subset rule WireMock's added members would fail any diff that touched such a stub. It also normalises values inside the document it echoes: a bare `now` operand on a date-time matcher reads back as `now +0 seconds`, and a truncation value written `FIRST_DAY_OF_MONTH` reads back as `first day of month`. Ours returns the spelling the author wrote, for the reason deviations #22 and #24 refuse to canonicalise an id — rewriting the document a client sent and handing it back as though it were theirs is the quiet substitution P3 exists to prevent, and here it is not even resolving an ambiguity. Neither spelling changes a matching decision on either server.
 42. A `matchesJsonPath` whose path selects an array node evaluates the inner matcher against the node, not against its elements: `{"expression": "$.tags", "equalTo": "red"}` does not match `{"tags": ["red"]}`. WireMock cannot distinguish a definite path selecting an array from a list of hits and applies the matcher element-wise. The bare form agrees; this is the nested form only (§6.7).
 43. `caseInsensitive` folds by Unicode simple case folding, where Java folds per UTF-16 code unit. The two disagree in both directions: Java folds the Turkish dotted and dotless I to ASCII `i` and `I` and mockulus does not, and mockulus folds supplementary-plane case pairs that Java never folds. Neither is more correct; they are two case-folding definitions.
 44. A response header registered as a one-element array is stored and echoed as an array. WireMock collapses it to a bare string. Serving agrees — one header line either way — so this is the document only.
@@ -383,6 +383,15 @@ Every deviation is deliberate, documented here, and (where sensible) has a confi
 46. `base64Body` is templated when a stub asks for response templating, after the base64 is decoded (§10.1). WireMock templates an inline `body` and a `jsonBody` but never a `base64Body`, so a payload encoded to keep it out of a template renders here and stays literal there.
 47. Two URL criteria on one stub (`url` with `urlPath`, and so on) are refused 422. WireMock resolves them by a fixed field precedence — `url`, `urlPattern`, `urlPath`, `urlPathPattern`, `urlPathTemplate` — independent of document order, and its echo silently omits the criteria it discarded, so a stub matching on a field its author did not intend reads back as though the others were never written.
 48. A response declaring `Content-Type` more than once — as an array of media types, or under two spellings of the name — is refused 422. WireMock accepts it, takes the last value and appends a charset the stub never named, so neither of the declared values reaches the wire. A response carries exactly one Content-Type and its value is one media type: two of them describes a message that cannot be sent, there is no reading of the pair more likely to be what was meant than any other, and refusing is the only answer that does not hand back a header the author did not write. One value, in either the bare or the one-element-array spelling, is unaffected, and every other header may repeat freely.
+49. A date-time **operand or modifier spelling that can never match** is refused 422. WireMock accepts thirteen operand spellings that register and then fail every request with no diagnostic — a colon-less `+0300`, a time-only value, a bare epoch, an empty string, `now+2days`, `now + 2 days`, a doubled space, trailing text, a whitespace-padded keyword — and it silently drops a modifier key it does not recognise, so a misspelled `truncateExpectedTo` reads as though it had been applied. Both are the accept-and-ignore failure P3 exists to prevent, and both are one claim about one feature: a criterion the author wrote is either honoured or refused, never quietly discarded. Sending a spelling WireMock can actually act on reproduces it exactly.
+50. A truncation parameter that **could not take effect** is refused 422 rather than accepted. `truncateExpected` does nothing on a literal expected value — WireMock applies it only to a now-relative one — and `truncateActual` does nothing when `actualFormat` reads the value with a pattern, because WireMock truncates only a value that parsed to a zoned instant. Both are detectable when the stub registers, so both are refused there. The case that is *not* detectable then — a zoneless or date-only ISO actual, which WireMock also skips — is mirrored rather than refused: it depends on the request, and truncating anyway would match where WireMock does not.
+51. `equalToDateTime` against a **bare date matches that whole day**. WireMock reads a date-only expected as midnight, so `equalToDateTime: "2021-06-14"` matches only `00:00:00` and excludes almost every moment of the day it names — an answer nobody writing that criterion means. The widening is deliberately confined to equality: `before` and `after` keep midnight, because widening those would refuse requests WireMock accepts. So the difference is one-directional — every request WireMock matches, mockulus matches identically — and no suite that passes there can fail here.
+52. A **non-numeric actual under `actualFormat: unix` or `epoch` is a non-match**, where WireMock answers 500. Its parse is an unguarded `Long.parseLong`, so an empty value, a decimal or any other non-integer escapes as a `NumberFormatException` and reaches the client as a Jetty error page — from a header, a query parameter or a cookie alike. A request that is not what a criterion asked for is a fact about the request, which is how every other matcher treats input it cannot read (§6.7), and mock traffic is untrusted input that must not be able to produce a server error (§17).
+53. `actualFormat`, `truncateExpected`, `truncateActual` and `applyTruncationLast` are refused 422 **anywhere they have no date-time matcher to modify**. WireMock accepts all four beside `equalTo` or `contains`, where a date pattern means nothing, and as a sibling of `and`/`or`/`not`, where the format never reaches the leaves that would use it — silently, so a stub author who writes it once and expects it to apply gets neither the behaviour nor a diagnostic. Repeating the modifier inside each leaf works on both servers.
+54. `pathParameters` **without a `urlPathTemplate`** is refused 422, as is a parameter naming a variable the template does not bind. WireMock accepts the first and drops the whole block, so an unsatisfiable criterion registers and the stub matches *every* request — the widest possible failure, arrived at silently. It refuses nothing in the second case either and simply never matches. Neither is a criterion the author could have meant, and a stub whose path criteria are ignored is one that intercepts traffic belonging to somebody else.
+55. A subject that is **not a JSON document** is a plain non-match for `matchesJsonSchema`. WireMock falls back to validating the raw request text as a JSON *string*, so `not json at all` satisfies `{"type":"string"}` there — and for a number, boolean or null body it tries both readings and matches if either succeeds, which makes a schema and its own negation both hold for the body `4`. A matcher whose result cannot be reasoned about is not a behaviour worth reproducing, and unparseable input is already a non-match everywhere else here (§6.7). Trailing content after a complete document is likewise not a document, which is deviation #35 applied to this matcher — WireMock reads the first value and ignores the rest. The difference runs the other way from most: WireMock has two readings to succeed with and so matches *more*, and this is confined to scalar and unparseable subjects, since a schema is written for an object or an array.
+56. A **JSON Schema that does not compile is refused 422** with code 1006, and so is a `schemaVersion` outside the five accepted spellings, an unrecognised `$schema` URI, and a `$ref` that points anywhere but inside the document. WireMock validates only that the operand is JSON: `{"type":"banana"}` and a dangling `$ref` register there and then match nothing ever, a bare `42` registers and matches *everything*, an unrecognised `$schema` silently poisons the whole matcher, and an unresolvable `$ref` aborts the evaluation with no error text anywhere in the response. Every one of those is a stub that looks like a criterion and is not one. The remote-`$ref` refusal in particular closes no network hole — WireMock never fetches, which was established rather than assumed — it converts a silent, undiagnosable no-match into a message naming the field, at the cost that WireMock's failure is *lazy*, so a stub whose bad reference sits under a property no request carries works there and is refused here.
+57. A **`$ref` cycle that consumes no instance is answered rather than crashing**. WireMock registers such a stub and then returns 500 with a `StackOverflowError` on the first matching request — `{"$ref":"#"}` is enough, as are the mutual and `allOf` forms. Ours compiles them: a cycle with no escape is unsatisfiable, so nothing matches it, and a cycle with an escape branch resolves through it normally. No stub WireMock accepts is refused on this account, so the difference is only that a request answered with a server error there is answered here.
 
 ### 5.6 Differential compatibility verification (the compat tiebreaker)
 
@@ -391,9 +400,51 @@ Compatibility truth is established **differentially**: the same operations run a
 - **Corpus**: E2E cases (§19.3) tagged `wm: verified` participate in differential runs. Target ≥300 wm-verified cases within the unified corpus by v1.0 (grown adversarially: every [DH] item and every compat bug report becomes a case).
 - **Diffing**: response status/headers/body compared with normalization rules (ignore `Date`, `Server`, connection headers; JSON bodies compared structurally with **subset semantics**: every field of the WM response must be present-and-equal in mockulus's; additive fields on *either* side are ignored — mockulus's documented extras on `/__admin/version` and `/__admin/health` are catalogued extensions, not diffs).
 - **Isolation**: each replayed request gets a **fresh connection** to WM (keep-alives disabled on the oracle client), and WM is reset between cases. Jetty memoizes a connection's parsed cookies and reuses them when the next `Cookie` header differs from the previous one only by case, so a pooled connection makes one step's cookies answer the next step's request — verified on 3.13.2, where `session=abc123` followed by `SESSION=ABC123` both match a `cookies.session` `equalTo` `abc123` stub while the same two requests in the opposite order both miss. Oracle-side connection state is not WM semantics; recording it as such would pin a non-existent behavior.
-- **Record mode**: `runner --record-wm` regenerates the `expect:` blocks of `wm: verified` cases from pinned WM (normalization applied before writing) — used when authoring cases and when bumping `WIREMOCK_VERSION`; the bump PR carries the version change plus the regenerated, human-reviewed expectation diff. Record mode never runs in gate mode.
+- **Authoring**: a case's `expect:` block is written by hand and then *proved* by running the case differentially — the diff is what establishes the expectation, so an expectation nobody could derive from the oracle cannot survive. The same applies to bumping `WIREMOCK_VERSION`: the bump PR runs the full differential lane and carries whatever expectations the new version changed, reviewed one by one. Earlier revisions of this section promised a `runner --record-wm` flag that rewrote those blocks from the oracle automatically. It was never built, and it went unnoticed for the whole of v1 because this section had no catalog entry of any kind — the completeness gates derive their universe from the tables of §5.1, §5.2, §4.6, §10.3, §13 and Appendix B, the numbered list of §5.5 and the metrics block of §14.1, plus a hand-maintained prose manifest that covered §8, §9 and §11 and not this. A recorder is a tool that writes test expectations from a live service, so it can bless a regression as readily as a correction; deriving them by hand and proving them by diff is the slower half of that trade and the one that fails loudly.
 - **Role**: differential runs pin the *recorded expectations* in the corpus; the E2E gate then replays those expectations deterministically on every PR (§19.1). Any diff fails CI with a readable side-by-side; verified [DH] answers get folded back into this spec (Appendix C tracks open ones).
 - The pinned WM version lives at `test/e2e/WIREMOCK_VERSION`.
+
+---
+
+### 5.7 Mockulus extensions (the `/__admin/mockulus/**` namespace)
+
+Everything above this line describes WireMock's surface. This section describes ours.
+
+`/__admin/mockulus/**` is a **reserved namespace for mockulus' own endpoints**, and it exists so that features WireMock has no opinion about cannot be mistaken for compatibility claims. WireMock 3.13.2 answers 404 for every path under it, so nothing here can collide with a client written against WireMock, and nothing here participates in the differential lane of §5.6 — there is no oracle answer to diff against, which is the same posture the deviations of §5.5 take for a different reason.
+
+Three rules govern the namespace:
+
+1. **Nothing in it is required.** A client that never calls it gets the whole compatibility surface. Removing an extension is a minor-version change, not a major one, because no WireMock-compatible suite can depend on it.
+2. **Nothing outside it is an extension.** Mockulus' additive fields on `/__admin/version` and `/__admin/health` predate this section and stay where they are (§5.6 catalogues them as extensions rather than diffs), but a *new* endpoint that is not WireMock's goes here.
+3. **Unclaimed paths under it answer the standard 404 code 1001**, exactly as any other unsupported endpoint does. The namespace is a contract, not a catch-all: `/__admin/mockulus/chaos` is as unsupported as `/__admin/chaos` until something claims it.
+
+#### 5.7.1 The admin UI
+
+The embedded administration UI is served at **`/__admin/mockulus/ui/`** on both listeners, from assets compiled into the binary. It is a static single-page application that talks exclusively to the public admin API — there are no private endpoints behind it and no server-side session state, so anything the UI can do is something a `curl` can do.
+
+| Behavior | Answer |
+|---|---|
+| `GET /__admin/mockulus/ui/` and any path below it | The application document (200, `text/html`), or a fingerprinted asset |
+| A path below the prefix that is not an asset | The application document — the client router runs in history mode, so deep links must boot it |
+| A path below the prefix that *looks* like an asset (has a file extension) and does not exist | 404 |
+| `GET /` **on the admin listener** | 302 to the UI prefix |
+| `GET /` on the mock listener | Unchanged — the mock port's root belongs to the stubs |
+| Any path under the prefix when `ui_enabled: false` | 404 code 1001, and the `/` redirect is not registered |
+| A binary built with no `dist/` | 200 with a page saying the build has no UI and how to build one |
+
+**Caching.** Fingerprinted assets are `public, max-age=31536000, immutable`; the application document is `no-cache`. A build changes every asset name, so the document is the only thing that has to be revalidated for a deploy to take effect.
+
+**Content Security Policy.** Every UI response carries `default-src 'self'` with `script-src 'self'` (no `unsafe-inline`), `object-src 'none'`, `base-uri 'none'`, `form-action 'none'` and `frame-ancestors 'none'`, plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. This is the second layer under the framework's own escaping, and it earns its place because what the UI renders is untrusted: stub names, URLs, header values and request bodies all arrive from whoever is driving the mock. `style-src` keeps `'unsafe-inline'` because the bundler emits inline style attributes; that admits a class of injection that cannot execute code, and the alternative is minting a nonce per response on a static asset path.
+
+**Authentication — an amendment to §17.** §17 states that a route added later is protected by the middleware already in place. The UI **assets are the one exemption**, and the exemption is exact: a request whose path is the prefix, or lies under it, skips the `admin_auth_token` check. Everything else, including every call the UI itself makes, is checked as before.
+
+The reason is mechanical rather than a judgement about risk. A browser cannot attach an `Authorization` header to a page load, or to the script and stylesheet requests that page issues. A token in front of the assets therefore makes the UI unreachable in precisely the deployments that set one, which inverts what guarding it would be for. What the exemption serves is **code**; what that code then does is not exempt — the operator types the token into the UI, the UI attaches it to every API call, and those calls are refused without it like any other.
+
+That pair is the load-bearing security behavior of this section and it is pinned as one case: with `admin_auth_token` set, the assets answer 200 with no token **while the admin API answers 401 with no token**. Neither half is meaningful alone.
+
+**Configuration.** `ui_enabled` (§13), default `true`. The UI is the reason to ship one, so it is on by default; a deployment that wants the surface gone rather than merely unused sets it to `false` and the routes stop existing.
+
+**What the UI is not.** It is an in-cluster and port-forward tool. The admin listener has no TLS (§12.1 — TLS is mock-port-only), so exposing it beyond a cluster boundary is an ingress decision, not a mockulus one, and §15.2 says so.
 
 ---
 
@@ -675,20 +726,24 @@ Registration-time: parse errors and unknown helpers → 422. Serve-time errors (
 
 ```json
 {
-  "id": "<uuid>", "ts": 1753179000123, "pod": "<pod-name>",
+  "id": "3HF2a7mwcgrHTEdHpFeuyflHkco",
   "request": {
     "method": "POST", "url": "/api/orders?x=1", "absoluteUrl": "http://host/api/orders?x=1",
-    "clientIp": "10.0.3.7", "headers": {"..."}, "cookies": {"..."},
-    "body": "<utf8 or omitted>", "bodyAsBase64": "<when binary>",  // capped at journal_max_body (64 KiB), truncation flagged
-    "queryParams": {"..."}, "loggedDate": 1753179000123, "loggedDateString": "..."
+    "clientIp": "10.0.3.7", "headers": {"...": "..."}, "cookies": {"...": "..."},
+    "body": "<utf8; capped at journal_max_body, and a cap that bit sets bodyTruncated>",
+    "queryParams": {"x": {"key": "x", "values": ["1"]}},
+    "loggedDate": 1753179000123, "loggedDateString": "2026-07-30T22:12:36Z"
   },
-  "responseDefinition": {"status": 200, "...": "..."},
-  "stubMapping": {"id": "...", "...": "summary"},
-  "wasMatched": true
+  "responseDefinition": {"status": 200},
+  "stubMapping": {"id": "...", "name": "..."},
+  "wasMatched": true,
+  "traceId": "<only when the request was sampled, §14.3>"
 }
 ```
 
-Shape mirrors WM's `ServeEvent` JSON **[DH]** (harness-verified). Key = `journal::<ksuid>` (time-ordered keys ⇒ efficient recency queries).
+Shape mirrors WM's `ServeEvent` JSON **[DH]** (harness-verified). Key = `journal::<ksuid>` (time-ordered keys ⇒ efficient recency queries), and the entry's `id` is that ksuid rather than a UUID — it is what makes the key time-ordered.
+
+Three fields an earlier revision of this example carried are **not** emitted, and are named here because their absence is the contract a client codes against. There is no top-level `ts` or `pod`: both exist on the stored entry as metadata the journal writer uses, and neither is serialized into the document a query returns. There is no `bodyAsBase64` either — a body that exceeds the cap is truncated and flagged with `bodyTruncated: true` rather than re-encoded, and a body that is not UTF-8 is stored as the bytes decode. `responseDefinition` carries the status and nothing else, and `stubMapping` the id and name, which is the summary this section already promises rather than the whole document. `wasMatched: false` entries carry no `stubMapping` at all.
 
 ### 11.3 Queries
 
@@ -791,6 +846,13 @@ Precedence: **env var > YAML file (`--config` / `MOCKULUS_CONFIG`) > default**. 
 | `log.requests` | `false` | Per-request access logs (hot path — keep off under load) |
 | `log.request_sample_n` | `100` | With `log.requests`, log every Nth request |
 | `metrics_enabled` | `true` | |
+| `ui_enabled` | `true` | Serve the embedded admin UI at `/__admin/mockulus/ui/` (§5.7) |
+| `tracing.enabled` | `false` | Export OpenTelemetry traces (off by default; §14.3) |
+| `tracing.endpoint` | — | OTLP/HTTP collector as `host:port` (e.g. `otel-collector:4318`); required when enabled |
+| `tracing.insecure` | `false` | Send over plain HTTP rather than HTTPS |
+| `tracing.headers` | — | Exporter headers as `k=v,k=v` (e.g. an ingestion token) |
+| `tracing.sample_ratio` | `0.1` | Sampling ratio for traces this pod starts itself (0–1); a caller's decision always wins |
+| `tracing.service_name` | `mockulus` | `service.name` reported on exported spans |
 
 Config struct is defined in one package with struct tags driving env/yaml binding and the generated docs table (`make config-docs` regenerates this section's table — spec and code can't drift).
 
@@ -820,6 +882,7 @@ mockulus_journal_enqueued_total / mockulus_journal_dropped_total / mockulus_jour
 mockulus_template_render_errors_total
 mockulus_regex_timeouts_total
 mockulus_match_candidates                                        histogram # candidates evaluated per request
+mockulus_trace_export_failures_total                             counter   # §14.3; only moves when tracing is on
 ```
 
 `mockulus_http_request_duration_seconds` powers HPA-on-RPS/latency via Prometheus Adapter (§15.4).
@@ -830,7 +893,30 @@ mockulus_match_candidates                                        histogram # can
 
 ### 14.3 Profiling & tracing
 
-`/debug/pprof` always on the admin port (never the mock port), and behind `admin_auth_token` whenever one is set: a heap profile is a copy of every stub body the process is holding, which is exactly what §17 keeps out of the logs. `/healthz`, `/readyz` and `/metrics` stay unauthenticated on that port whatever the token setting — the kubelet and Prometheus cannot present one, and none of the three carries stub content. OpenTelemetry tracing: roadmap (off-by-default even then).
+`/debug/pprof` always on the admin port (never the mock port), and behind `admin_auth_token` whenever one is set: a heap profile is a copy of every stub body the process is holding, which is exactly what §17 keeps out of the logs. `/healthz`, `/readyz` and `/metrics` stay unauthenticated on that port whatever the token setting — the kubelet and Prometheus cannot present one, and none of the three carries stub content.
+
+**OpenTelemetry tracing** is optional and **off by default** (`tracing.enabled`, §13). Off, it costs one atomic load and a branch per request: no span is started, no request context is replaced, and nothing in `internal/tracing` is constructed — the same nil-pointer shape the journal uses, and the reason the alloc budget of §16.3 rule 1 is measured with the default configuration and holds unchanged. The SLOs of §16.1 are stated for that default; a deployment that turns tracing on is choosing a different trade, and what it costs is measured nightly rather than gated.
+
+- **Transport**: OTLP/HTTP only, to `tracing.endpoint` (`host:port`; `tracing.insecure` chooses http over https, and an endpoint carrying a scheme is refused at startup rather than reinterpreted). Export is batched on a background processor, never on the request path (§16.3 rule 3). A collector that refuses or cannot be reached drops the batch and increments `mockulus_trace_export_failures_total` (§14.1), with the reason logged at most once a minute — silence is what a working collector looks like, so an outage must not also be silent.
+- **Sampling**: `ParentBased(TraceIDRatioBased(tracing.sample_ratio))`. A request arriving with W3C trace context follows its caller's decision, so the spans of a mock always appear inside the trace of the test that drove it; the ratio (default `0.1`) governs only traces this pod starts itself, which is what keeps flipping the switch on a busy deployment from becoming an export storm.
+- **Propagation**: W3C `tracecontext` only. Baggage is not propagated — nothing here reads it.
+- **Spans**: one server span per mock request (`mock <METHOD>`) and one per admin request (`admin <endpoint group>`), with the serve-phase children and background spans of §14.4. Mock spans carry the match outcome, the serving stub's id and name, and the snapshot epoch; admin spans cover authentication, so a 401 is a span rather than a gap. `/__admin` served on the mock port is excluded from mock spans, as it is from the mock-port metrics (§14.1). Span names are a fixed vocabulary: an unrecognised request method is reported as `_OTHER` with the original carried as an attribute, and admin spans are named by endpoint group, so mock traffic can no more mint span names than it can mint metric series. No span name or attribute carries a stub body or header.
+
+### 14.4 Span model & correlation
+
+The children of a serve span exist to answer where a request's time went, and they follow the pay-per-use rule the phases themselves follow: a span appears only when the phase it measures ran.
+
+| Span | Kind | When | Carries |
+|---|---|---|---|
+| `match` | internal | every served request | `mockulus.candidates` — the count the §14.1 histogram records, which is what turns "matching was slow" into "matching evaluated two thousand stubs" |
+| `scenario.read` | client | scenario-member stubs only (§9.2) | `mockulus.scenario.name` |
+| `scenario.transition` | client | a served stub with `newScenarioState` (§9.3) | `mockulus.scenario.name` |
+| `template.render` | internal | a templated stub with templating active (§10.1) | render failure marks the span |
+| `delay` | internal | only when the composed delay is above zero (§12.4) | `mockulus.delay_ms` — a trace must distinguish the time a stub was *told* to wait from time something actually took, because a duration alone cannot and only one of the two is a fault |
+
+Two background spans are **roots rather than children**, deliberately. `snapshot.rebuild` (trigger, epoch, stub count) and `journal.flush` (batch size) are shared work: a rebuild is coalesced across every write that triggered it and outlives all of them, and a journal batch holds entries from many requests and often many traces. Attaching either to one caller's trace would bill the whole cluster's convergence, or an unrelated request's journal write, to whoever happened to arrive first.
+
+**Correlation.** A journal entry gains a `traceId` member when the request that produced it was sampled — captured when the entry is built, since it crosses a channel to a background writer by which point the span is over (§11.1). It is additive, so §5.6's subset diffing does not see it. The sampled access-log line (§14.2) gains a `trace_id` field on the same condition. Both are absent, not empty, when there is no sampled span, so a deployment that is not tracing keeps exactly the journal document and the log line it had.
 
 ---
 
@@ -838,7 +924,7 @@ mockulus_match_candidates                                        histogram # can
 
 ### 15.1 Image
 
-Multi-stage build: `golang:1.25-bookworm` builder → `gcr.io/distroless/static-debian12:nonroot`. `CGO_ENABLED=0`, `-trimpath`, version stamped via `-ldflags -X`. Runs as nonroot, read-only root FS, no shell. Target < 40 MB — measured at 35.2 MB on arm64 with the shipping flags. The earlier 25 MB was an estimate made before the binary existed and the distroless base was chosen; it was never met and is not worth meeting by trading away either. Multi-arch (amd64, arm64) via buildx. `HEALTHCHECK` runs `mockulus -healthcheck`, which probes `/healthz` on the configured admin port — the base has no shell and no curl, so the binary is the only thing in the image that can make a request, and aiming a check at the mock port would read an unmatched-request 404 (§5.4) as an unhealthy pod. Kubernetes uses the probes of §15.2 instead; this is for teams running the image directly.
+Multi-stage build: `golang:1.25-bookworm` builder → `gcr.io/distroless/static-debian12:nonroot`. `CGO_ENABLED=0`, `-trimpath`, version stamped via `-ldflags -X`. Runs as nonroot, read-only root FS, no shell. Target < 40 MB, **enforced** by `scripts/check-image-size.sh` in the image job rather than asserted here: the admin UI of §5.7 is compiled into the binary, and a bundle is the one part of this artifact that grows by dependency rather than by anyone writing more of it. What is measured is the **flattened filesystem** — what a node actually stores — because that is the only figure that does not change with which daemon built the image: a layer sum reads as compressed on a containerd-backed builder and uncompressed on a classic one, a factor of roughly four apart, and `docker images` adds attestation manifests on top. Measured that way it was 24.9 MB at v1.1.0, of which the embedded UI is 577 kB — a figure recorded to show the shape of the artifact rather than to be kept current by hand, since the check is what holds the budget. Earlier revisions of this line recorded 35.2 MB and, before that, a 25 MB estimate made before the binary existed; neither named its method, which is why neither could be reproduced. Multi-arch (amd64, arm64) via buildx. `HEALTHCHECK` runs `mockulus -healthcheck`, which probes `/healthz` on the configured admin port — the base has no shell and no curl, so the binary is the only thing in the image that can make a request, and aiming a check at the mock port would read an unmatched-request 404 (§5.4) as an unhealthy pod. Kubernetes uses the probes of §15.2 instead; this is for teams running the image directly.
 
 ### 15.2 Probes
 
@@ -897,7 +983,7 @@ S5/S9 **timing** is asserted only here, on the reference rig; the E2E gate cover
 ## 17. Security
 
 - Mock traffic is untrusted input: body caps, header caps, regex timeouts (ReDoS), no reflection of internals in errors on the mock port.
-- Admin API: optional static bearer token (`admin_auth_token`; compare constant-time). It guards the whole `/__admin` mux rather than individual routes, so a route added later is protected by existing; it also guards `/debug/pprof/**` (§14.3), because a profile hands over the stub bodies the token exists to protect. A refusal is counted by `mockulus_admin_requests_total{code="401"}` — a deployment whose token is being guessed must not look idle. Default open — expected posture is NetworkPolicy + in-cluster only + `admin_on_mock_port: false` when the mock port is exposed beyond the namespace. Chart makes this posture the documented "hardened" values preset, and the preset **refuses to render without a token** rather than installing a release that reads as locked down with an open admin API.
+- Admin API: optional static bearer token (`admin_auth_token`; compare constant-time). It guards the whole `/__admin` mux rather than individual routes, so a route added later is protected by existing; it also guards `/debug/pprof/**` (§14.3), because a profile hands over the stub bodies the token exists to protect. **One exemption**, stated and bounded in §5.7: the admin UI's static assets are served without the check, because a browser cannot attach an `Authorization` header to a page load and a token there makes the UI unreachable on exactly the deployments that set one. What is exempt is code; every API call the UI makes is checked like any other, and the pair is pinned by a single corpus case. A refusal is counted by `mockulus_admin_requests_total{code="401"}` — a deployment whose token is being guessed must not look idle. Default open — expected posture is NetworkPolicy + in-cluster only + `admin_on_mock_port: false` when the mock port is exposed beyond the namespace. Chart makes this posture the documented "hardened" values preset, and the preset **refuses to render without a token** rather than installing a release that reads as locked down with an open admin API.
 - Admin file names (`PUT /__admin/files/{name}`) are validated at the edge and **refused, never repaired**: relative, in cleaned form, no `..`, valid UTF-8, no control characters, bounded in length. Nothing joins a name onto a filesystem path today — the file driver builds its map by walking a directory — so this is defence in depth rather than a live traversal; repairing a name instead (trimming a leading `/`) is what would make it live the day a driver does, and in the meantime stores the caller's file under a name they did not choose.
 - Templates are sandboxed by construction: allowlisted helpers only; no file, env, network, or system access (`file`, `systemValue`, `secret`, `hostname` helpers deliberately excluded, §10.3).
 - Container: nonroot, read-only FS, no shell, no capabilities. `securityContext` set in chart. SBOM (`syft`) + vuln scan (`govulncheck`, `trivy`) in CI.
@@ -915,27 +1001,32 @@ cmd/mockulus/                 main: config load, wiring, lifecycle (small — al
 internal/config/          typed config, env/yaml binding, docs generation
 internal/server/          listeners, routing, lifecycle, middleware (metrics, recovery)
 internal/admin/           /__admin handlers (transport only — thin over core services)
+internal/adminui/         embedded admin UI: go:embed of the built SPA, SPA fallback, CSP (§5.7)
 internal/match/           engine: Snapshot, matching algorithm, ParsedRequest pool
 internal/stub/            stub JSON model, validation (422 catalog), compilation to CompiledStub
 internal/matchers/        content matchers (equalTo, contains, regex, json…) — pure functions
 internal/jsonpath/        JSONPath evaluator (definite/indefinite paths, §6.7)
+internal/jsonschemax/     JSON Schema seam: draft selection, format policy, $ref scope (§5.2)
 internal/regexx/          RE2/regexp2 seam, timeouts
 internal/handlebars/      Handlebars subset: parser + evaluator
+internal/javatime/        Java date patterns and offset expressions → Go time (§10.3, §5.2)
 internal/template/        WM helper set, request model binding, caching
 internal/scenario/        state client (CAS logic) + admin service
 internal/journal/         entry model, batch writer, query service
 internal/store/           StubStore interface + drivers: couchbase/, memory/, file/
 internal/response/        renderer: delays, faults, dribble, body assembly
 internal/metrics/         registry, collectors
+internal/tracing/         OpenTelemetry seam: provider, sampler, spans (§14.3)
 internal/wmcompat/        error catalog, WM JSON envelopes, near-miss scoring
 test/e2e/                 E2E harness (§19): runner/ (standalone Go binary), catalog/ (behavior IDs),
                           corpus/ (YAML cases), gotests/ (socket-level cases), topologies/ (compose/kind),
                           WIREMOCK_VERSION
 test/load/                k6 scenarios, compose rigs (§16)
+ui/                       admin UI source: Svelte 5 SPA, built into internal/adminui/dist (§5.7)
 deploy/chart/  deploy/manifests/  
 ```
 
-**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
+**Dependency policy** (allowlist; anything else needs a PR discussion): `gocb/v2`, `dlclark/regexp2`, `prometheus/client_golang`, `google/uuid`, `segmentio/ksuid`, `golang.org/x/net` (h2c), `go.opentelemetry.io/otel` + `otel/trace` + `otel/sdk` + the OTLP/HTTP trace exporter (§14.3 — the API half was already in the module graph transitively, and the exporter is only linked in, never started, unless `tracing.enabled`), `santhosh-tekuri/jsonschema/v6` (§5.2 `matchesJsonSchema`, behind the `internal/jsonschemax` seam; it brings `golang.org/x/text` and `dlclark/regexp2`, the latter already shipped for §6.6, so a schema's `pattern` is evaluated by the engine `matches` already uses), test-only: `testcontainers-go`, `stretchr/testify`, `gopkg.in/yaml.v3` (e2e corpus parsing, and the contract lint of §5.1's OpenAPI description). Templating (§10.1) and JSONPath (§6.7) were both planned as dependencies and are both implemented in-repo instead; the reasons are recorded in those sections. Stdlib for everything else (`log/slog`, `encoding/json`, `net/http`). No web framework, no DI framework, no config framework beyond trivial binding.
 
 Interfaces kept narrow and defined **at the consumer** (Go idiom); `memory` store doubles as the test fake — no mock-generation tooling (fitting, given the project name).
 
@@ -1115,7 +1206,16 @@ mockulus is an open-source project under the **Apache License 2.0** from the fir
 
 ## Appendix A — Annotated stub mapping example
 
-Everything in this example is v1-supported:
+Everything in this example is v1-supported, and every line of it has been
+registered against a running mockulus and served the request it describes. An
+earlier revision spelled the `equalToJson` criterion
+`{"equalToJson": {"value": "…", "ignoreExtraElements": true}}`, which is not a
+form either server has: it registers cleanly and then compares the body against
+the literal object `{"value": …, "ignoreExtraElements": true}`, so the stub
+matches nothing anybody would send. The flags are **siblings** of the operand,
+not members of it. That is the accept-and-behave-differently failure P3 exists
+to prevent, reached through documentation rather than through code, which is why
+the example is now derived from a live registration rather than written out.
 
 ```jsonc
 {
@@ -1137,7 +1237,7 @@ Everything in this example is v1-supported:
     "queryParameters": { "dryRun": { "matches": "true|false" } },
     "bodyPatterns": [
       { "matchesJsonPath": { "expression": "$.customer.id", "matches": "[A-Z]{2}[0-9]{6}" } },
-      { "equalToJson": { "value": "{\"channel\":\"web\"}", "ignoreExtraElements": true } }
+      { "equalToJson": { "channel": "web" }, "ignoreExtraElements": true }
     ]
   },
   "response": {
@@ -1149,7 +1249,7 @@ Everything in this example is v1-supported:
     "jsonBody": {
       "orderId": "{{randomValue type='UUID'}}",
       "customerId": "{{jsonPath request.body '$.customer.id'}}",
-      "createdAt": "{{now format='yyyy-MM-dd\'T\'HH:mm:ss\'Z\''}}",
+      "createdAt": "{{now}}",                       // default format is the ISO-8601 instant
       "status": "CREATED"
     },
     "transformers": ["response-template"],
@@ -1177,6 +1277,7 @@ Error body shape (WM-compatible envelope):
 | 1003 | 422 | Regex does not compile (both engines) |
 | 1004 | 422 | Unknown transformer name |
 | 1005 | 422 | Unknown settings key |
+| 1006 | 422 | JSON Schema that does not compile (`matchesJsonSchema`) |
 | 1010 | 500 | Journal disabled (WM parity shape **[DH]**) |
 | 1020 | 503 | Store unavailable (admin writes during CB outage) |
 | 1021 | 500 | Scenario state unavailable (CB outage, scenario stub) |

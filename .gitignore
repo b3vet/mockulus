@@ -3,6 +3,22 @@
 /dist/
 *.exe
 
+# The admin UI's build output. internal/adminui/dist/.gitkeep is committed and
+# has to stay that way — it is what lets `go build` succeed with no Node
+# installed, since go:embed refuses a directory it can find nothing in — but
+# everything vite writes beside it is generated and belongs to whoever last ran
+# `make ui-build`.
+#
+# This is load-bearing beyond tidiness. goreleaser refuses to build from a dirty
+# tree, and .goreleaser.yaml runs ui-build as a before-hook, so a bundle that
+# read as an untracked file would make every release fail on the output of its
+# own build step.
+/internal/adminui/dist/*
+!/internal/adminui/dist/.gitkeep
+
+# The pnpm store for the JavaScript workspace, at the root and in every package.
+node_modules/
+
 # Release artifacts the publish job writes into the working directory before
 # goreleaser runs: `helm package` drops the chart tarball in the current
 # directory, and the SBOM action writes its document beside it. goreleaser
@@ -23,6 +39,30 @@ covdata/
 # Local tooling
 /.tools/
 
+# npm toolchain. pnpm-lock.yaml is committed — it is the reproducibility
+# guarantee, same role as go.sum.
+node_modules/
+/ui/dist/
+
+# The browser smoke's own output: traces and screenshots kept from a failing
+# run, and the HTML report built over them. Both are evidence about one run on
+# one machine, which is a thing to read and then throw away.
+/ui/test-results/
+/ui/playwright-report/
+/ui/blob-report/
+
+# The embedded admin UI bundle. `internal/adminui` embeds this directory with
+# `//go:embed all:dist`, so the built site is an input to `go build` rather than
+# a leftover of it — but it is still generated, and generated bundles do not
+# belong in the tree.
+#
+# `.gitkeep` is the exception and stays tracked: go:embed fails on a directory
+# that does not exist, and that placeholder is what keeps `go build` working on
+# a machine with no Node installed. Ignoring the contents rather than the
+# directory itself is what leaves room for the negation to apply.
+/internal/adminui/dist/*
+!/internal/adminui/dist/.gitkeep
+
 # Editor / OS
 .DS_Store
 *.swp
@@ -39,3 +79,16 @@ covdata/
 # behind calls that were made and unmade. Anything in them a user needs is in
 # SPEC.md or the deviation list.
 /internalDocs/
+
+# The TypeScript SDK's compiled output. Published to npm from CI, never from a
+# working tree, so the tree carries the source and the tarball carries this.
+/sdk/typescript/dist/
+/sdk/typescript/*.tsbuildinfo
+
+# The contract lint compiles to the repo root when built rather than run.
+/contractlint
+
+# Copied in at pack time by the SDK's prepack script and removed after, so a
+# publish carries the licence text without the tree carrying a second copy.
+/sdk/typescript/LICENSE
+/sdk/typescript/NOTICE

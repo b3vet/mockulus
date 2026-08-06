@@ -1,6 +1,6 @@
 # Deviations from WireMock
 
-Mockulus answers differently from WireMock in 47 places. This page is all of
+Mockulus answers differently from WireMock in 57 places. This page is all of
 them, grouped by what you are doing when you hit one, with what to expect and
 what to do about it.
 
@@ -280,6 +280,44 @@ field its author did not intend then reads back as though the others were never
 written, which makes the mistake invisible in exactly the place you would look
 for it.
 
+### #54 — `pathParameters` without a `urlPathTemplate`
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/orders/123","pathParameters":{"id":{"equalTo":"123"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/pathParameters"},"title":"Malformed request","detail":"pathParameters needs a urlPathTemplate to bind against"}]}
+```
+
+A parameter naming a variable the template does not bind is refused the same
+way, and the message names the template it looked in:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPathTemplate":"/orders/{id}","pathParameters":{"orderId":{"equalTo":"123"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/pathParameters/orderId"},"title":"Malformed request","detail":"the template \"/orders/{id}\" binds no variable named \"orderId\""}]}
+```
+
+WireMock accepts the first and drops the whole `pathParameters` block, so the
+criterion the author wrote is never evaluated and the stub answers everything its
+remaining criteria admit — for a stub whose path parameters *were* its criteria,
+that is every request. It is the widest failure on this page and it happens in
+silence. The second case fails the other way there: nothing is refused and the
+stub never matches at all. Neither is a criterion the author could have meant,
+and a stub whose path criteria are ignored is one that intercepts traffic
+belonging to somebody else.
+
+Pair the block with a template that binds its names and the two servers agree
+exactly:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPathTemplate":"/orders/{id}","pathParameters":{"id":{"equalTo":"123"}}},"response":{"status":200}}'
+201
+```
+
+There is no configuration key for this one, and none is wanted: the accepting
+behavior is the one that matches other people's traffic.
+
 ### #19 — More than one body form on a response
 
 ```console
@@ -353,6 +391,205 @@ $ curl -s -X POST "$ADMIN/__admin/mappings" \
 WireMock refuses a one-operand combinator too. This is recorded because the
 arity is part of the accepted surface, not because the two servers differ.
 
+### #56 — A JSON Schema that could not work is refused
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/s","bodyPatterns":[{"matchesJsonSchema":{"type":"banana"}}]},"response":{"status":200}}'
+{"errors":[{"code":1006,"source":{"pointer":"/request/bodyPatterns/0/matchesJsonSchema"},"title":"Invalid JSON Schema","detail":"the schema is not usable: at '/type': value must be one of 'array', 'boolean', 'integer', 'null', 'number', 'object', 'string'"}]}
+```
+
+WireMock checks only that the operand is JSON, so each of the documents below
+registers there and then behaves in a way nobody writing it intended. A `type`
+naming no type and a `$ref` to a location the document does not contain match
+nothing, ever. An unrecognised `$schema` poisons the matcher just as silently. A
+bare value matches **everything**, which is the same mistake in the direction
+that lets traffic through:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/s","bodyPatterns":[{"matchesJsonSchema":42}]},"response":{"status":200}}'
+{"errors":[{"code":1006,"source":{"pointer":"/request/bodyPatterns/0/matchesJsonSchema"},"title":"Invalid JSON Schema","detail":"a schema must be a JSON object or a boolean; a bare value here would accept every request"}]}
+```
+
+A `schemaVersion` outside the five accepted spellings is refused as well, and
+the message names the set so a typo becomes a fix rather than a search:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/s","bodyPatterns":[{"matchesJsonSchema":{"type":"object"},"schemaVersion":"V2020"}]},"response":{"status":200}}'
+{"errors":[{"code":1006,"source":{"pointer":"/request/bodyPatterns/0/matchesJsonSchema"},"title":"Invalid JSON Schema","detail":"schemaVersion must be one of V4, V6, V7, V201909, V202012"}]}
+```
+
+The same refusal covers a `$ref` that points outside the document. That one
+closes no network hole, and it is worth being precise about why: WireMock does
+not fetch a remote reference either. A listener that accepted connections and
+never answered recorded no connection at all across the whole probe, and a
+reference to a schema that was genuinely reachable still did not resolve. What
+the refusal converts is a stub that silently matches nothing into a message
+naming the field.
+
+There is a cost, and it is the one case where a stub that works on WireMock does
+not register here. WireMock's failure is **lazy** — the reference is only
+resolved when that subschema is applied — so a bad `$ref` sitting under a
+property no request happens to carry never fails there. Compiling the whole
+document at registration finds it regardless. In exchange, every schema that
+registers is one that can actually decide a request.
+
+`$defs`, `definitions`, JSON pointers, `$anchor` and `$id` all resolve normally;
+in-document is the only restriction.
+
+### #49 — A date-time operand or modifier spelling that can never match
+
+The three date-time matchers — `before`, `after` and `equalToDateTime` — take
+their expected value as a string, and WireMock parses that string at match time
+rather than at registration. A spelling it cannot read is a stub that registers
+and then answers nothing, forever, with no diagnostic anywhere. Mockulus parses
+the operand when the stub arrives:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/dt1","headers":{"X-When":{"before":"2021-06-14T12:13:14+0300"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/before"},"title":"Malformed request","detail":"\"2021-06-14T12:13:14+0300\" is not a date-time this matcher can compare against; expected an ISO-8601 instant (an offset must be written with a colon), a date, an RFC 1123 date, or a now-relative expression such as \"now +3 days\""}]}
+
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/dt2","headers":{"X-When":{"after":"now+2days"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/after"},"title":"Malformed request","detail":"\"now+2days\" is not a date-time this matcher can compare against; expected an ISO-8601 instant (an offset must be written with a colon), a date, an RFC 1123 date, or a now-relative expression such as \"now +3 days\""}]}
+
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/dt3","headers":{"X-When":{"after":"  now  "}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/after"},"title":"Malformed request","detail":"\"  now  \" is not a date-time this matcher can compare against; expected an ISO-8601 instant (an offset must be written with a colon), a date, an RFC 1123 date, or a now-relative expression such as \"now +3 days\""}]}
+```
+
+Those are three of thirteen spellings WireMock accepts and can never act on: an
+offset written without its colon, a time with no date, a bare epoch number, an
+empty string, `now+2days` and `now + 2 days` and `now  +2 days`, a value with
+trailing text after it, and a keyword padded with spaces. There is no operand
+trimming there and no parseability check at registration, so each of them
+answers `201` and then misses every request.
+
+The same entry covers the modifier half, because it is the same claim about the
+same feature. WireMock drops a key it does not recognise inside a matcher
+document without a word: a misspelled `truncateExpected` answers `201`, vanishes
+from the mapping the server echoes back, and the truncation the author asked for
+never happens.
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/dt7","headers":{"X-When":{"equalToDateTime":"2021-06-14T12:13:14Z","truncateExpectedTo":"FIRST_DAY_OF_MONTH"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/truncateExpectedTo"},"title":"Malformed request","detail":"unknown matcher truncateExpectedTo"}]}
+```
+
+Both halves are the same accept-and-ignore failure, and one claim about one
+feature: a criterion the author wrote is either honoured or refused, never
+quietly discarded. A spelling WireMock can actually act on reproduces it exactly:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/dtok","headers":{"X-When":{"before":"now +2 days"}}},"response":{"status":200}}'
+201
+```
+
+The accepted operand grammar is in
+[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) and is
+WireMock's, not a subset of it: ISO-8601 with a colon-bearing offset, a bare
+date, an RFC 1123 date, and the now-relative forms `now`, `now ±N units` and
+`±N units`, where the units are plural, run from `seconds` to `years`, and do
+not include `weeks`. No configuration key restores the accepting behavior; the
+correction is one edit per operand and the `422` names every one of them in a
+single response.
+
+### #50 — A truncation parameter that could not take effect
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/tr1","headers":{"X-When":{"equalToDateTime":"2021-06-14T12:13:14Z","truncateExpected":"first day of month"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/equalToDateTime"},"title":"Malformed request","detail":"truncateExpected has no effect on the literal date-time \"2021-06-14T12:13:14Z\"; it applies only to a now-relative expected value such as \"now +3 days\""}]}
+
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/tr2","headers":{"X-When":{"before":"now","actualFormat":"dd/MM/yyyy","truncateActual":"first day of month"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/before"},"title":"Malformed request","detail":"truncateActual has no effect when actualFormat reads the value with a pattern; it applies to an ISO-8601 actual carrying an offset, or to unix/epoch"}]}
+```
+
+Both keys are wired up in WireMock — an invalid truncation value is a `422`
+there — and both are inert on one branch of the matcher without saying so.
+`truncateExpected` moves a now-relative expected value and does nothing at all to
+a literal one. `truncateActual` truncates an actual that parsed to a zoned
+instant and does nothing when `actualFormat` reads the value with a pattern,
+including a pattern that carries a time. A stub relying on either combination is
+a stub whose author asked for a truncation and got none.
+
+Both are decidable from the stub alone, so both are refused when it registers.
+The third inert case is not decidable then, and is mirrored rather than refused:
+`truncateActual` is skipped for an ISO actual with no offset, and for a date-only
+one, exactly as it is skipped there. That depends on the request rather than the
+mapping, and truncating anyway would match where WireMock does not. Against a
+stub whose criterion is
+`{"equalToDateTime": "2021-06-01T00:00:00", "truncateActual": "first day of month"}`:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-When: 2021-06-14T12:13:14+03:00' "$MOCK/trunc2"
+200
+$ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-When: 2021-06-14T12:13:14' "$MOCK/trunc2"
+404
+```
+
+The two requests carry the same wall-clock value. The first carries an offset
+with it, so it truncates to the first of the month and matches; the second does
+not, so it is compared untruncated and misses. That is WireMock's answer to both.
+
+The combinations that can take effect register unchanged:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/tr3","headers":{"X-When":{"after":"now","truncateExpected":"first day of month"}}},"response":{"status":200}}'
+201
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/tr5","headers":{"X-When":{"after":"now","actualFormat":"unix","truncateActual":"first day of month"}}},"response":{"status":200}}'
+201
+```
+
+### #53 — A date-time modifier with no date-time matcher to modify
+
+`actualFormat`, `truncateExpected`, `truncateActual` and `applyTruncationLast`
+modify `before`, `after` and `equalToDateTime`. Written anywhere else they are
+refused, and the two places they get written are beside a string matcher —
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/af1","headers":{"X-When":{"equalTo":"2021-06-14","actualFormat":"dd/MM/yyyy"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/actualFormat"},"title":"Malformed request","detail":"actualFormat only applies to a before, after or equalToDateTime matcher; on a combinator it must be repeated inside each leaf"}]}
+```
+
+— and beside a combinator, at the top of a document whose date-time matchers are
+one level down:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/af2","headers":{"X-When":{"and":[{"after":"2000-01-01T00:00:00Z"},{"before":"2030-01-01T00:00:00Z"}],"actualFormat":"dd/MM/yyyy"}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/headers/X-When/actualFormat"},"title":"Malformed request","detail":"actualFormat only applies to a before, after or equalToDateTime matcher; on a combinator it must be repeated inside each leaf"}]}
+```
+
+The other three modifiers are refused in the same two positions, each under its
+own name. WireMock accepts all of them in both. Beside `equalTo` or `contains` a
+date pattern means nothing, and as a sibling of `and`, `or` or `not` the format
+never reaches the leaves that would have used it — so the leaves go on parsing
+ISO-8601 and a range written to read `dd/MM/yyyy` reads something else, with
+neither the behavior nor a diagnostic for the author who wrote the key once and
+expected it to apply.
+
+The message names the fix, and the fix works on both servers:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/af5","headers":{"X-When":{"and":[{"after":"2000-01-01T00:00:00Z","actualFormat":"dd/MM/yyyy"},{"before":"2030-01-01T00:00:00Z","actualFormat":"dd/MM/yyyy"}]}}},"response":{"status":200}}'
+201
+```
+
+No configuration key restores the accepting behavior for this one or for #50
+above. A modifier that reaches nothing is a criterion that does nothing, and the
+whole reason it is written is that its author wanted it to.
+
 ---
 
 ## Matching a request
@@ -420,6 +657,72 @@ an expected element strictly more permissive than another: a placeholder, or an
 object that `ignoreExtraElements` lets another expected object subsume. With
 either flag alone, and with literal elements, the two agree exactly.
 
+### #55 — `matchesJsonSchema` validates a document, not the request text
+
+A body that is not JSON is a plain non-match here. WireMock falls back to
+validating the raw request text as a JSON *string*, so `not json at all`
+satisfies `{"type":"string"}` there, and for a number, boolean or null body it
+tries both readings and matches if either succeeds.
+
+The consequence is a matcher that contradicts itself. Against the body `4`,
+WireMock matches `{"type":"string"}` — through the raw-text reading — and also
+matches `{"not":{"type":"string"}}`, through the parsed one. Both stubs claim
+the same request. Here exactly one of them does:
+
+```console
+$ curl -s -X POST "$MOCK/any" -H 'Content-Type: application/json' -d '"4"'
+a string
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$MOCK/any" \
+    -H 'Content-Type: application/json' -d '4'
+404
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$MOCK/any" -d 'not json at all'
+404
+```
+
+The stub is `{"matchesJsonSchema": {"type": "string"}}`. WireMock answers `200`
+to all three.
+
+Input a matcher cannot read is a fact about the request, which is how every
+other matcher here treats it. Trailing content after a complete document is
+likewise not a document — deviation #35 applied to this matcher, where WireMock
+reads the first value and ignores the rest.
+
+This is confined to scalar and unparseable subjects. A schema is written for an
+object or an array, and there the two readings cannot disagree: the raw text of
+a request body is never an object, so WireMock's fallback fails the same
+`"type": "object"` the parsed document has to satisfy. If your stubs validate
+object or array bodies, the two servers agree exactly.
+
+Note also that the difference runs the opposite way from most of this page.
+WireMock has two readings to succeed with, so it matches **more** — a suite
+moving here can find a scalar-body stub that no longer claims its request.
+
+### #57 — A `$ref` cycle is answered rather than crashed on
+
+A schema whose references form a cycle that consumes no input registers on both
+servers. WireMock then returns `500` with a `StackOverflowError` on the first
+request that reaches it; `{"$ref":"#"}` is enough, and so are the mutual and
+`allOf` forms. Here the cycle compiles and the request gets an answer:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$MOCK/cyc" \
+    -H 'Content-Type: application/json' -d '{"a":1}'
+404
+```
+
+The stub is `{"matchesJsonSchema": {"$ref": "#"}}`, and the `404` is a matcher
+that decided rather than a matcher that failed.
+
+Nothing is special-cased to achieve that. A cycle with no escape is
+unsatisfiable, so nothing validates against it and the stub matches nothing; a
+cycle with an escape branch — the usual recursive-tree shape, where a node is
+either a leaf or a list of nodes — resolves through the branch and keeps its
+ordinary meaning.
+
+No stub WireMock accepts is refused on this account, so this deviation costs
+nothing to migrate. The only difference is that a request answered with a server
+error there is answered here.
+
 ### #29 — Repeated headers and query parameters are plain any-of
 
 A criterion on a repeated key holds when *any* value satisfies it, including
@@ -480,6 +783,76 @@ difference. Nothing on the wire declares an encoding for a header value — ther
 is no parameter to read the way there is for a body's `Content-Type` charset —
 so neither is wrong, and the only ones affected are header operands outside
 US-ASCII.
+
+### #51 — `equalToDateTime` against a bare date matches that whole day
+
+The stub's criterion is `X-When` `equalToDateTime` `2021-06-14`:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-When: 2021-06-14T13:00:00Z' "$MOCK/day"
+200
+$ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-When: 2021-06-14T23:59:59Z' "$MOCK/day"
+200
+$ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-When: 2021-06-15T00:00:00Z' "$MOCK/day"
+404
+```
+
+WireMock reads a date-only expected value as midnight, so only the first instant
+of 14 June matches there and every other moment of the day the criterion names —
+which is to say the whole working day — is a non-match. Nobody writing
+`equalToDateTime: "2021-06-14"` means that.
+
+The widening is deliberately confined to equality. `before` and `after` keep
+midnight, because widening them would refuse requests WireMock accepts. Against
+the same bare date under `after`:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-When: 2021-06-14T13:00:00Z' "$MOCK/after"
+200
+$ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-When: 2021-06-14T00:00:00Z' "$MOCK/after"
+404
+```
+
+Midnight itself misses because `before` and `after` are strict on both servers —
+an actual exactly equal to the expected satisfies neither, and an inclusive bound
+is written `{"or": [{"equalToDateTime": …}, {"before": …}]}`.
+
+So this difference is one-directional: every request WireMock matches, mockulus
+matches identically, and no suite that passes there can fail here. A suite
+asserting on a *non*-match against a date-only `equalToDateTime` is the one to
+look at, and the exact-midnight behavior is one `equalToDateTime:
+"2021-06-14T00:00:00"` away.
+
+### #52 — A non-numeric actual under `actualFormat: unix` or `epoch`
+
+The stub's criterion is the query parameter `t`,
+`{"before": "2030-01-01T00:00:00Z", "actualFormat": "unix"}`:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' "$MOCK/epoch?t=1623672794"
+200
+$ curl -s -o /dev/null -w '%{http_code}\n' "$MOCK/epoch?t=notanumber"
+404
+$ curl -s -o /dev/null -w '%{http_code}\n' "$MOCK/epoch?t=12.5"
+404
+```
+
+WireMock answers `500` to the last two. Its parse is an unguarded
+`Long.parseLong`, so an empty value, a decimal or any other non-integer escapes
+as a `NumberFormatException` and reaches the client as a Jetty error page — from
+a header, a query parameter or a cookie alike.
+
+A request that is not what a criterion asked for is a fact about the request, and
+that is how every other matcher here treats input it cannot read: an unparseable
+body is a non-match for `equalToJson`, an unparseable actual is a non-match for
+`before` and `after` without an `actualFormat`, and none of them is an error.
+Mock traffic is untrusted input that must not be able to turn a stub into a
+server error ([SPEC §17](../SPEC.md#17-security)), so there is no key that
+restores the `500`.
+
+The direction is worth knowing if your suite asserts on the status: a request
+that produced a `500` there produces a plain unmatched `404` here, with the
+usual `text/plain;charset=UTF-8` body.
 
 ### #12 — Java-regex constructs RE2 cannot compile
 
@@ -597,6 +970,48 @@ X-One: a
 
 WireMock collapses the array to a bare string in the stored mapping. Serving
 agrees — one header line either way — so this is the echoed document only.
+
+### #48 — A response declaring `Content-Type` more than once
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/ct1"},"response":{"status":200,"headers":{"Content-Type":["application/json","text/plain"]},"body":"{}"}}'
+{"errors":[{"code":10,"source":{"pointer":"/response/headers/Content-Type"},"title":"Malformed request","detail":"Content-Type takes a single media type, and this response declares 2"}]}
+```
+
+The other spelling of the same mistake is two keys whose names differ only in
+case, which HTTP says are one header:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/ct2"},"response":{"status":200,"headers":{"Content-Type":"application/json","content-type":"text/plain"},"body":"{}"}}'
+{"errors":[{"code":10,"source":{"pointer":"/response/headers/Content-Type"},"title":"Malformed request","detail":"Content-Type takes a single media type, and this response declares 2"}]}
+```
+
+WireMock accepts both, takes the last value and appends a charset the stub never
+named, so neither of the two values the author wrote is what goes out. A response
+carries exactly one Content-Type and its value is one media type; two of them
+describe a message that cannot be sent, no reading of the pair is more likely to
+be what was meant than any other, and refusing is the only answer that does not
+hand back a header its author did not write.
+
+One value is unaffected in either spelling, and every other header may repeat
+freely — the stub at `/ct5` sets `X-Multi` to `["a","b"]`:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"url":"/ct4"},"response":{"status":200,"headers":{"Content-Type":["application/json"]},"body":"{}"}}'
+201
+$ curl -sD - -o /dev/null "$MOCK/ct4" | grep -i '^Content-Type'
+Content-Type: application/json
+$ curl -sD - -o /dev/null "$MOCK/ct5" | grep -i '^X-Multi'
+X-Multi: a
+X-Multi: b
+```
+
+There is no configuration key for this one. The fix is to write the media type
+you meant, once, and to include the charset yourself if you want one — nothing
+is appended to a Content-Type here.
 
 ### #15 — Fault injection is byte-faithful on HTTP/1.1 only
 

@@ -185,7 +185,7 @@ func BenchmarkMatch(b *testing.B) {
 			b.ResetTimer()
 			for range b.N {
 				pr := AcquireRequest(req, body)
-				cs := snap.Match(pr, nil, &candidates)
+				cs := snap.Match(context.Background(), pr, nil, &candidates)
 				ReleaseRequest(pr)
 				if (cs != nil) != tc.want {
 					b.Fatalf("match = %v, want %v", cs != nil, tc.want)
@@ -238,7 +238,7 @@ func BenchmarkMatchAndRender(b *testing.B) {
 	for range b.N {
 		w.reset()
 		pr := AcquireRequest(req, nil)
-		cs := snap.Match(pr, nil, nil)
+		cs := snap.Match(context.Background(), pr, nil, nil)
 		ReleaseRequest(pr)
 		if cs == nil {
 			b.Fatal("expected a match")
@@ -416,7 +416,7 @@ func BenchmarkSwapUnderLoad(b *testing.B) {
 			for pb.Next() {
 				snap := e.Snapshot()
 				pr := AcquireRequest(req, nil)
-				cs := snap.Match(pr, nil, nil)
+				cs := snap.Match(context.Background(), pr, nil, nil)
 				ReleaseRequest(pr)
 				if cs == nil {
 					b.Error("expected a match")

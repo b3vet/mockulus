@@ -1,0 +1,179 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-datetime-inert-truncation-001
+behaviors: [B-DEV-DEVIATION-50, B-ERR-10]
+# Mockulus-specific by construction: WireMock answers 201 to both combinations
+# and then ignores the parameter, so there is no compatible answer to diff. The
+# combinations where truncation does take effect are parity and are pinned by
+# the wmv-datetime-truncate-* cases.
+wm: n/a
+#
+# Deviation #50. Both truncation parameters have combinations in which WireMock
+# silently does nothing with them, and both of those combinations are visible
+# when the stub registers — so they are refused there rather than accepted as
+# criteria that would quietly not apply.
+#
+#   * `truncateExpected` does nothing on a **literal** expected value. WireMock
+#     applies it only where the threshold is resolved from the clock.
+#   * `truncateActual` does nothing when `actualFormat` reads the value with a
+#     **pattern**, because WireMock truncates only a value that parsed to a
+#     zoned instant and a pattern never yields one.
+#
+# The refusal is not "these parameters are unsupported": each is accepted, in
+# this same file, in the combination where it works. That contrast is what makes
+# the 422 a statement about the combination rather than about the feature.
+#
+# The third case — a zoneless or date-only ISO actual, which WireMock also skips
+# — is *not* refused, because it depends on the request rather than the stub.
+# It is mirrored instead, and pinned by wmv-datetime-truncate-actual-inert-001.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000103-0000-4000-8000-000000000001",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-inert-truncation-001/literal",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-14T12:13:14Z",
+                                            "truncateExpected": "first day of month"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/truncateExpected"}
+      # The pointer names the parameter rather than the matcher it was attached
+      # to: the parameter is the half that has to change, and pointing at
+      # `equalToDateTime` would send the author to the value that is fine. The
+      # detail names the operand it could not act on for the same reason.
+      body_regex: 'truncateExpected'
+
+  # Nothing persisted, on either the mock port or the admin one.
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-inert-truncation-001/literal
+      headers: {X-When: "2021-06-01T00:00:00Z"}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d7000103-0000-4000-8000-000000000001}
+    expect: {status: 404}
+
+  # The same parameter, one word different in the operand, and it is accepted:
+  # `now` is resolved from the clock, which is the case it applies to.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000103-0000-4000-8000-000000000002",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-inert-truncation-001/relative",
+                     "headers": {"X-When": {"after": "now",
+                                            "truncateExpected": "first day of month"}}},
+         "response": {"status": 200, "body": "relative",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-inert-truncation-001/relative
+      headers: {X-When: "2999-01-01T00:00:00Z"}
+    expect: {status: 200, body: "relative"}
+
+  # `truncateActual` beside a pattern `actualFormat`. The pattern carries a time
+  # here, which is the version that looks most obviously like it should work —
+  # and does not, because what decides is whether the parsed value carries a
+  # zone, not whether it carries a time.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000103-0000-4000-8000-000000000003",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-inert-truncation-001/pattern",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-01T00:00:00",
+                                            "truncateActual": "first day of month",
+                                            "actualFormat": "dd/MM/yyyy HH:mm:ss"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/truncateActual"}
+      body_regex: 'truncateActual'
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-inert-truncation-001/pattern
+      headers: {X-When: "14/06/2021 12:13:14"}
+    expect: {status: 404}
+
+  - admin: {method: GET, path: /__admin/mappings/d7000103-0000-4000-8000-000000000003}
+    expect: {status: 404}
+
+  # …and the same parameter beside the numeric `actualFormat`, which *does*
+  # produce a zoned instant, is accepted and takes effect.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000103-0000-4000-8000-000000000004",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-inert-truncation-001/unix",
+                     "headers": {"X-When": {"equalToDateTime": "2021-06-01T00:00:00Z",
+                                            "truncateActual": "first day of month",
+                                            "actualFormat": "unix"}}},
+         "response": {"status": 200, "body": "unix",
+                      "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      method: GET
+      path: /e2e/deviation-datetime-inert-truncation-001/unix
+      headers: {X-When: "1623672794"}
+    expect: {status: 200, body: "unix"}
+
+  # `applyTruncationLast` is the third parameter of the same family and the same
+  # rule reaches it: it chooses the order of a truncation and an offset, so with
+  # no `truncateExpected` to order there is nothing for it to decide.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000103-0000-4000-8000-000000000005",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-inert-truncation-001/order",
+                     "headers": {"X-When": {"after": "now +3 days",
+                                            "applyTruncationLast": true}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/applyTruncationLast"}
+      body_regex: 'applyTruncationLast'
+
+  - admin: {method: GET, path: /__admin/mappings/d7000103-0000-4000-8000-000000000005}
+    expect: {status: 404}
+
+  # An invalid truncation value is refused on both servers, so it is not part of
+  # the deviation — it is here to separate "this value is not in the vocabulary"
+  # from "this combination cannot take effect", which are different fixes.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "d7000103-0000-4000-8000-000000000006",
+         "request": {"method": "GET",
+                     "urlPath": "/e2e/deviation-datetime-inert-truncation-001/banana",
+                     "headers": {"X-When": {"after": "now",
+                                            "truncateExpected": "banana"}}},
+         "response": {"status": 200, "body": "never served"}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/headers/X-When/truncateExpected"}
+      body_regex: 'banana'

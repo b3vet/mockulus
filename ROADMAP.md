@@ -2,7 +2,9 @@
 
 Companion to [SPEC.md](SPEC.md). Everything here was **deliberately excluded from v1** (decision D5, 2026-07-22) to ship the performance core first. Each entry records what it is, why it was deferred, a design sketch consistent with the v1 architecture, what it depends on, and a size estimate (S ≈ days, M ≈ 1–2 weeks, L ≈ 3+ weeks).
 
-In v1, every feature below **fails loudly**: stubs using it are rejected with 422 + a pointer to this document (never silently ignored) — so adopting teams always know exactly where they stand.
+**Entries that have since shipped are marked, not deleted.** Their numbers are referenced from commit messages, deviation entries and issue threads, so removing one would break a link somebody followed here; a shipped entry says so and points at where the behavior is now specified. As of **v1.1.0** that covers 1.2, 1.3, 1.4, 3.1 and 3.2.
+
+A feature still listed as deferred **fails loudly**: a stub using it is rejected with 422 + a pointer to this document (never silently ignored) — so adopting teams always know exactly where they stand.
 
 Buckets are an ordering proposal, not a commitment; reprioritize on demand signal (the 422 error codes are counted by `mockulus_admin_requests_total`, so demand is measurable).
 
@@ -16,15 +18,17 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 - **Sketch**: pure-Go via `antchfx/xmlquery` + `antchfx/xpath`; canonical form computed at compile time for the expected document; same compile-at-registration discipline (P1/P2 hold — XML parse of request body is lazy and memoized on `ParsedRequest` like JSON). New matchers slot into `internal/matchers` with zero engine changes.
 - **Depends on**: differential corpus expansion for XML cases. **Size**: M.
 
-### 1.2 Date/time matchers (`before`, `after`, `equalToDateTime`)
-- **What**: WM 3 temporal matchers with `truncateExpectedTo`/`truncateActualTo`, `expectedOffset`.
-- **Sketch**: compile expected instant/offset at registration; parse actual per WM's accepted formats. Pure matcher addition.
+### 1.2 Date/time matchers (`before`, `after`, `equalToDateTime`) — shipped in v1.1.0
+- **Status**: implemented. The comparison rule is the part worth reading before writing one: **the expected value's type selects the mode** — an expected carrying a zone compares instants, one without compares wall-clock fields and discards the request's offset rather than converting it. Specified in SPEC §5.2 (the `before`/`after`/`equalToDateTime` row) with deviations #49–#53; pinned by the `wmv-datetime-*` and `deviation-datetime-*` corpus cases, and built by `before()`/`after()`/`equalToDateTime()` in the TypeScript SDK.
+- **What**: WM 3 temporal matchers with their real modifier set — `truncateExpected`, `truncateActual`, `applyTruncationLast`, `actualFormat`. There is no offset *parameter*: an offset is written into the expected value itself (`now +3 days`). Earlier revisions of this entry named `truncateExpectedTo`, `truncateActualTo` and `expectedOffset`, none of which WireMock 3.13.2 has — corrected once the oracle was probed rather than remembered.
+- **Sketch**: compile the expected instant (or its now-relative form) at registration; parse the actual per WM's accepted formats. The comparison mode is selected by the *expected* value's type — zoned compares instants, zoneless compares wall-clock fields — so that dispatch is the core of it. Pure matcher addition.
 - **Depends on**: nothing. **Size**: S.
 
 ### 1.3 `equalToJson` placeholders (json-unit) — shipped in v1
 - **Status**: implemented during M1, not deferred after all. This entry predates the Appendix C probe that showed WM interprets the placeholders **by default**, so parity required v1 to as well. The supported set (`ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, `regex`) and its semantics are recorded in SPEC §5.2 (`equalToJson` row) and deviations #5 (an *unrecognised* placeholder is refused at registration — the inverse of the compare-literally behavior this entry used to describe) and #25; pinned by the `matchers-json-*` corpus cases. Entry retained under its number so existing references stay valid.
 
-### 1.4 `matchesJsonSchema`
+### 1.4 `matchesJsonSchema` — shipped in v1.1.0
+- **Status**: implemented. Drafts V4 through 2020-12, defaulting to 2020-12, with the draft decided by `schemaVersion` or by the document's own `$schema`. **`format` is asserted only under V4/V6/V7** — the later drafts moved it into a vocabulary that is off by default, so the default asserts nothing about it, which is WireMock's behavior reproduced rather than chosen. Specified in SPEC §5.2 with deviations #55–#57 and error code 1006; pinned by the `wmv-jsonschema-*` and `deviation-jsonschema-*` corpus cases.
 - **What**: validate request body against an embedded JSON Schema (WM 3.3+).
 - **Sketch**: `santhosh-tekuri/jsonschema` (drafts 4–2020-12), schema compiled at registration.
 - **Depends on**: nothing. **Size**: S.
@@ -72,12 +76,14 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 
 ## Bucket 3 — Platform & operability
 
-### 3.1 Admin UI
+### 3.1 Admin UI — shipped in v1.1.0
+- **Status**: implemented, at `/__admin/mockulus/ui/` on both listeners, compiled into the binary. Stub browser and editor, request journal, near-miss debugger, scenarios and ops. It talks only to the public admin API through `@mockulus/admin-sdk`, as this sketch proposed. Specified in SPEC §5.7 — which also defines the `/__admin/mockulus/**` extension namespace it lives in, and the one amendment to §17 it required: the static assets are served outside the admin token check, because a browser cannot put an `Authorization` header on a page load. Documented at [docs/admin-ui.md](docs/admin-ui.md).
 - **What**: read/write web UI (stub browser/editor, journal viewer, scenario states, near-miss debugger). WireMock OSS has none — this is a differentiator.
 - **Sketch**: static SPA served from the admin port (embedded via `go:embed`), talking only to the public admin API (dogfooding); no server-side session state.
 - **Depends on**: stable admin API. **Size**: L.
 
-### 3.2 OpenTelemetry tracing
+### 3.2 OpenTelemetry tracing — shipped in v1.1.0
+- **Status**: implemented, off by default, configured by the `tracing.*` keys and nothing else — the standard `OTEL_*` environment variables are deliberately not read, so one mechanism owns the generated §13 table, the validation and the redaction. Turned off it costs one atomic load and a branch per request, so the SLOs and the allocation budget of §16 are unchanged; the hot-path guard this sketch called for is what makes that true. Specified in SPEC §14.3 and documented in [docs/operations.md](docs/operations.md).
 - **What**: optional traces for mock requests (match decision, scenario I/O, template render spans) and admin ops; W3C context propagation.
 - **Sketch**: `otelhttp`-style middleware, sampled, off by default; hot-path guard: zero cost when disabled (nil-check pattern, no always-on spans).
 - **Size**: S/M.
