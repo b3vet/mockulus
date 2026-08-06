@@ -1,6 +1,6 @@
 {
   "name": "@mockulus/admin-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Typed client, WireMock-style builders and test helpers for the mockulus admin API.",
   "license": "Apache-2.0",
