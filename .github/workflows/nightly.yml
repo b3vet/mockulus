@@ -130,13 +130,18 @@ jobs:
       # version of a gate that was already written.
       - name: soak
         env:
-          # The rate this job has actually been sustaining. The driver defaults
-          # to 15000 and the ceiling is claimed anywhere at or under S2's 30000,
-          # so either would be legitimate — but this commit is changing how the
-          # soak is judged, and changing the load in the same breath would leave
-          # the first result impossible to attribute. Raise it once the gate has
-          # a passing run behind it.
-          RATE: 10000
+          # No RATE override: the driver's own default is 15000, which is S2's
+          # p99 point and the shape the 256 MiB ceiling is actually claimed for.
+          # The previous 10000 was this job's own invention and measured the
+          # ceiling somewhere the SLO does not describe.
+          #
+          # This runs on a shared ubuntu-latest — vars.PERF_RUNNER is unset and
+          # there is no dedicated perf box — so the load thresholds in s8.js may
+          # well go red here the way S1's p99 already does. That is a statement
+          # about the runner and not about mockulus. What still means something
+          # on any machine is the leak comparison, which is a trend in one
+          # process's own memory rather than a number against a reference rig.
+          #
           # The series, kept where the perf job's artifact step already looks. A
           # failed leak gate is a shape you want to see rather than a percentage
           # you have to take on faith.
