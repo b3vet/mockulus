@@ -107,7 +107,7 @@ Source:  https://github.com/gorilla/websocket/blob/v1.5.3/LICENSE
 --------------------------------------------------------------------------------
 github.com/grpc-ecosystem/grpc-gateway/v2
 License: BSD-3-Clause
-Source:  https://github.com/grpc-ecosystem/grpc-gateway/blob/v2.27.7/LICENSE
+Source:  https://github.com/grpc-ecosystem/grpc-gateway/blob/v2.28.0/LICENSE
 
 --------------------------------------------------------------------------------
 github.com/munnerz/goautoneg
@@ -162,37 +162,37 @@ Source:  https://github.com/open-telemetry/opentelemetry-go-contrib/blob/instrum
 --------------------------------------------------------------------------------
 go.opentelemetry.io/otel
 License: Apache-2.0
-Source:  https://github.com/open-telemetry/opentelemetry-go/blob/v1.40.0/LICENSE
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/v1.43.0/LICENSE
 
 --------------------------------------------------------------------------------
 go.opentelemetry.io/otel/exporters/otlp/otlptrace
 License: Apache-2.0
-Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/v1.40.0/exporters/otlp/otlptrace/LICENSE
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/v1.43.0/exporters/otlp/otlptrace/LICENSE
 
 --------------------------------------------------------------------------------
 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
 License: Apache-2.0
-Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/otlptracehttp/v1.40.0/exporters/otlp/otlptrace/otlptracehttp/LICENSE
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/exporters/otlp/otlptrace/otlptracehttp/v1.43.0/exporters/otlp/otlptrace/otlptracehttp/LICENSE
 
 --------------------------------------------------------------------------------
 go.opentelemetry.io/otel/metric
 License: Apache-2.0
-Source:  https://github.com/open-telemetry/opentelemetry-go/blob/metric/v1.40.0/metric/LICENSE
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/metric/v1.43.0/metric/LICENSE
 
 --------------------------------------------------------------------------------
 go.opentelemetry.io/otel/sdk
 License: Apache-2.0
-Source:  https://github.com/open-telemetry/opentelemetry-go/blob/sdk/v1.40.0/sdk/LICENSE
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/sdk/v1.43.0/sdk/LICENSE
 
 --------------------------------------------------------------------------------
 go.opentelemetry.io/otel/trace
 License: Apache-2.0
-Source:  https://github.com/open-telemetry/opentelemetry-go/blob/trace/v1.40.0/trace/LICENSE
+Source:  https://github.com/open-telemetry/opentelemetry-go/blob/trace/v1.43.0/trace/LICENSE
 
 --------------------------------------------------------------------------------
 go.opentelemetry.io/proto/otlp
 License: Apache-2.0
-Source:  https://github.com/open-telemetry/opentelemetry-proto-go/blob/otlp/v1.9.0/otlp/LICENSE
+Source:  https://github.com/open-telemetry/opentelemetry-proto-go/blob/otlp/v1.10.0/otlp/LICENSE
 
 --------------------------------------------------------------------------------
 go.uber.org/multierr
@@ -222,17 +222,17 @@ Source:  https://cs.opensource.google/go/x/text/+/v0.40.0:LICENSE
 --------------------------------------------------------------------------------
 google.golang.org/genproto/googleapis/api/httpbody
 License: Apache-2.0
-Source:  https://github.com/googleapis/go-genproto/blob/8636f8732409/googleapis/api/LICENSE
+Source:  https://github.com/googleapis/go-genproto/blob/afd174a4e478/googleapis/api/LICENSE
 
 --------------------------------------------------------------------------------
 google.golang.org/genproto/googleapis/rpc
 License: Apache-2.0
-Source:  https://github.com/googleapis/go-genproto/blob/546029d2fa20/googleapis/rpc/LICENSE
+Source:  https://github.com/googleapis/go-genproto/blob/afd174a4e478/googleapis/rpc/LICENSE
 
 --------------------------------------------------------------------------------
 google.golang.org/grpc
 License: Apache-2.0
-Source:  https://github.com/grpc/grpc-go/blob/v1.79.3/LICENSE
+Source:  https://github.com/grpc/grpc-go/blob/v1.82.1/LICENSE
 
 --------------------------------------------------------------------------------
 google.golang.org/protobuf

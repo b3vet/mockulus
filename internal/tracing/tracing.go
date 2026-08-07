@@ -31,11 +31,6 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	// Kept in step with whatever `resource.Default()` in the OTel SDK uses:
-	// resource.Merge refuses to combine two resources carrying different schema
-	// URLs, so a pin one version behind the SDK's does not degrade gracefully —
-	// it fails at startup with "conflicting Schema URL" and the process never
-	// serves. An SDK upgrade that moves this has to move the line below with it.
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -101,6 +96,12 @@ func New(ctx context.Context, opts Options, log *slog.Logger, onExportFailure fu
 		return nil, fmt.Errorf("build otlp trace exporter: %w", err)
 	}
 
+	// The semconv version imported above has to be the one resource.Default()
+	// was built against. Merge refuses to combine two resources carrying
+	// different schema URLs, so a pin one version behind the SDK's does not
+	// degrade gracefully — it fails here, at startup, with "conflicting Schema
+	// URL", and the process never serves a request. An SDK upgrade that moves
+	// resource.Default() onto a newer semconv has to move the import with it.
 	res, err := resource.Merge(resource.Default(), resource.NewWithAttributes(
 		semconv.SchemaURL,
 		semconv.ServiceName(opts.ServiceName),
