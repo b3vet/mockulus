@@ -94,19 +94,66 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
       - uses: grafana/setup-k6-action@v1
+
+      # Built the way the release builds it. This job's whole output is a memory
+      # number, and a binary with symbols left in is not the binary the number is
+      # claimed for.
+      - name: build
+        run: go build -trimpath -ldflags "-s -w -X main.version=nightly" -o bin/mockulus ./cmd/mockulus
+
+      # s8-driver.sh, rather than the soak this job used to hand-roll beside it.
+      #
+      # The old check read RSS immediately after launching k6 and again at the
+      # end, and called a 25% difference a leak. The first reading was taken
+      # before the process had served a request, so every run compared a cold
+      # server against one that had served tens of millions — which is not a leak
+      # but an arena reaching its working set, and it happens in the first few
+      # seconds. Every run of it still visible in the history failed.
+      #
+      # A local soak against a healthy server settles which gate is right. The
+      # series went 24.2 MiB cold, 40 MiB within five seconds, then 37–48 MiB
+      # for the rest of the run. On that series the old arithmetic reads
+      # 24.2 → 41.8 MiB, calls it 1.73× and fails; the decile comparison reads
+      # +0.4% against its 5% tolerance and passes. Same run, same process, no
+      # leak in it.
+      #
+      # It also never checked the other half of S8. SPEC §16.1 asks for under
+      # 256 MiB *and* no growth over an hour, and a start-versus-end ratio says
+      # nothing about the ceiling: a process that sat at 4 GiB for the whole hour
+      # satisfied it.
+      #
+      # Both halves already existed. s8.js holds the S2 stub set and traffic mix
+      # and fails on any sample over 256 MiB; the driver keeps the series in time
+      # order, drops the warm-up, and compares the first decile against the last,
+      # which is the trend the ceiling threshold cannot express. Nothing here is
+      # new work — the nightly was running s1.js and reimplementing a worse
+      # version of a gate that was already written.
       - name: soak
+        env:
+          # The rate this job has actually been sustaining. The driver defaults
+          # to 15000 and the ceiling is claimed anywhere at or under S2's 30000,
+          # so either would be legitimate — but this commit is changing how the
+          # soak is judged, and changing the load in the same breath would leave
+          # the first result impossible to attribute. Raise it once the gate has
+          # a passing run behind it.
+          RATE: 10000
+          # The series, kept where the perf job's artifact step already looks. A
+          # failed leak gate is a shape you want to see rather than a percentage
+          # you have to take on faith.
+          OUT: test/load/.results/s8-rss.tsv
         run: |
-          go build -o bin/mockulus ./cmd/mockulus
+          mkdir -p test/load/.results
           MOCKULUS_LOG_LEVEL=warn ./bin/mockulus &
           for i in $(seq 1 30); do curl -sf localhost:9090/readyz >/dev/null && break; sleep 1; done
-          k6 run --no-thresholds -e MODE=latency -e RATE=10000 -e DURATION=60m test/load/s1.js &
-          k6pid=$!
-          # RSS must not grow across the run: this is the leak gate.
-          start=$(curl -s localhost:9090/metrics | awk '/^process_resident_memory_bytes/ {print $2}')
-          wait $k6pid
-          end=$(curl -s localhost:9090/metrics | awk '/^process_resident_memory_bytes/ {print $2}')
-          echo "RSS start=$start end=$end"
-          awk -v s="$start" -v e="$end" 'BEGIN { if (e > s * 1.25) { print "RSS grew more than 25% over the soak"; exit 1 } }'
+          test/load/s8-driver.sh
+          pkill -f 'bin/mockulus' || true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: soak-results
+          path: test/load/.results/
+          if-no-files-found: ignore
 
   fuzz:
     name: fuzzers
