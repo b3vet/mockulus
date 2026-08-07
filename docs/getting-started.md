@@ -15,8 +15,12 @@ read [The subset, and what a refusal looks like](#the-subset-and-what-a-refusal-
 you plan a migration, not after, and then [Migrating from WireMock](migrating-from-wiremock.md) when
 you do.
 
-**Status.** In development. No version has been tagged, so there is no published image or binary yet;
-everything below builds from a checkout.
+**Status.** Released. The current version is **v1.1.0**: multi-arch container images on
+`ghcr.io/b3vet/mockulus`, static binaries for linux, macOS and Windows on the
+[releases page](https://github.com/b3vet/mockulus/releases), a Helm chart, and
+[`@mockulus/admin-sdk`](https://www.npmjs.com/package/@mockulus/admin-sdk) on npm for driving it from
+TypeScript. Everything below also builds from a checkout. See [CHANGELOG.md](../CHANGELOG.md) for
+what changed.
 
 ---
 
@@ -28,10 +32,10 @@ You need Go 1.25.4 or newer — the version pinned in `go.mod`.
 
 ```console
 $ make build
-go build  -trimpath -ldflags '-s -w -X main.version=v1.0.0' -o bin/mockulus ./cmd/mockulus
+go build  -trimpath -ldflags '-s -w -X main.version=v1.1.0' -o bin/mockulus ./cmd/mockulus
 
 $ ./bin/mockulus -version
-mockulus v1.0.0 (go1.25.4)
+mockulus v1.1.0 (go1.25.4)
 ```
 
 The version string is stamped from `git describe --tags --always --dirty` at build time, so an
@@ -57,12 +61,12 @@ Tagged releases publish multi-arch (amd64, arm64) images to `ghcr.io/b3vet/mocku
 is a distroless static base running as nonroot with no shell:
 
 ```console
-$ docker run -d --name mockulus -p 8080:8080 -p 9090:9090 ghcr.io/b3vet/mockulus:v1.0.0
+$ docker run -d --name mockulus -p 8080:8080 -p 9090:9090 ghcr.io/b3vet/mockulus:v1.1.0
 $ docker logs mockulus
-{"time":"2026-07-29T14:26:35.550029882Z","level":"INFO","msg":"mockulus started","version":"v1.0.0","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
+{"time":"2026-08-07T10:40:27.866110671Z","level":"INFO","msg":"mockulus started","version":"v1.1.0","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
 ```
 
-The tag carries the `v` — `:v1.0.0`, not `:1.0.0` — because it is the git tag the release was cut
+The tag carries the `v` — `:v1.1.0`, not `:1.1.0` — because it is the git tag the release was cut
 from. `:latest` follows the most recent release. Static binaries for linux, macOS and Windows are
 attached to each [GitHub release](https://github.com/b3vet/mockulus/releases) with a checksum file.
 
@@ -80,7 +84,7 @@ it that can make an HTTP request. Kubernetes should use the probes in
 
 ```console
 $ ./bin/mockulus
-{"time":"2026-07-29T10:30:46.552091+03:00","level":"INFO","msg":"mockulus started","version":"v1.0.0","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
+{"time":"2026-08-07T13:38:02.359919+03:00","level":"INFO","msg":"mockulus started","version":"v1.1.0","store":"memory","stubs":0,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
 ```
 
 That single line is the whole startup summary, and it tells you what you got:
@@ -425,9 +429,9 @@ $ curl -s http://localhost:9090/__admin/health | jq .
     "driver": "memory"
   },
   "stubs": 1,
-  "timestamp": "2026-07-29T07:30:50.813711Z",
-  "uptimeInSeconds": 4,
-  "version": "v1.0.0"
+  "timestamp": "2026-08-07T10:40:08.812932Z",
+  "uptimeInSeconds": 9,
+  "version": "v1.1.0"
 }
 ```
 
@@ -438,7 +442,7 @@ $ curl -s http://localhost:9090/__admin/version | jq .
 {
   "goVersion": "go1.25.4",
   "guessedWireMockVersion": "3.x-subset",
-  "version": "v1.0.0"
+  "version": "v1.1.0"
 }
 ```
 
@@ -449,7 +453,7 @@ that missed, the interesting few read:
 ```console
 $ curl -s http://localhost:9090/metrics \
     | grep -E '^mockulus_(build_info|http_requests_total|snapshot_epoch|snapshot_stubs)'
-mockulus_build_info{go_version="go1.25.4",version="v1.0.0"} 1
+mockulus_build_info{go_version="go1.25.4",version="v1.1.0"} 1
 mockulus_http_requests_total{code="200",matched="true"} 1
 mockulus_http_requests_total{code="404",matched="false"} 1
 mockulus_snapshot_epoch 1
@@ -479,7 +483,7 @@ and nothing else changes; the run below has one mapping in `mappings/orders.json
 
 ```console
 $ MOCKULUS_STORE=file MOCKULUS_FILE_ROOT=/path/to/wiremock-project ./bin/mockulus
-{"time":"2026-07-29T10:28:31.455269+03:00","level":"INFO","msg":"mockulus started","version":"v1.0.0","store":"file","stubs":1,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
+{"time":"2026-08-07T13:41:04.948264+03:00","level":"INFO","msg":"mockulus started","version":"v1.1.0","store":"file","stubs":1,"load_ms":0,"mock_addr":"[::]:8080","admin_addr":"[::]:9090","admin_on_mock_port":true}
 
 $ curl -i http://localhost:8080/api/orders/42
 HTTP/1.1 200 OK
@@ -587,6 +591,38 @@ instance: single replica, `memory` store, no Couchbase at all.
 
 ---
 
+## Two things you did not have to install
+
+Everything above is `curl`, because that is the lowest common denominator and it proves the API is
+just HTTP. Neither of the following is a separate deployment.
+
+**A browser interface, compiled into the binary.** Open the admin port and it is there:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' http://localhost:9090/
+302 -> http://localhost:9090/__admin/mockulus/ui/
+```
+
+Browse and edit stubs in a JSON editor that puts the cursor on each field a refusal names, read the
+journal, ask why a request did not match, drive scenarios. It is served on the mock port at the same
+path for deployments that expose only that one, and `MOCKULUS_UI_ENABLED=false` removes the routes
+outright. It lives under `/__admin/mockulus/**`, a namespace reserved for mockulus' own endpoints
+that WireMock answers `404` for, so no WireMock client can collide with it.
+See [The admin UI](admin-ui.md).
+
+**A typed client, if you drive mocks from TypeScript.**
+
+```console
+$ npm install @mockulus/admin-sdk
+```
+
+It types the supported subset and nothing else, so a stub the server would refuse with a `422` is a
+compile error instead. Any existing WireMock client library also works unchanged against the same
+API — this is for people who would rather not hand-roll the calls. See
+[Programmatic administration](programmatic-administration.md).
+
+---
+
 ## What to read next
 
 | If you want to | Read |
@@ -595,6 +631,8 @@ instance: single replica, `memory` store, no Couchbase at all.
 | Know every place mockulus answers differently, and what to do about it | [Deviations from WireMock](deviations.md) |
 | Set any of this up properly — every key, what it costs, what it breaks | [Configuration](configuration.md) |
 | Run it: deployment shapes, the chart, Couchbase, probes, what to alert on | [Operating mockulus](operations.md) |
+| Use the browser interface that ships in the binary | [The admin UI](admin-ui.md) |
+| Drive it from code, with a typed client or your own | [Programmatic administration](programmatic-administration.md) |
 | Find out what is deferred, and the sketch for how it will work | [ROADMAP.md](../ROADMAP.md) |
 | Contribute a change | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 

@@ -42,10 +42,24 @@ k6 run -e MODE=latency -e RATE=50000 -e DURATION=40s test/load/s1.js
 
 ### reference-rig
 
-Not yet recorded. The reference rig of SPEC §16.1 is 1 pod with
-`limits: {cpu: 2, memory: 512Mi}` on kind or comparable, with k6 clients on a
-separate machine. The nightly perf job records it, and the release gate reads
-from it.
+Not recorded, and not currently recordable. The reference rig of SPEC §16.1 is
+1 pod with `limits: {cpu: 2, memory: 512Mi}` on kind or comparable, with k6
+clients on a separate machine. The nightly perf job is where that would be
+recorded, and the release gate would read from it.
+
+There is no such rig today. `runs-on: ${{ vars.PERF_RUNNER || 'ubuntu-latest' }}`
+falls through to a shared two-core GitHub runner, because `PERF_RUNNER` is unset
+and there is no dedicated perf machine — so the perf job runs k6 and mockulus on
+the same contended host, which is precisely the mistake the paragraph below
+describes. It fails there on latency (S1 has read `p(99)=75ms` against a 2 ms
+target) and that failure is a statement about the runner, not about mockulus.
+The numbers it produces are not reference-rig numbers and this file does not
+record them as if they were.
+
+What still means something on a shared runner is anything measured as a trend in
+one process against itself rather than against a fixed target: the S8 leak gate
+compares the first decile of a soak against the last, and that comparison is
+valid on any machine, which is why it gates while the SLO thresholds do not.
 
 The separate machine is the part that is easy to skip and not optional. Run on
 one host, k6 and mockulus compete for the same cores, and the contention lands
