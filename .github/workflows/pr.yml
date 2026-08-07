@@ -28,8 +28,8 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -72,8 +72,8 @@ jobs:
     name: unit + race
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -89,7 +89,7 @@ jobs:
     name: admin UI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # pnpm has to resolve before setup-node runs: `cache: pnpm` works by
       # asking pnpm where its store directory is, and cannot ask a pnpm that is
@@ -97,8 +97,8 @@ jobs:
       # packageManager field, so the pin still lives in the repository, and
       # Node's version comes from .nvmrc — the same file the Docker stage
       # pins itself to.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -121,7 +121,7 @@ jobs:
       # UI embedded rather than the placeholder. Building it once and passing it
       # along keeps the second pnpm install out of the critical path of a lane
       # that has fifteen minutes to spend (SPEC §19.5).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: admin-ui-dist
           path: internal/adminui/dist/
@@ -132,13 +132,13 @@ jobs:
     name: admin SDK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The contract lint is Go, the rest of the job is Node, and both halves
       # belong here: api/openapi.yaml is what the SDK's types come from, so the
       # check that it still describes the server's surface is the SDK's own
       # gate rather than a general one.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -148,8 +148,8 @@ jobs:
       # make, and a route the contract invents is one that compiles and 404s.
       - run: make contract-lint
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -187,7 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: every commit is signed off
@@ -209,8 +209,8 @@ jobs:
     name: license gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -218,8 +218,8 @@ jobs:
       # graph and nothing else, so the packages the admin UI is built from — and
       # the ones whose code ends up inlined in the bundle the binary embeds —
       # need a checker of their own.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -248,8 +248,8 @@ jobs:
     needs: ui
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -259,7 +259,13 @@ jobs:
       # of its own: the UI is built once per pipeline and the gate consumes it,
       # which is also what makes the corpus' serving cases assert something —
       # against a placeholder build they would be asserting the notice page.
-      - uses: actions/download-artifact@v4
+      # Held at v7 while the rest of the actions here are on their latest major.
+      # v8 turns an artifact hash mismatch into a hard error and stops unzipping
+      # anything whose Content-Type does not say it is zipped — both are changes
+      # worth taking deliberately, with a run to prove them, rather than as a
+      # side effect of a Node runtime bump. v7 already runs on Node 24, which is
+      # the whole reason this line moved.
+      - uses: actions/download-artifact@v7
         with:
           name: admin-ui-dist
           path: internal/adminui/dist/
@@ -285,7 +291,7 @@ jobs:
           GOCOVERDIR: ${{ github.workspace }}/.coverdata
         run: ./scripts/coverage-floor.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-artifacts
@@ -296,7 +302,7 @@ jobs:
     name: image + smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No artifact from the ui job here, deliberately. The Dockerfile builds
       # the admin UI in its own node:22-alpine stage, so the image already
