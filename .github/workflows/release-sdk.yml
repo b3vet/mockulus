@@ -41,9 +41,9 @@ jobs:
     name: gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           cache: true
@@ -53,8 +53,8 @@ jobs:
       # generated from it describe nothing anybody can rely on.
       - run: make contract-lint
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -106,10 +106,10 @@ jobs:
       # the publish is refused; with it, npm mints one scoped to this run.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           # No dependency cache in a release build. A cache is a place for

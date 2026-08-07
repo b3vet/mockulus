@@ -24,8 +24,8 @@ jobs:
     # schedule and dispatch triggers cannot come from a fork.
     runs-on: ${{ vars.PERF_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -76,7 +76,7 @@ jobs:
           k6 run -e MODE=throughput test/load/s11.js
           echo "trace export failures: $(curl -s localhost:9090/metrics | awk '/^mockulus_trace_export_failures_total/ {print $2}')"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: perf-results
@@ -88,8 +88,8 @@ jobs:
     runs-on: ${{ vars.PERF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -112,8 +112,8 @@ jobs:
     name: fuzzers
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -130,8 +130,8 @@ jobs:
     name: T5 — differential against pinned WireMock
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -142,8 +142,8 @@ jobs:
       # with the real assets embedded. The UI cases are `wm: n/a` and take no
       # part in the diffing this lane exists for; what the build buys here is a
       # nightly run of the checks that only apply to a real bundle.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -157,7 +157,7 @@ jobs:
       - name: replay every wm:verified case against the oracle
         run: go run ./test/e2e/runner --binary bin/mockulus --parallel 16 --differential
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: differential-artifacts
@@ -202,13 +202,13 @@ jobs:
           - name: token-protected
             token: nightly-ui-smoke-token
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -228,7 +228,7 @@ jobs:
           MOCKULUS_UI_E2E_TOKEN: ${{ matrix.token }}
         run: pnpm --filter mockulus-ui run test:e2e
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ui-smoke-${{ matrix.name }}
@@ -239,8 +239,8 @@ jobs:
     name: vulnerability scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true

@@ -21,8 +21,8 @@ jobs:
     name: e2e on the shippable image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -36,8 +36,8 @@ jobs:
       # under TestTheRealBundleSatisfiesItsOwnPolicy, which skips otherwise and
       # is the only check that the page can actually run under the CSP it is
       # served with.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -53,7 +53,7 @@ jobs:
       # the compat oracle between releases.
       - run: go run ./test/e2e/runner --binary bin/mockulus --parallel 16 --differential
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-shippable-artifacts
@@ -63,7 +63,7 @@ jobs:
     name: T4 — kind and Helm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: build the image
         run: docker build --build-arg VERSION=main-${{ github.sha }} -t mockulus:ci .
@@ -135,8 +135,8 @@ jobs:
     name: perf liveness smoke (S1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
