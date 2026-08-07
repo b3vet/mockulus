@@ -4,9 +4,17 @@ A typed client for the [mockulus](https://github.com/b3vet/mockulus) admin API â
 for managing mocks programmatically from a service, a test suite, or a
 deployment script.
 
-> **Not published yet.** This package is being built alongside the server on the
-> way to its first release. Everything described below is what the package
-> actually exports today, so that this file is never ahead of the code.
+```console
+$ npm install @mockulus/admin-sdk
+```
+
+No runtime dependencies â€” it is built on the platform's own `fetch`. Everything
+described below is what the package actually exports today, so that this file is
+never ahead of the code.
+
+> The SDK versions independently of the server: it iterates faster than the
+> server does, and a client fix should not wait for a server release. A `0.x`
+> version is not a statement about the server's maturity.
 
 ## What it is for
 

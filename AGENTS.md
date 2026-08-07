@@ -64,16 +64,17 @@ operation present there that the server does not implement is a call that compil
 404s. Neither is visible by reading either file alone. The contract is the admin surface's
 catalog, and the SDK is its corpus.
 
-The rule is written above as the standing rule, and the SDK arrives in stages, so one piece
-of it is not yet true as a command: **the workspace has no `gen` script today.** The
-generation step conventionally written `pnpm gen`, and the drift gate that regenerates the
-committed types and diffs them, arrive with the generated types in a later stage. The
-workspace scripts that exist right now are `build`, `dev`, `check` and `test`, which
-delegate to the admin UI, and `sdk:build`, `sdk:check` and `sdk:test`, which delegate to the
-SDK — `make ui-check` and `make sdk-check` are the Make targets over them. Do not put
-`pnpm gen` in a checklist, a README or a workflow before the script it names exists; the
-change that adds it is the change that removes this paragraph. Until then the rule binds
-the parts that do exist.
+The generation step exists now, so the rule binds as a command. `pnpm sdk:gen` — or
+`make sdk-gen` — regenerates the committed types from `api/openapi.yaml`, and
+`pnpm sdk:gen:check` runs that same generation and then `git diff --exit-code` over the
+result, which is the drift gate the PR lane runs. It regenerates in place rather than into a
+scratch copy, so running it on a dirty tree tells you about your own edit as well: a failure
+means the committed types and the contract disagree, whichever of the two moved. Editing the
+generated types by hand is not a shortcut; the gate reverts the argument. The rest of the workspace scripts are `build`, `dev`, `check` and `test`, which
+delegate to the admin UI, and `sdk:build`, `sdk:check`, `sdk:test` and `sdk:test:integration`,
+which delegate to the SDK — `make ui-check` and `make sdk-check` are the Make targets over
+them. The integration lane needs a built server on the path and is the only check that proves
+the client can still talk to one.
 
 The three-layer pattern is deliberate: the rule is stated here, restated in
 `CONTRIBUTING.md`, and enforced mechanically. The mechanical half that exists today is
