@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/svelte';
-import { afterEach } from 'vitest';
+import { afterAll, afterEach } from 'vitest';
 
 // jsdom implements `Range` but not its geometry: `getClientRects` and
 // `getBoundingClientRect` are simply absent from the prototype. CodeMirror
@@ -48,4 +48,24 @@ afterEach(() => {
   cleanup();
   document.body.removeAttribute('style');
   document.body.removeAttribute('data-scroll-locked');
+});
+
+// Removing the attributes above does not cancel the timer that was going to
+// restore them. bits-ui schedules its scroll-lock cleanup with
+// `window.setTimeout(cleanupFn, 24)` so that a dialog destroyed and recreated in
+// the same tick does not thrash the body style, and unmounting the last dialog
+// in a file therefore leaves a live 24 ms timer behind. If vitest disposes the
+// jsdom environment inside that window the callback still runs, `document` no
+// longer exists, and the file fails with an unhandled `ReferenceError` after
+// every one of its tests has passed.
+//
+// Waiting past the delay once per file lets the callback fire while the DOM is
+// still there. It is deliberately not in `afterEach`: the failure only happens
+// at environment teardown, and paying it per test would add real seconds across
+// the suite for a window that closes harmlessly between tests anyway.
+//
+// This was observed in CI rather than here — it needs a loaded runner to lose
+// the race, and it did not reproduce locally in repeated runs.
+afterAll(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
 });
