@@ -104,7 +104,7 @@ contracts:
   # exist survived a whole release.
   - id: "B-PROSE-UI-SERVED"
     section: "5.7"
-    section_hash: "24281fbde46eccf7"
+    section_hash: "dd3526f679549ead"
     spec: "#571-the-admin-ui"
     kind: "functional"
     impl_milestone: "M7"
@@ -115,7 +115,7 @@ contracts:
 
   - id: "B-PROSE-UI-ASSET-AUTH-EXEMPTION"
     section: "5.7"
-    section_hash: "24281fbde46eccf7"
+    section_hash: "dd3526f679549ead"
     spec: "#571-the-admin-ui"
     kind: "functional"
     impl_milestone: "M7"
@@ -130,7 +130,7 @@ contracts:
 
   - id: "B-PROSE-UI-DISABLED"
     section: "5.7"
-    section_hash: "24281fbde46eccf7"
+    section_hash: "dd3526f679549ead"
     spec: "#571-the-admin-ui"
     kind: "functional"
     impl_milestone: "M7"
@@ -141,7 +141,7 @@ contracts:
 
   - id: "B-PROSE-UI-ROOT-REDIRECT"
     section: "5.7"
-    section_hash: "24281fbde46eccf7"
+    section_hash: "dd3526f679549ead"
     spec: "#571-the-admin-ui"
     kind: "functional"
     impl_milestone: "M7"
@@ -155,7 +155,7 @@ contracts:
 
   - id: "B-PROSE-MOCKULUS-NAMESPACE"
     section: "5.7"
-    section_hash: "24281fbde46eccf7"
+    section_hash: "dd3526f679549ead"
     spec: "#57-mockulus-extensions-the-__adminmockulus-namespace"
     kind: "functional"
     impl_milestone: "M7"

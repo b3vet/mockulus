@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-multivalue-placement-001
+behaviors: [B-REQ-MULTI-VALUE-OPERATORS]
+wm: verified
+wm_ignore: ["$unmatched-body"]
+# Where the operators are legal, and where they are not. Every refusal here is
+# one WireMock makes too — probed on 2026-08-12, which is what lets this case be
+# `wm: verified` rather than an assertion about our own preferences. WireMock
+# words them as "is not a valid match operation"; the wording is diagnostic text
+# and outside the strict-compat surface (§6.8), so only the status is diffed.
+steps:
+  # A body has one value, so there is no list to quantify over.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000020",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multivalue-placement-001/body",
+                     "bodyPatterns": [{"includes": [{"equalTo": "a"}]}]},
+         "response": {"status": 200}}
+    expect: {status: 422}
+
+  # Cookies are a supported section that refuses the operators anyway. The
+  # control below proves the section works, so this is about the operator.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000021",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-placement-001/cookie",
+                     "cookies": {"c": {"includes": [{"equalTo": "a"}]}}},
+         "response": {"status": 200}}
+    expect: {status: 422}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000022",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-placement-001/cookie-ok",
+                     "cookies": {"c": {"equalTo": "a"}}},
+         "response": {"status": 200}}
+    expect: {status: 201}
+
+  # Combinators are declared over single-value patterns, so a multi-value
+  # operator cannot appear inside one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000023",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-placement-001/and",
+                     "queryParameters": {"t": {"and": [{"hasExactly": [{"equalTo": "a"}]},
+                                                       {"equalTo": "a"}]}}},
+         "response": {"status": 200}}
+    expect: {status: 422}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000024",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-placement-001/not",
+                     "queryParameters": {"t": {"not": {"includes": [{"equalTo": "a"}]}}}},
+         "response": {"status": 200}}
+    expect: {status: 422}
+
+  # The operator is the whole criterion for its key and takes no siblings —
+  # neither a single-value matcher nor the other multi-value operator.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000025",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-placement-001/sibling",
+                     "queryParameters": {"t": {"includes": [{"equalTo": "a"}], "equalTo": "z"}}},
+         "response": {"status": 200}}
+    expect: {status: 422}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000026",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-placement-001/both",
+                     "queryParameters": {"t": {"hasExactly": [{"equalTo": "a"}],
+                                               "includes": [{"equalTo": "a"}]}}},
+         "response": {"status": 200}}
+    expect: {status: 422}
+
+  # Operands are matcher documents. A bare string is not a match operation.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000027",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-placement-001/bare",
+                     "queryParameters": {"t": {"hasExactly": ["a"]}}},
+         "response": {"status": 200}}
+    expect: {status: 422}
+
+  # Nothing any of the refused documents described was registered.
+  - admin: {method: GET, path: /__admin/mappings/b0000058-0000-4000-8000-000000000020}
+    expect: {status: 404}
+  - admin: {method: GET, path: /__admin/mappings/b0000058-0000-4000-8000-000000000026}
+    expect: {status: 404}
