@@ -45,6 +45,7 @@ export interface FakeClientParts {
   scenarios?: Partial<MockulusClient['scenarios']>;
   files?: Partial<MockulusClient['files']>;
   settings?: Partial<MockulusClient['settings']>;
+  mockulus?: Partial<MockulusClient['mockulus']>;
 }
 
 export function fakeClient(parts: FakeClientParts): MockulusClient {

@@ -14,14 +14,17 @@ import { adminError, fakeClient, stubMappings } from '../testing';
  * The panel reads the api from context, as every view does, so it is mounted
  * through the same host the views use rather than handed a fake of its own.
  */
-function mount(mappings: Partial<MockulusClient['mappings']>): {
+function mount(
+  mappings: Partial<MockulusClient['mappings']>,
+  mockulus: Partial<MockulusClient['mockulus']> = {},
+): {
   api: Api;
   onimported: ReturnType<typeof vi.fn>;
 } {
   window.history.pushState({}, '', '/stubs');
   const api = createApi({
     baseUrl: 'http://mock.example',
-    createClient: () => fakeClient({ mappings }),
+    createClient: () => fakeClient({ mappings, mockulus }),
   });
   const router = createRouter([{ path: '/stubs' }]);
   const onimported = vi.fn();
@@ -164,5 +167,94 @@ describe('ImportPanel', () => {
 
     await waitFor(() => expect(written).toHaveLength(1));
     expect(written[0]?.mappings).toHaveLength(3);
+  });
+
+  describe('checking without writing', () => {
+    it('reports a clean file without importing it', async () => {
+      const user = userEvent.setup();
+      const validate = vi.fn().mockResolvedValue({
+        valid: true,
+        wouldImport: true,
+        summary: { total: 3, valid: 3, invalid: 0 },
+        results: [
+          { index: 0, valid: true },
+          { index: 1, valid: true },
+          { index: 2, valid: true },
+        ],
+      });
+      const importMappings = vi.fn();
+      mount({ import: importMappings }, { validate });
+
+      await choose(user, goodFile);
+      await user.click(screen.getByRole('button', { name: 'Check without writing' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(/All of them would register/);
+      });
+      expect(validate).toHaveBeenCalledTimes(1);
+      // The whole point: checking is not importing.
+      expect(importMappings).not.toHaveBeenCalled();
+    });
+
+    it('leads with the batch verdict, because import is atomic', async () => {
+      const user = userEvent.setup();
+      const validate = vi.fn().mockResolvedValue({
+        valid: false,
+        wouldImport: false,
+        summary: { total: 3, valid: 2, invalid: 1 },
+        results: [
+          { index: 0, valid: true },
+          {
+            index: 1,
+            valid: false,
+            errors: [
+              {
+                code: 1000,
+                title: 'Unsupported feature',
+                detail: 'equalToXml is not supported in mockulus v1',
+                source: { pointer: '/request/bodyPatterns/0/equalToXml' },
+              },
+            ],
+          },
+          { index: 2, valid: true },
+        ],
+      });
+      const importMappings = vi.fn();
+      mount({ import: importMappings }, { validate });
+
+      await choose(user, goodFile);
+      await user.click(screen.getByRole('button', { name: 'Check without writing' }));
+
+      // A reader looking at one bad mapping out of three would otherwise
+      // conclude that two would land. None would.
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent(/This file would not import/);
+      });
+      expect(screen.getByRole('status')).toHaveTextContent(/nothing at all would be written/);
+
+      // The offending mapping is named, and its problem is shown where the same
+      // problem from a real refusal would be.
+      expect(await screen.findByText(/equalToXml is not supported/)).toBeInTheDocument();
+
+      expect(importMappings).not.toHaveBeenCalled();
+    });
+
+    it('clears the report when the file is cleared', async () => {
+      const user = userEvent.setup();
+      const validate = vi.fn().mockResolvedValue({
+        valid: true,
+        wouldImport: true,
+        summary: { total: 3, valid: 3, invalid: 0 },
+        results: [],
+      });
+      mount({ import: vi.fn() }, { validate });
+
+      await choose(user, goodFile);
+      await user.click(screen.getByRole('button', { name: 'Check without writing' }));
+      await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Clear' }));
+      expect(screen.queryByText(/would register/)).not.toBeInTheDocument();
+    });
   });
 });
