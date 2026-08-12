@@ -32,6 +32,16 @@ Import and export work on the `{"mappings": [...]}` envelope. Import is atomic
 on the server — one bad mapping in a batch writes nothing — and the failure says
 so, and says which mapping in the batch was at fault.
 
+**Check before you write.** The import panel offers a dry run: *Check without
+writing* sends the same file to
+[`POST /__admin/mockulus/validate`](../SPEC.md#572-dry-run-validation) and shows
+what registering it would refuse, changing nothing. It leads with the batch
+verdict rather than the per-mapping list, because import is atomic and a reader
+looking at one bad mapping in forty would otherwise conclude the other
+thirty-nine would land. None would. It is the same rendering the real refusal
+uses, so checking first and pressing Write show the same thing about the same
+document.
+
 **Journal.** The request log, with matched and unmatched tabs and an entry
 detail that links to the stub which served it. **The journal is off by
 default**, so on a fresh deployment this page tells you that and names the key
