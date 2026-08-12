@@ -13,6 +13,8 @@ import {
   equalToDateTime,
   equalToIgnoreCase,
   equalToJson,
+  hasExactly,
+  includes,
   JsonUnit,
   jsonUnitRegex,
   matching,
@@ -270,6 +272,37 @@ describe('the matcher vocabulary', () => {
       expect(not(and(containing('a'), or(equalTo('b'), equalTo('c'))))).toEqual({
         not: { and: [{ contains: 'a' }, { or: [{ equalTo: 'b' }, { equalTo: 'c' }] }] },
       });
+    });
+  });
+});
+
+describe('the multi-value operators', () => {
+  it('builds hasExactly as an array of operand documents', () => {
+    expect(hasExactly(equalTo('a'), equalTo('b'))).toEqual({
+      hasExactly: [{ equalTo: 'a' }, { equalTo: 'b' }],
+    });
+  });
+
+  it('builds includes, and the empty form is a presence assertion', () => {
+    expect(includes(equalTo('a'))).toEqual({ includes: [{ equalTo: 'a' }] });
+    // `includes()` asks nothing of the values, so it holds for any key that is
+    // present. The server accepts it; `hasExactly()` with no operands is the one
+    // that cannot be written, and that refusal is a type error rather than a
+    // runtime one — see builders-type-refusals.ts.
+    expect(includes()).toEqual({ includes: [] });
+  });
+
+  it('takes any single-value matcher as an operand, not only equalTo', () => {
+    expect(hasExactly(matching('a.*'), containing('b'))).toEqual({
+      hasExactly: [{ matches: 'a.*' }, { contains: 'b' }],
+    });
+  });
+
+  it('serialises to the document the server matches on, with nothing added', () => {
+    // The phantom position key exists only in the type system, so a built
+    // criterion is exactly the JSON the contract describes.
+    expect(JSON.parse(JSON.stringify(hasExactly(equalTo('a'))))).toEqual({
+      hasExactly: [{ equalTo: 'a' }],
     });
   });
 });

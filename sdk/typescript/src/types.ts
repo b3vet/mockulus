@@ -30,6 +30,9 @@ export type ResponseDefinition = components['schemas']['ResponseDefinition'];
 /** One criterion over a value — the vocabulary shared by every matcher position. */
 export type ContentMatcher = components['schemas']['ContentMatcher'];
 
+/** The `hasExactly`/`includes` criterion, which quantifies over a key's values. */
+export type MultiValueCriterion = components['schemas']['MultiValueCriterion'];
+
 /** A recorded request, or the server's reading of a described one. */
 export type LoggedRequest = components['schemas']['LoggedRequest'];
 /** A whole journal entry: the request, what was served, and which stub matched. */

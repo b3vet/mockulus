@@ -31,7 +31,7 @@
  */
 
 import type { RequestPattern, StubMapping } from '../types.js';
-import type { BodyPattern, Matcher } from './matchers.js';
+import type { BodyPattern, KeyCriterion, Matcher } from './matchers.js';
 import type { ResponseBuilder } from './response.js';
 
 /**
@@ -181,7 +181,7 @@ export class MappingBuilder<
    * one, so mockulus matches strictly more here and no suite that passes on
    * WireMock can fail on this (deviation #29).
    */
-  withHeader(name: string, matcher: Matcher): MappingBuilder<Variables, Scenario> {
+  withHeader(name: string, matcher: KeyCriterion): MappingBuilder<Variables, Scenario> {
     return this.withKeyCriterion('headers', name, matcher);
   }
 
@@ -193,7 +193,7 @@ export class MappingBuilder<
    * `absent()` is the only way to say "must not be present" and `equalTo('')` is
    * how the two empty spellings are matched.
    */
-  withQueryParam(name: string, matcher: Matcher): MappingBuilder<Variables, Scenario> {
+  withQueryParam(name: string, matcher: KeyCriterion): MappingBuilder<Variables, Scenario> {
     return this.withKeyCriterion('queryParameters', name, matcher);
   }
 
@@ -397,7 +397,7 @@ export class MappingBuilder<
   private withKeyCriterion(
     block: 'headers' | 'queryParameters' | 'cookies' | 'formParameters' | 'pathParameters',
     name: string,
-    matcher: Matcher,
+    matcher: KeyCriterion,
   ): MappingBuilder<Variables, Scenario> {
     return this.withRequest({ [block]: { ...this.document.request?.[block], [name]: matcher } });
   }
