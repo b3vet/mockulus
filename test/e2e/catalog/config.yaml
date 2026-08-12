@@ -161,6 +161,16 @@ behaviors:
     evidence: "the pod becomes ready with an empty snapshot when the store is down at boot"
     evidence_tokens: ["start_without_store"]
     status: "ok"
+  - id: "B-CFG-PROFILE"
+    spec_row: "spec:13:config|profile"
+    spec_hash: "6b9ed940055ef917"
+    spec: "#13-configuration-reference"
+    kind: "functional"
+    impl_milestone: "M8"
+    summary: "profile"
+    evidence: "profile local presets store memory and journal_enabled true, an explicitly written key beats the preset, and an unknown profile name refuses to start"
+    evidence_tokens: ["profile", "local"]
+    status: "ok"
   - id: "B-CFG-JOURNAL-ENABLED"
     spec_row: "spec:13:config|journal_enabled"
     spec_hash: "2af6fd8c505b4941"

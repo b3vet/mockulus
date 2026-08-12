@@ -34,6 +34,11 @@ const FileEnvVar = EnvPrefix + "CONFIG"
 // Config is the complete configuration surface of a mockulus instance.
 // Field order determines the row order of the generated SPEC §13 table.
 type Config struct {
+	// Profile applies a named set of defaults before anything else is read, so
+	// an explicit key — from the file or the environment — still wins over it.
+	// It is deliberately not a mode: nothing branches on it after Load returns,
+	// and every value it sets can be written by hand instead.
+	Profile         string `yaml:"profile" default:"" doc:"~local~ presets a single-process setup (~store: memory~, ~journal_enabled: true~); empty applies nothing"`
 	Port            int    `yaml:"port" default:"8080" doc:"Mock listener (~0~ binds an ephemeral port)"`
 	AdminPort       int    `yaml:"admin_port" default:"9090" doc:"Admin/ops listener (~0~ binds an ephemeral port)"`
 	AdminOnMockPort bool   `yaml:"admin_on_mock_port" default:"true" doc:"Serve ~/__admin~ on the mock port (compat)"`
@@ -208,15 +213,37 @@ func Load(configPath string, lookupEnv func(string) (string, bool)) (Config, err
 			configPath = v
 		}
 	}
+	var doc map[string]string
 	if configPath != "" {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
 			return Config{}, fmt.Errorf("read config file: %w", err)
 		}
-		doc, err := parseYAML(string(data))
+		doc, err = parseYAML(string(data))
 		if err != nil {
 			return Config{}, fmt.Errorf("parse config file %s: %w", configPath, err)
 		}
+	}
+
+	// The profile is read first and applied before anything else, because what
+	// it sets are defaults: an explicit `store` or `journal_enabled` from the
+	// file or the environment has to win over the profile that would otherwise
+	// have set it. Reading it out of both sources here rather than letting the
+	// ordinary binding do it is what makes that possible — by the time the
+	// binding has run, a value the profile set and a value the operator wrote
+	// are indistinguishable.
+	if v, ok := doc["profile"]; ok {
+		cfg.Profile = v
+	}
+	if v, ok := lookupEnv(EnvPrefix + "PROFILE"); ok {
+		cfg.Profile = v
+	}
+	if err := cfg.validateProfile(); err != nil {
+		return Config{}, err
+	}
+	applyProfile(&cfg)
+
+	if doc != nil {
 		if err := applyYAML(&cfg, doc); err != nil {
 			return Config{}, fmt.Errorf("config file %s: %w", configPath, err)
 		}
@@ -229,6 +256,63 @@ func Load(configPath string, lookupEnv func(string) (string, bool)) (Config, err
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// validateProfile rejects an unknown profile name before the preset runs.
+//
+// Separate from Validate because it has to happen first: an unrecognised name
+// would otherwise apply nothing and start a deployment configured as though the
+// operator had asked for something, which is the accept-and-ignore shape P3
+// forbids everywhere else.
+func (c Config) validateProfile() error {
+	switch c.Profile {
+	case ProfileNone, ProfileLocal:
+		return nil
+	default:
+		return fmt.Errorf("config: profile: unknown profile %q (want %q)", c.Profile, ProfileLocal)
+	}
+}
+
+// Profile names accepted by the `profile` key.
+const (
+	// ProfileNone is the default: no preset is applied.
+	ProfileNone = ""
+	// ProfileLocal is a laptop or single-pod CI deployment.
+	ProfileLocal = "local"
+)
+
+// applyProfile presets the defaults a named profile implies.
+//
+// It runs after Default() and **before** the file and the environment, so a key
+// written by hand always beats the profile that would have set it. That
+// ordering is the whole design: a profile is a different set of defaults, not a
+// mode that overrides configuration, and nothing in the process branches on
+// Profile after Load returns.
+//
+// `local` sets the two things that make a single-process run work, and nothing
+// else:
+//
+//   - store: memory — there is no Couchbase to reach, and `auto` would have
+//     resolved here anyway. Setting it explicitly is what makes a stray
+//     MOCKULUS_COUCHBASE_CONNSTR in the environment a validation error rather
+//     than a silent switch to a store this profile is documented not to use.
+//   - journal_enabled: true — the journal is off by default because recording
+//     every request costs memory and I/O that a mock serving 50k RPS should not
+//     pay unasked. A laptop is not serving 50k RPS, and a suite that calls
+//     verify() against a fresh local instance otherwise meets a 500 with code
+//     1010 as its first experience of the product.
+//
+// It deliberately does **not** touch the deviations of §5.5 — the ephemeral stub
+// TTL stays, near-miss diagnostics stay off. A profile that made local behave
+// more like WireMock than the cluster does would make a suite that passes
+// locally fail in the cluster, which is the opposite of what testing locally is
+// for.
+func applyProfile(c *Config) {
+	if c.Profile != ProfileLocal {
+		return
+	}
+	c.Store = StoreMemory
+	c.JournalEnabled = true
 }
 
 // EffectiveStore resolves the `auto` store setting to a concrete driver name.

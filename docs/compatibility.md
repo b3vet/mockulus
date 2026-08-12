@@ -135,12 +135,12 @@ what makes the Evidence column worth reading.
 | WireMock surface — supported with a documented deviation | 9 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
 | Deliberate deviations from WireMock | 58 |
-| Catalogued behaviors in total | 234 |
+| Catalogued behaviors in total | 235 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 596 |
+| E2E corpus cases | 597 |
 | … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 397 |
-| … `wm: n/a` — expectations from the spec | 199 |
+| … `wm: n/a` — expectations from the spec | 200 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
 Milestone cursor `M8`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
@@ -589,12 +589,13 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 
 ### Configuration keys
 
-[SPEC §13](../SPEC.md#13-configuration-reference) · 44 behaviors
+[SPEC §13](../SPEC.md#13-configuration-reference) · 45 behaviors
 
 Precedence is env var > YAML file > default; the env spelling is `MOCKULUS_` plus the key in upper snake case.
 
 | Key | Default | Evidence | Behavior | Notes |
 |---|---|---|---|---|
+| `profile` | — | 1 · n/a | `B-CFG-PROFILE` | `local` presets a single-process setup (`store: memory`, `journal_enabled: true`); empty applies nothing |
 | `port` | `8080` | 1 · verified | `B-CFG-PORT` | Mock listener (`0` binds an ephemeral port) |
 | `admin_port` | `9090` | 1 · n/a | `B-CFG-ADMIN-PORT` | Admin/ops listener (`0` binds an ephemeral port) |
 | `admin_on_mock_port` | `true` | 2 · verified | `B-CFG-ADMIN-ON-MOCK-PORT` | Serve `/__admin` on the mock port (compat) |

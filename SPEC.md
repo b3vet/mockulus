@@ -858,6 +858,7 @@ Precedence: **env var > YAML file (`--config` / `MOCKULUS_CONFIG`) > default**. 
 
 | Key (yaml) | Default | Description |
 |---|---|---|
+| `profile` | — | `local` presets a single-process setup (`store: memory`, `journal_enabled: true`); empty applies nothing |
 | `port` | `8080` | Mock listener (`0` binds an ephemeral port) |
 | `admin_port` | `9090` | Admin/ops listener (`0` binds an ephemeral port) |
 | `admin_on_mock_port` | `true` | Serve `/__admin` on the mock port (compat) |
