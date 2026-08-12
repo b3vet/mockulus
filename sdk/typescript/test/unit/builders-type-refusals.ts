@@ -24,6 +24,8 @@
 import {
   absent,
   after,
+  hasExactly,
+  includes,
   and,
   anyUrl,
   aResponse,
@@ -222,4 +224,37 @@ export function absentVocabulary(): void {
   get(anyUrl()).withPostServeAction('webhook', {});
   // @ts-expect-error `absent: false` is refused; not(absent()) is how presence is stated
   get(anyUrl()).withHeader('X-Trace', absent(false));
+}
+
+/**
+ * The multi-value operators are a position of their own, and the type system
+ * carries every placement rule the server enforces.
+ */
+export function multiValueRefusals(): void {
+  // hasExactly with no operands can never match: a key that is present carries
+  // at least one value. The server refuses it (deviation #58) and the required
+  // first parameter makes it unwritable here.
+  // @ts-expect-error hasExactly needs at least one operand
+  hasExactly();
+
+  // The operators quantify over a list of values. A body has one, and cookies,
+  // form parameters and path variables are refused by the server, so none of
+  // those positions accepts one.
+  // @ts-expect-error a multi-value operator is not a bodyPatterns entry
+  get(urlPathEqualTo('/x')).withRequestBody(hasExactly(equalTo('a')));
+  // @ts-expect-error a multi-value operator is not a cookie criterion
+  get(urlPathEqualTo('/x')).withCookie('c', includes(equalTo('a')));
+  // @ts-expect-error a multi-value operator is not a form-parameter criterion
+  get(urlPathEqualTo('/x')).withFormParam('f', includes(equalTo('a')));
+
+  // Combinators are declared over single-value patterns.
+  // @ts-expect-error a multi-value operator does not nest inside a combinator
+  and(hasExactly(equalTo('a')), equalTo('b'));
+  // @ts-expect-error a multi-value operator does not nest inside not()
+  not(includes(equalTo('a')));
+
+  // An operand is a single-value matcher, so the operators do not nest in
+  // themselves either.
+  // @ts-expect-error a multi-value operator is not an operand
+  hasExactly(includes(equalTo('a')));
 }

@@ -826,6 +826,26 @@ export interface components {
       expression?: string;
     };
     /**
+     * Multi-value criterion
+     * @description `hasExactly` or `includes`: a criterion over the whole set of a key's values rather than over one of them. Valid **only** as the entire criterion for a `queryParameters` or `headers` entry — WireMock models these as a pattern type of their own, so one nested in a combinator, used in `bodyPatterns` or on `cookies`, or written beside any sibling key is refused there and here.
+     *
+     *     `includes` holds when every operand is satisfied by **some** value of the key. `hasExactly` adds a size equality: the key must carry exactly as many values as there are operands. Values are **not consumed** by an operand, so a value satisfying no operand at all is tolerated when the count is right — `hasExactly` with two `a.*` operands matches `?tag=a1&tag=b1`, because both operands are satisfied by `a1` and the list is two long. That is WireMock's rule reproduced; pairing operands with distinct values is the intuitive reading and the wrong one.
+     *
+     *     An absent key satisfies neither operator. `includes: []` is vacuous and holds for any key that is present, which makes it a presence assertion; `hasExactly: []` is refused, because a present key always carries at least one value and so nothing could ever satisfy it (deviation #58).
+     */
+    MultiValueCriterion: {
+      /** @description Every operand satisfied by some value, and exactly as many values as operands. Operands are matcher documents, not bare strings. */
+      hasExactly?: components['schemas']['ContentMatcher'][];
+      /** @description Every operand satisfied by some value. Extra values are allowed. */
+      includes?: components['schemas']['ContentMatcher'][];
+    };
+    /**
+     * Key criterion
+     * @description The criterion for one query parameter or header: either an ordinary matcher applied to the key's values under the any-of rule, or one of the multi-value operators that quantifies over the whole list. They are alternatives, not a union of members — a key carrying a multi-value operator takes nothing else alongside it.
+     */
+    KeyCriterion:
+      components['schemas']['ContentMatcher'] | components['schemas']['MultiValueCriterion'];
+    /**
      * JSONPath criterion
      * @description Either a bare expression or an expression with an inner matcher.
      *
@@ -914,11 +934,11 @@ export interface components {
       };
       /** @description A matcher per query parameter. A repeated parameter matches when **any** of its values satisfies the matcher; `?x=` and a bare `?x` are both present-with-empty-string, never absent. Use `{"absent": true}` for "must not be present". */
       queryParameters?: {
-        [key: string]: components['schemas']['ContentMatcher'];
+        [key: string]: components['schemas']['KeyCriterion'];
       };
       /** @description A matcher per header. Names are case-insensitive in both directions; values are case-sensitive unless the matcher sets `caseInsensitive`. A repeated header matches when any of its values satisfies the matcher — WireMock instead picks the value at minimum edit distance and matches that one, so mockulus matches strictly more here and no suite that passes on WireMock can fail on this (deviation #29). */
       headers?: {
-        [key: string]: components['schemas']['ContentMatcher'];
+        [key: string]: components['schemas']['KeyCriterion'];
       };
       /** @description A matcher per cookie name. */
       cookies?: {
