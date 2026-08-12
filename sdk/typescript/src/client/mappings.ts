@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ContentMatcher, StubMapping, StubMappingImport, StubMappingList } from '../types.js';
+import type {
+  ContentMatcher,
+  StubMapping,
+  StubMappingImport,
+  StubMappingList,
+  ValidationReport,
+} from '../types.js';
 import { encodeSegment, nullOnBodylessNotFound } from './shared.js';
 import type { RequestOptions, Transport } from './transport.js';
 
@@ -232,6 +238,28 @@ export class MappingsApi {
       path: '/__admin/mappings/import',
       body: batch,
       accept: 'none',
+      ...options,
+    });
+  }
+
+  /**
+   * Reports what {@link import} would refuse for this batch, and imports none of
+   * it.
+   *
+   * An alias for `client.mockulus.validate`, which is where this call properly
+   * lives: it is a mockulus extension with no WireMock equivalent, and the
+   * `mockulus` namespace is what makes that visible. It is offered here as well
+   * because this is where a caller deciding whether to run an import is already
+   * looking, and a dry run nobody finds is a dry run nobody does.
+   *
+   * The two are the same call. See `client.mockulus.validate` for what the
+   * report means and why a refused mapping resolves rather than throwing.
+   */
+  async validate(batch: StubMappingImport, options?: RequestOptions): Promise<ValidationReport> {
+    return this.transport.send<ValidationReport>({
+      method: 'POST',
+      path: '/__admin/mockulus/validate',
+      body: batch,
       ...options,
     });
   }

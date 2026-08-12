@@ -33,6 +33,9 @@ export type ContentMatcher = components['schemas']['ContentMatcher'];
 /** The `hasExactly`/`includes` criterion, which quantifies over a key's values. */
 export type MultiValueCriterion = components['schemas']['MultiValueCriterion'];
 
+/** The dry-run validation report of `POST /__admin/mockulus/validate` (SPEC §5.7.2). */
+export type ValidationReport = components['schemas']['ValidationReport'];
+
 /** A recorded request, or the server's reading of a described one. */
 export type LoggedRequest = components['schemas']['LoggedRequest'];
 /** A whole journal entry: the request, what was served, and which stub matched. */

@@ -1,0 +1,164 @@
+# SPDX-License-Identifier: Apache-2.0
+id: mockulus-validate-001
+behaviors: [B-ADMIN-MOCKULUS-VALIDATE-POST]
+# A mockulus extension. WireMock has no such endpoint and answers 404 for the
+# whole namespace, so there is no oracle answer to diff against (SPEC §5.7).
+wm: n/a
+steps:
+  # A mixed batch. The call succeeds — a refused mapping is this endpoint's
+  # payload, not its failure — and the report says which mapping was refused and
+  # why, without registering any of them.
+  - admin:
+      method: POST
+      path: /__admin/mockulus/validate
+      body: |
+        {"mappings": [
+          {"id": "c0572001-0000-4000-8000-000000000001",
+           "request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/ok"},
+           "response": {"status": 200}},
+          {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/bad",
+                       "bodyPatterns": [{"equalToXml": "<a/>"}]},
+           "response": {"status": 200}},
+          {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/ok2"},
+           "response": {"status": 200}}
+        ]}
+    expect:
+      status: 200
+      body_json_subset:
+        valid: false
+        wouldImport: false
+        summary: {total: 3, valid: 2, invalid: 1}
+        results:
+          - index: 0
+            id: "c0572001-0000-4000-8000-000000000001"
+            valid: true
+          - index: 1
+            valid: false
+            errors:
+              - code: 1000
+                source: {pointer: "/request/bodyPatterns/0/equalToXml"}
+          - index: 2
+            valid: true
+
+  # Nothing was written. The valid mappings in that batch are not registered,
+  # which is the whole point of a dry run.
+  - admin: {method: GET, path: /__admin/mappings/c0572001-0000-4000-8000-000000000001}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: /e2e/mockulus-validate-001/ok}
+    expect: {status: 404}
+
+  # A batch in which everything is invalid is still a 200. The caller asked what
+  # would happen and was told; that is a success, and answering 422 would put an
+  # ordinary result behind an error path.
+  - admin:
+      method: POST
+      path: /__admin/mockulus/validate
+      body: |
+        {"mappings": [
+          {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/x",
+                       "bodyPatterns": [{"equalToXml": "<a/>"}]},
+           "response": {"status": 200}}
+        ]}
+    expect:
+      status: 200
+      body_json_subset:
+        valid: false
+        wouldImport: false
+        summary: {total: 1, valid: 0, invalid: 1}
+
+  # An all-valid batch reports that it would import.
+  - admin:
+      method: POST
+      path: /__admin/mockulus/validate
+      body: |
+        {"mappings": [
+          {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/fine"},
+           "response": {"status": 200}}
+        ]}
+    expect:
+      status: 200
+      body_json_subset:
+        valid: true
+        wouldImport: true
+        summary: {total: 1, valid: 1, invalid: 0}
+
+  # An empty batch is legal and would import nothing, successfully.
+  - admin:
+      method: POST
+      path: /__admin/mockulus/validate
+      body: '{"mappings": []}'
+    expect:
+      status: 200
+      body_json_subset:
+        valid: true
+        wouldImport: true
+        summary: {total: 0, valid: 0, invalid: 0}
+
+  # The envelope itself being unreadable is a real failure, and is the one thing
+  # that does earn a non-2xx. This is not the answer for invalid *mappings*.
+  - admin:
+      method: POST
+      path: /__admin/mockulus/validate
+      body: '{"nope": true}'
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/mappings"}
+
+  # The load-bearing agreement: what validate reports for a document is what a
+  # real registration answers for the same document. A validator that can
+  # disagree with the registrar is worse than none, because it is believed. Both
+  # halves are asserted on one mapping carrying two independent problems, so the
+  # collect-all property is checked at the same time.
+  - admin:
+      method: POST
+      path: /__admin/mockulus/validate
+      body: |
+        {"mappings": [
+          {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/agree",
+                       "bodyPatterns": [{"equalToXml": "<a/>"}],
+                       "cookies": {"c": {"includes": [{"equalTo": "a"}]}}},
+           "response": {"status": 200}}
+        ]}
+    expect:
+      status: 200
+      body_json_subset:
+        results:
+          - index: 0
+            valid: false
+            errors:
+              - code: 10
+                source: {pointer: "/request/cookies/c"}
+              - code: 1000
+                source: {pointer: "/request/bodyPatterns/0/equalToXml"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/agree",
+                     "bodyPatterns": [{"equalToXml": "<a/>"}],
+                     "cookies": {"c": {"includes": [{"equalTo": "a"}]}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/cookies/c"}
+          - code: 1000
+            source: {pointer: "/request/bodyPatterns/0/equalToXml"}
+
+  # The namespace stays a contract rather than a catch-all: a path beside the
+  # one this endpoint claims is the ordinary unsupported-endpoint 404 (§5.7
+  # rule 3), and the endpoint answers only POST.
+  - admin: {method: POST, path: /__admin/mockulus/validate-not-a-thing, body: '{}'}
+    expect:
+      status: 404
+      body_json_subset:
+        errors:
+          - code: 1001
+  - admin: {method: GET, path: /__admin/mockulus/validate}
+    expect: {status: 404}

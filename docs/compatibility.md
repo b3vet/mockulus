@@ -135,12 +135,12 @@ what makes the Evidence column worth reading.
 | WireMock surface — supported with a documented deviation | 9 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
 | Deliberate deviations from WireMock | 58 |
-| Catalogued behaviors in total | 233 |
+| Catalogued behaviors in total | 234 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 595 |
+| E2E corpus cases | 596 |
 | … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 397 |
-| … `wm: n/a` — expectations from the spec | 198 |
+| … `wm: n/a` — expectations from the spec | 199 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
 Milestone cursor `M8`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially

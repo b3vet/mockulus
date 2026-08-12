@@ -318,6 +318,70 @@ paths:
         '503':
           $ref: '#/components/responses/StoreUnavailable'
 
+  /__admin/mockulus/validate:
+    post:
+      tags: [mockulus]
+      operationId: validateStubMappings
+      summary: Report what a mappings set would do, without registering it.
+      description: >-
+        Takes the same envelope `POST /__admin/mappings/import` takes and answers what that import
+        would have refused. Nothing is written: no document, no snapshot rebuild, no epoch change,
+        no journal entry.
+
+
+        **A refused mapping is this endpoint's payload, not its failure**, so a batch in which every
+        mapping is invalid still answers 200. A 422 would force every caller to read an ordinary
+        result out of an error path, and would make a partial report unreadable. The non-2xx answers
+        below are the ones any admin endpoint has.
+
+
+        Two verdicts are reported because one would mislead. `results` carries a verdict per mapping;
+        `wouldImport` carries the verdict for the batch, and is false whenever any mapping is invalid
+        — import is atomic, so one bad mapping in fifty writes nothing at all, and a per-mapping list
+        alone would read as "mostly fine".
+
+
+        Each element of `errors` is exactly what a real registration would have returned for that
+        mapping: same code, same title, same detail, same JSON pointer. The endpoint calls the
+        registrar's own validation rather than reimplementing it, because a validator that can
+        disagree with the registrar is worse than none — it is believed.
+
+
+        Nothing here reads the store, so it answers normally while the deployment is degraded.
+        Assessing a mappings file is exactly the sort of thing somebody does during an outage.
+
+
+        This is a mockulus extension (SPEC §5.7). WireMock has no equivalent and answers 404 for
+        this path, so nothing here is a compatibility claim and no WireMock-compatible client can
+        depend on it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StubMappingImport'
+      responses:
+        '200':
+          description: >-
+            The set was examined. Read `wouldImport` for whether the batch would import at all, and
+            `results` for why not.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          description: >-
+            The envelope itself could not be read — malformed JSON, or no `mappings` array. This is
+            not the answer for invalid *mappings*, which are reported inside a 200.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
   /__admin/mappings/import:
     post:
       tags: [mappings]
@@ -1774,6 +1838,67 @@ components:
             `doesNotMatchJsonPath`. Refused anywhere else — see this schema's own description for
             why it is declared here rather than on a separate type.
       additionalProperties: false
+
+    ValidationReport:
+      title: Validation report
+      description: >-
+        What `POST /__admin/mappings/import` would have refused for this batch. `valid` is the
+        conjunction over `results`; `wouldImport` is the batch verdict and is false whenever any
+        mapping is invalid, because import is atomic. They are reported separately rather than one
+        inferred from the other because they answer different questions, and only the second is the
+        one a caller about to run an import is asking.
+      type: object
+      required: [valid, wouldImport, summary, results]
+      additionalProperties: false
+      properties:
+        valid:
+          type: boolean
+          description: Every mapping in the batch is registrable.
+        wouldImport:
+          type: boolean
+          description: >-
+            Whether an import of this batch would write anything. False whenever any mapping is
+            invalid.
+        summary:
+          type: object
+          required: [total, valid, invalid]
+          additionalProperties: false
+          properties:
+            total:
+              type: integer
+              minimum: 0
+            valid:
+              type: integer
+              minimum: 0
+            invalid:
+              type: integer
+              minimum: 0
+        results:
+          type: array
+          description: One entry per submitted mapping, in request order.
+          items:
+            type: object
+            required: [index, valid]
+            additionalProperties: false
+            properties:
+              index:
+                type: integer
+                minimum: 0
+                description: >-
+                  Position in the submitted array. This is how a caller joins a result back onto its
+                  input — `id` is not always present, and content is not a key.
+              id:
+                type: string
+                description: Present only for a mapping that carried an id of its own.
+              valid:
+                type: boolean
+              errors:
+                type: array
+                description: >-
+                  Exactly what a real registration would have answered for this mapping. Absent when
+                  `valid` is true.
+                items:
+                  $ref: '#/components/schemas/Error'
 
     MultiValueCriterion:
       title: Multi-value criterion

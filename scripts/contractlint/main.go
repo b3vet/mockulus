@@ -122,7 +122,12 @@ func contractOperations(path string) (map[operation]bool, error) {
 
 // endpointRow strips the `spec:5.1:admin-endpoints|` prefix off a catalog
 // entry's spec_row, leaving the endpoint text §5.1 states.
-var endpointRow = regexp.MustCompile(`^spec:5\.1:admin-endpoints\|(.+)$`)
+// endpointRow matches the spec rows that name an admin operation. Two tables
+// carry them: §5.1 is WireMock's surface, and §5.7 is the reserved
+// /__admin/mockulus/** namespace. Both are operations the contract has to
+// describe, so both are checked — an extension that skips the contract is as
+// invisible to a generated client as a compatible endpoint that does.
+var endpointRow = regexp.MustCompile(`^spec:(?:5\.1:admin-endpoints|5\.7:mockulus-endpoints)\|(.+)$`)
 
 // paramSuffix drops the parenthetical a row may carry to name its query
 // parameters — "GET /__admin/requests (+limit,since)". Which parameters an
