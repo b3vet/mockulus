@@ -55,6 +55,44 @@ one on a laptop is faster.
 MOCKULUS_CONFIG=/etc/mockulus/a.yaml mockulus --config ./b.yaml   # b.yaml is read
 ```
 
+### A fourth, below the default: `profile`
+
+`profile` presets a set of defaults before the three sources above are read, so
+it sits *below* all of them. Anything you write by hand beats it, from either
+source, per key.
+
+There is one profile, and it is for running mockulus on a laptop or as a
+single-pod CI service:
+
+```sh
+MOCKULUS_PROFILE=local mockulus
+```
+
+It sets exactly two things:
+
+| Key | Preset | Why |
+|---|---|---|
+| `store` | `memory` | There is no Couchbase to reach. `auto` would resolve here anyway; setting it outright is what turns a stray `MOCKULUS_COUCHBASE_CONNSTR` into a refusal rather than a silent switch to a store this profile says it does not use |
+| `journal_enabled` | `true` | Off by default because recording every request costs memory and I/O a mock serving 50k RPS should not pay unasked. A laptop is not serving 50k RPS, and a suite calling `verify()` against a fresh instance otherwise meets a `500` with code `1010` as its first experience of the product |
+
+**It changes nothing else, and that is the point.** Every deviation of
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) stays where
+it is: non-persistent stubs still expire, near-miss diagnostics are still off. A
+profile that made a laptop behave more like WireMock than your cluster does would
+let a suite pass locally and fail in the cluster for reasons the profile
+introduced — which is the opposite of what testing locally is for.
+
+Because it is only defaults, overriding one is ordinary:
+
+```sh
+# The profile's store, but the journal left off after all.
+MOCKULUS_PROFILE=local MOCKULUS_JOURNAL_ENABLED=false mockulus
+```
+
+An unrecognised profile name refuses to start rather than applying nothing —
+otherwise a typo would boot a deployment configured as though you had asked for
+something.
+
 ### The naming rule
 
 An environment variable name is `MOCKULUS_` followed by the YAML path in upper

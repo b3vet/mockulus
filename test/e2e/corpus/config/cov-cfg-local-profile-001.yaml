@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: cov-cfg-local-profile-001
+behaviors: [B-CFG-PROFILE]
+# The instance boots with MOCKULUS_PROFILE=local and nothing else. Every key
+# observed below is one the operator did not write, which is the whole claim.
+config: local-profile
+# n/a: WireMock has no configuration profiles, and the two keys this presets are
+# both places mockulus deviates from it by default anyway — WireMock's journal is
+# always on (deviation #1) and it has no store to choose (deviation #3 and §4).
+# There is nothing here an oracle could answer.
+wm: n/a
+steps:
+  # The journal answers rather than refusing. On a default instance every one of
+  # these endpoints is a 500 with code 1010 until `journal_enabled` is set, so a
+  # 200 here can only have come from the profile.
+  #
+  # This is the half of the preset a newcomer meets first: a suite that calls
+  # verify() against a fresh local instance otherwise gets a server error as its
+  # first experience of the product.
+  - admin: {method: GET, path: /__admin/requests}
+    expect: {status: 200}
+
+  # The store resolved to memory. `auto` would have landed here too with no
+  # connection string set, so the reading that matters is the one in the health
+  # document rather than the absence of a Couchbase.
+  - admin: {method: GET, path: /__admin/health}
+    expect:
+      status: 200
+      body_json_subset:
+        status: "healthy"
+        store: {driver: "memory"}
+
+  # And it is a working deployment rather than merely a configured one: a stub
+  # registers, serves, and is recorded in the journal the profile turned on.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0f11e00-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/cov-cfg-local-profile-001/hello"},
+         "response": {"status": 200, "body": "local", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/cov-cfg-local-profile-001/hello}
+    expect: {status: 200, body: "local"}
+
+  # The journal recorded it. This is the pair that makes the preset worth having:
+  # the stub served *and* the request is verifiable, with no configuration.
+  - admin:
+      method: POST
+      path: /__admin/requests/count
+      body: '{"method": "GET", "urlPath": "/e2e/cov-cfg-local-profile-001/hello"}'
+    # Eventually rather than immediately: the journal is written asynchronously
+    # and an entry becomes visible within a flush interval (deviation #10). That
+    # is true whatever turned the journal on, so a profile case asserts it the
+    # same way every other journal case does.
+    expect_eventually:
+      status: 200
+      body_json_subset:
+        count: 1
+
+  # The profile does not touch the deviations of §5.5. The ephemeral stub TTL is
+  # still in force and near-miss diagnostics are still off, so an unmatched
+  # request answers the plain 404 rather than WireMock's near-miss table. A
+  # profile that made local behave more like WireMock than the cluster does would
+  # let a suite pass locally and fail in the cluster.
+  - request: {port: mock, method: GET, path: /e2e/cov-cfg-local-profile-001/nothing-here}
+    expect:
+      status: 404
+      body: "Request was not matched"
