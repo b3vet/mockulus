@@ -323,10 +323,15 @@ $ curl -s http://localhost:8080/__admin/recordings/status
 ### What is not here
 
 Absent entirely, and rejected on sight: XML and XPath matching (`equalToXml`,
-`matchesXPath`), multipart matching, proxying (`proxyBaseUrl`), record and playback, webhooks
-(`postServeActions`), custom matchers, gRPC, browser proxying, Java-class extensions, and an admin
-UI. The full field-by-field matrix is [SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix);
-the endpoint matrix is [§5.1](../SPEC.md#51-admin-api-endpoint-matrix).
+`matchesXPath`), multipart matching (`multipartPatterns`), proxying (`proxyBaseUrl`), record and
+playback, webhooks (`postServeActions`), custom matchers, gRPC, browser proxying, and Java-class
+extensions. The full field-by-field matrix is
+[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix); the endpoint matrix is
+[§5.1](../SPEC.md#51-admin-api-endpoint-matrix).
+
+An admin UI used to be on that list and is not any more — it ships in the binary
+([The admin UI](admin-ui.md)). WireMock OSS has none, so it is an addition rather than a gap
+closed.
 
 Two defaults will surprise a WireMock user before anything else does, and both are deliberate:
 
@@ -623,6 +628,22 @@ API — this is for people who would rather not hand-roll the calls. See
 
 ---
 
+## Running it on a laptop
+
+```sh
+MOCKULUS_PROFILE=local mockulus
+```
+
+`profile: local` presets the two things a single-process run needs — `store:
+memory` and `journal_enabled: true` — so `verify()` works without further
+configuration. It presets *defaults*, so anything you set yourself still wins,
+and it changes none of the deviations in
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1): a stub
+behaves the same here as in your cluster, which is what makes testing locally
+worth anything. See [Configuration](configuration.md).
+
+---
+
 ## What to read next
 
 | If you want to | Read |
@@ -632,6 +653,7 @@ API — this is for people who would rather not hand-roll the calls. See
 | Set any of this up properly — every key, what it costs, what it breaks | [Configuration](configuration.md) |
 | Run it: deployment shapes, the chart, Couchbase, probes, what to alert on | [Operating mockulus](operations.md) |
 | Use the browser interface that ships in the binary | [The admin UI](admin-ui.md) |
+| Find out whether an existing mappings set fits, without deploying | [Migrating from WireMock](migrating-from-wiremock.md) |
 | Drive it from code, with a typed client or your own | [Programmatic administration](programmatic-administration.md) |
 | Find out what is deferred, and the sketch for how it will work | [ROADMAP.md](../ROADMAP.md) |
 | Contribute a change | [CONTRIBUTING.md](../CONTRIBUTING.md) |

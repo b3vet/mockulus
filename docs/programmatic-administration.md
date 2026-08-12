@@ -76,6 +76,34 @@ await fixtures.register(stubFor(get(urlPathEqualTo(fixtures.url('/orders'))).wil
 await fixtures.cleanup(); // removes exactly what it registered
 ```
 
+## Ask before you write
+
+```ts
+const report = await mockulus.mockulus.validate({ mappings });
+if (!report.wouldImport) {
+  for (const result of report.results) {
+    if (!result.valid) console.error(result.index, result.errors);
+  }
+}
+```
+
+`POST /__admin/mockulus/validate` reports what registering a batch would refuse
+and registers none of it — no document written, no snapshot rebuilt, no epoch
+moved. It answers `200` even when every mapping is invalid, because a refused
+mapping is the report's content rather than an error, so this resolves rather
+than throwing.
+
+Read `wouldImport`, not `valid`, when what you are about to do is an import: the
+import is atomic, so one bad mapping in fifty means nothing at all is written,
+and `wouldImport` is the field that says so.
+
+The errors are the registrar's own — same codes, same pointers — because the
+endpoint runs the same validation rather than a second implementation of it. It
+is also reachable as `mockulus.mappings.validate`, beside `import`, which is
+where you are already looking when the question comes up. This is a mockulus
+extension: WireMock answers `404` for the whole `/__admin/mockulus/**` namespace,
+so nothing that depends on it is portable.
+
 ## Two things to get right whatever client you use
 
 **Turn the journal on if you verify.** It is off by default — recording every
