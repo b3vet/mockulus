@@ -8,6 +8,32 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
+## [Unreleased]
+
+### 1.2.0 (in progress)
+
+A small release: one compatibility gap, one extension, one configuration
+preset. Entries land as their stages do; nothing here is final until the tag.
+
+### Added
+
+- Multi-value operators on repeated query parameters and headers. The exact
+  operator names are being established against the pinned oracle before
+  anything is specified — SPEC §5.2 and ROADMAP 1.5 disagree about them, and
+  only one of the two can be right.
+- `POST /__admin/mockulus/validate` — submit a `{"mappings": [...]}` envelope
+  and receive, without registering anything, the refusals a real import would
+  produce: per-mapping verdicts plus whether the batch as a whole would import,
+  since import is atomic. Reuses the registrar's own validation, so it cannot
+  drift from what registration actually does. Reachable from the admin UI and
+  the TypeScript SDK.
+- A local-state performance profile for single-replica development and CI.
+
+### Changed
+
+- `mockulusctl` (ROADMAP 3.3) is rejected rather than deferred. Its one valuable
+  command is the validate endpoint above; the rest duplicated the admin API.
+
 ## [1.1.0] - 2026-08-03
 
 Two compatibility gaps close and two surfaces of mockulus' own arrive.
