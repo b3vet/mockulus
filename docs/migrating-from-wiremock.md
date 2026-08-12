@@ -591,6 +591,37 @@ config change.
 
 ---
 
+## Before Step 1 — find out where you stand, without deploying
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mockulus/validate" \
+    -H 'Content-Type: application/json' --data-binary @mappings.json | jq '.summary, .wouldImport'
+{
+  "total": 214,
+  "valid": 209,
+  "invalid": 5
+}
+false
+```
+
+`POST /__admin/mockulus/validate` takes the same `{"mappings": [...]}` document
+`POST /__admin/mappings/import` takes and reports what registering it would
+refuse — writing nothing, touching no snapshot, changing no epoch. The errors it
+returns are the ones a real registration would have returned, because it runs
+the registrar's own validation; a mapping it calls valid is a mapping that
+registers.
+
+Read `wouldImport` rather than `summary`. Import is atomic, so five refused
+mappings out of 214 means **none** of the 214 would be written, not 209.
+
+Two things this is worth doing first. It answers "how much of our suite is
+inside the subset" in one call against any mockulus — including one somebody
+else is using, since it changes nothing. And it answers it before you have
+argued for a deployment, rather than after.
+
+The [admin UI](admin-ui.md) has the same thing behind a file picker, on the
+import panel: *Check without writing*.
+
 ## Step 6 — The deviations most likely to change your suite
 
 Mockulus answers differently from WireMock in 58 catalogued places, all of them
