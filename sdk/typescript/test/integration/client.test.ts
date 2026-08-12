@@ -176,20 +176,28 @@ describe('the client against a live server', () => {
     });
   });
 
+  /**
+   * A mapping the server refuses, written as the wire document rather than
+   * through the builders.
+   *
+   * `equalToXml` is a real WireMock matcher mockulus does not implement, so the
+   * SDK's types decline it — which is the property those types exist to have,
+   * and the reason this needs a cast. A case about what a refusal looks like has
+   * to be able to write a document that earns one.
+   */
+  const unsupportedMapping = (urlPath: string): StubMapping =>
+    ({
+      request: { method: 'GET', urlPath, bodyPatterns: [{ equalToXml: '<a/>' }] },
+      response: { status: 200 },
+    }) as unknown as StubMapping;
+
   describe('dry-run validation', () => {
     it('reports what an import would refuse, and imports nothing', async () => {
       const url = '/sdk-it/validate/would-not-import';
       const report = await client.mockulus.validate({
         mappings: [
           { request: { method: 'GET', urlPath: url }, response: { status: 200 } },
-          {
-            request: {
-              method: 'GET',
-              urlPath: `${url}-bad`,
-              bodyPatterns: [{ equalToXml: '<a/>' }],
-            },
-            response: { status: 200 },
-          },
+          unsupportedMapping(`${url}-bad`),
         ],
       });
 
@@ -226,46 +234,31 @@ describe('the client against a live server', () => {
 
     it('is reachable from mappings.validate too, as the same call', async () => {
       const batch = {
-        mappings: [
-          {
-            request: {
-              method: 'GET',
-              urlPath: '/sdk-it/validate/alias',
-              bodyPatterns: [{ equalToXml: '<a/>' }],
-            },
-            response: { status: 200 },
-          },
-        ],
+        mappings: [unsupportedMapping('/sdk-it/validate/alias')],
       };
       // Same endpoint, so the same report — the alias exists for discoverability
       // beside import(), not to mean anything different.
-      expect(await client.mappings.validate(batch)).toEqual(
-        await client.mockulus.validate(batch),
-      );
+      expect(await client.mappings.validate(batch)).toEqual(await client.mockulus.validate(batch));
     });
 
     it('agrees with what a real registration answers', async () => {
-      const mapping = {
-        request: {
-          method: 'GET',
-          urlPath: '/sdk-it/validate/agreement',
-          bodyPatterns: [{ equalToXml: '<a/>' }],
-        },
-        response: { status: 200 },
-      };
+      const mapping = unsupportedMapping('/sdk-it/validate/agreement');
 
       const report = await client.mockulus.validate({ mappings: [mapping] });
       const dryRun = report.results[0]?.errors ?? [];
 
-      // The same document through the registrar, which refuses it.
-      let registered: unknown[] = [];
-      try {
-        await client.mappings.create(mapping as StubMapping);
-        throw new Error('the registrar accepted a mapping validate called invalid');
-      } catch (err) {
-        if (!isMockulusError(err)) throw err;
-        registered = [...err.problems];
-      }
+      // The same document through the registrar, which refuses it. The
+      // rejection is the observation, so a create that *succeeded* has to fail
+      // the case rather than fall through to a comparison against nothing.
+      const registered = await client.mappings
+        .create(mapping)
+        .then(() => {
+          throw new Error('the registrar accepted a mapping that validate called invalid');
+        })
+        .catch((err: unknown) => {
+          if (!isMockulusError(err)) throw err;
+          return [...err.problems];
+        });
 
       // A validator that can disagree with the registrar is worse than none,
       // because it is believed.
