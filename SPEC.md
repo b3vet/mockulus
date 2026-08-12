@@ -446,6 +446,46 @@ That pair is the load-bearing security behavior of this section and it is pinned
 
 **What the UI is not.** It is an in-cluster and port-forward tool. The admin listener has no TLS (§12.1 — TLS is mock-port-only), so exposing it beyond a cluster boundary is an ingress decision, not a mockulus one, and §15.2 says so.
 
+#### 5.7.2 Dry-run validation
+
+**`POST /__admin/mockulus/validate`** answers what a mappings set *would* do if it were registered, and registers nothing.
+
+It exists because the cost of finding out today is a deployment. A team holding a WireMock mappings directory has one question before it commits to anything — how much of this is inside the subset — and §5.1 offers only two ways to ask: register the stubs and read the refusals, or read `docs/compatibility.md` and check by hand. The first mutates a deployment that may be shared; the second is a person doing what a program can.
+
+**Request.** The same `{"mappings": [...]}` envelope `POST /__admin/mappings/import` accepts, so a file that can be imported can be validated without being edited first. A bare array is not accepted, because import does not accept one either.
+
+**Effects.** None. No document is written, no snapshot is rebuilt, the epoch does not move, and the request journal does not record the mappings that were examined. Two concurrent validations of contradictory sets cannot interfere, because neither touches state.
+
+**Answer.** `200` — always, when the request itself is well-formed:
+
+```json
+{
+  "valid": false,
+  "wouldImport": false,
+  "summary": { "total": 3, "valid": 2, "invalid": 1 },
+  "results": [
+    { "index": 0, "id": "8f1c…", "valid": true },
+    { "index": 1, "valid": false,
+      "errors": [ { "code": 1002, "title": "Unsupported feature",
+                    "detail": "equalToXml is not supported in mockulus v1 — see ROADMAP.md",
+                    "source": { "pointer": "/request/bodyPatterns/0/equalToXml" } } ] },
+    { "index": 2, "id": "2b90…", "valid": true }
+  ]
+}
+```
+
+**A refused mapping is this endpoint's payload, not its failure.** The call succeeded: it was asked what would happen and it said. Answering `422` would make every caller wrap an ordinary result in an error path to read it, and would make a partial report unreadable — which is the opposite of what a report is for. The endpoint answers non-2xx only for the reasons any admin endpoint does: an unparseable body, a missing envelope, a failed token check (§17).
+
+**Two verdicts, because one would mislead.** `results` carries a verdict per mapping. `wouldImport` carries the verdict for the batch, and is `false` whenever any mapping is invalid — because import is atomic (§5.1, deviation #21): one bad mapping in fifty writes nothing at all. A report that listed only per-mapping results would let a reader count forty-nine passes and conclude the file was mostly fine, when importing it would produce an empty deployment. `valid` is the conjunction over `results` and is stated separately from `wouldImport` so that the two never have to be inferred from each other.
+
+**The errors are the registrar's own.** Each element of `errors` is exactly the element `POST /__admin/mappings` would have put in its `422` envelope — same code from Appendix B, same title, same detail, same JSON pointer. This is a constraint on the implementation and not only on the wire format: the endpoint calls the same validation path, and does not reimplement it. **A validator that can disagree with the registrar is worse than no validator**, because it is believed. One corpus case pins the agreement directly: a mapping this endpoint reports invalid is refused by a real registration with the same codes and the same pointers.
+
+**Ordering and identity.** `results` is in request order and `index` is the position in the submitted array, so a caller can join the report back onto its input without matching on content. `id` is present only for a mapping that carries one or would be assigned one deterministically; a caller must not depend on it to identify a result — that is what `index` is for.
+
+**Not a compatibility claim.** WireMock has no such endpoint. Under §5.7 rule 1 nothing may depend on it, and under rule 2 it could not have lived anywhere else. It takes no part in the differential lane of §5.6: there is no oracle answer to diff against, and a case asserting one would be asserting our own invention.
+
+**Scope.** It reports what registration would refuse. It does not report the **deviations of §5.5** — the places a mapping registers successfully and then behaves differently from WireMock. That is a strictly larger surface and a different question, and answering it here would let a clean report be read as "this mappings set behaves identically", which is not what it would mean.
+
 ---
 
 ## 6. Matching engine
