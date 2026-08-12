@@ -68,6 +68,10 @@ type Options struct {
 	// AllowContentPatterns admits the byte-oriented matchers, which are valid
 	// in some positions and not others — see contentPatterns.
 	AllowContentPatterns bool
+	// AllowMultiValue admits `hasExactly` and `includes`, which quantify over a
+	// key's whole value list and so are only meaningful where a key can carry
+	// several values — see multiValueKeys.
+	AllowMultiValue bool
 
 	// depth counts how many combinators this document sits inside; see
 	// maxNesting.
@@ -101,6 +105,13 @@ const maxNesting = 20
 // {"bodyPatterns":[{"not":{"binaryEqualTo":"…"}}]} is a 422 there.
 func (o Options) nested() Options {
 	o.AllowContentPatterns = false
+	// The multi-value operators do not survive nesting either, and for the same
+	// reason: WireMock's combinators are declared over StringValuePattern, and a
+	// multi-value pattern is not one. Probed rather than inferred —
+	// {"and":[{"hasExactly":[…]},…]} and {"not":{"includes":[…]}} are both 422
+	// there, with the same "is not a valid match operation" wording a body
+	// position gets.
+	o.AllowMultiValue = false
 	o.depth++
 	return o
 }
@@ -121,8 +132,21 @@ type JSONPathCompiler func(expr string) (JSONPathEvaluator, error)
 var deferredMatchers = map[string]string{
 	"equalToXml":   "equalToXml (XML matching)",
 	"matchesXPath": "matchesXPath (XPath matching)",
-	"hasExactly":   "the hasExactly multi-value operator",
-	"includes":     "the includes multi-value operator",
+}
+
+// multiValueKeys quantify over a key's whole value list rather than describing
+// one value, which is why they are not ordinary matchers in the switch below.
+//
+// WireMock models them as a separate pattern type — the refusals it gives name
+// ExactMatchMultiValuePattern and IncludesMatchMultiValuePattern — and that
+// typing is visible in every position it declines. Probed against the pinned
+// version: legal only as the sole key of a criterion directly under
+// queryParameters or headers, and refused with "is not a valid match operation"
+// inside a combinator, in bodyPatterns, and on cookies, which is otherwise a
+// supported section.
+var multiValueKeys = map[string]bool{
+	"hasExactly": true,
+	"includes":   true,
 }
 
 // modifierKeys are recognised alongside a matcher rather than being matchers
@@ -249,6 +273,34 @@ func Compile(raw json.RawMessage, pointer string, opts Options) (Matcher, []Prob
 				Feature:  feature,
 			})
 			continue
+		}
+		if multiValueKeys[key] {
+			if !opts.AllowMultiValue {
+				// Same pointer placement and same reasoning as the content
+				// patterns below: the criterion as written is not a match
+				// operation WireMock has in this position, so there is nothing
+				// narrower to blame than the criterion.
+				problems = append(problems, Problem{
+					Pointer: pointer,
+					Detail: key + " quantifies over a key's values, so it is only valid " +
+						"directly under queryParameters or headers",
+				})
+				continue
+			}
+			// Exclusive on its key. WireMock types the criterion as a whole:
+			// adding any sibling — another multi-value operator, or a plain
+			// equalTo — is refused there as an unrecognised field on
+			// ExactMatchMultiValuePattern or IncludesMatchMultiValuePattern.
+			// A conjunction is not what the document means, so accepting one
+			// would be inventing a semantics rather than reproducing it.
+			if len(doc) > 1 {
+				problems = append(problems, Problem{
+					Pointer: pointer,
+					Detail: key + " is the whole criterion for a key and takes no siblings; " +
+						"found " + strings.Join(sortedKeys(doc), ", "),
+				})
+				continue
+			}
 		}
 		if contentPatterns[key] && !opts.AllowContentPatterns {
 			// The pointer names the whole criterion rather than the offending
@@ -507,6 +559,44 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		}
 		return &MatchesJSONPath{Path: path, Inner: innerMatcher, Negate: negate}, nil
 
+	case "hasExactly", "includes":
+		var items []json.RawMessage
+		if err := json.Unmarshal(value, &items); err != nil {
+			return fail(key + " takes an array of matchers")
+		}
+		// `hasExactly: []` requires a key to carry zero values, and a key that
+		// is present always carries at least one — so the criterion can never
+		// be satisfied and the stub can never be served. WireMock registers it
+		// and never matches it; we refuse it, which is P3 and the same call
+		// deviations #49 and #50 make for a date-time operand that cannot match
+		// and a truncation that cannot take effect.
+		//
+		// `includes: []` is left alone. It is vacuous rather than inert — every
+		// operand in an empty list is satisfied, so it holds for any present
+		// key and reads as a presence assertion. That has a reachable meaning,
+		// and refusing it would decline a stub WireMock serves.
+		if key == "hasExactly" && len(items) == 0 {
+			return fail("hasExactly [] can never match: a key that is present " +
+				"carries at least one value, so no request satisfies it")
+		}
+		operands := make([]Matcher, 0, len(items))
+		var problems []Problem
+		for i, item := range items {
+			// nested() rather than opts: an operand is an ordinary single-value
+			// matcher applied to one value at a time, and a multi-value
+			// operator inside a multi-value operator is not a thing WireMock
+			// has. It also carries the depth accounting that bounds nesting.
+			operand, probs := Compile(item, fmt.Sprintf("%s/%d", at, i), opts.nested())
+			problems = append(problems, probs...)
+			if operand != nil {
+				operands = append(operands, operand)
+			}
+		}
+		if len(problems) > 0 {
+			return nil, problems
+		}
+		return &MultiValue{Operands: operands, Exact: key == "hasExactly"}, nil
+
 	case "and", "or":
 		var items []json.RawMessage
 		if err := json.Unmarshal(value, &items); err != nil {
@@ -570,6 +660,11 @@ var neverExisted = map[string]string{
 	"truncateActualTo":   "the parameter is truncateActual",
 	"expectedOffset": "there is no offset parameter — write the offset into the " +
 		"expected value itself, as in \"now +3 days\"",
+	// Published in ROADMAP.md from the file's first revision until v1.2.0, and
+	// wrong for all of it — WireMock 3.13.2 refuses `havingExactly` exactly as
+	// it refuses a name invented on the spot. Anyone who copied it out of our
+	// roadmap gets the name they wanted rather than a dead end.
+	"havingExactly": "the operator is hasExactly",
 }
 
 // DecodeBase64 reads an operand the way Java's Base64.getDecoder() does, which

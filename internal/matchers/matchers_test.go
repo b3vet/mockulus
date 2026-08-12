@@ -1081,11 +1081,13 @@ func TestIgnoreExtraElementsRelaxesArrayLength(t *testing.T) {
 // Every deferred matcher must be rejected by name, so a team migrating from
 // WireMock learns exactly which roadmap item they are waiting on.
 func TestDeferredMatchersAreRejectedByName(t *testing.T) {
+	// hasExactly and includes were here until v1.2.0 and are now implemented.
+	// They are still refused in this position — a body has one value, so there
+	// is no list to quantify over — but as a position error rather than a
+	// deferred feature, which TestMultiValueIsRefusedOutsideKeyPositions covers.
 	cases := map[string]string{
-		`{"matchesXPath":"//a"}`:           "matchesXPath",
-		`{"equalToXml":"<a/>"}`:            "equalToXml",
-		`{"hasExactly":[{"equalTo":"a"}]}`: "hasExactly",
-		`{"includes":[{"equalTo":"a"}]}`:   "includes",
+		`{"matchesXPath":"//a"}`: "matchesXPath",
+		`{"equalToXml":"<a/>"}`:  "equalToXml",
 	}
 	for doc, want := range cases {
 		m, probs := Compile(json.RawMessage(doc), "/request/bodyPatterns/0", testOpts())

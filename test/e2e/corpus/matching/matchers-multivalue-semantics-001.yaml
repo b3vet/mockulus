@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-multivalue-semantics-001
+behaviors: [B-REQ-MULTI-VALUE-OPERATORS]
+wm: verified
+# The non-matching steps land on the 404 whose body differs by design
+# (deviation #2). Status and headers are still diffed.
+wm_ignore: ["$unmatched-body"]
+steps:
+  # `includes` asks that every operand be satisfied by some value of the key. It
+  # says nothing about the values it did not name, so extras are allowed — which
+  # is the whole difference from `hasExactly` below.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-semantics-001/inc",
+                     "queryParameters": {"tag": {"includes": [{"equalTo": "a"}]}}},
+         "response": {"status": 200, "body": "inc", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/inc?tag=a"}
+    expect: {status: 200, body: "inc"}
+  # The extra value is not an objection.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/inc?tag=a&tag=b"}
+    expect: {status: 200, body: "inc"}
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/inc?tag=b"}
+    expect: {status: 404}
+  # An absent key satisfies neither operator: there is no list to quantify over.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/inc"}
+    expect: {status: 404}
+
+  # `hasExactly` is `includes` plus a size equality.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-semantics-001/exact",
+                     "queryParameters": {"tag": {"hasExactly": [{"equalTo": "a"}, {"equalTo": "b"}]}}},
+         "response": {"status": 200, "body": "exact", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/exact?tag=a&tag=b"}
+    expect: {status: 200, body: "exact"}
+  # Order is not significant — the operators quantify over a set, not a sequence.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/exact?tag=b&tag=a"}
+    expect: {status: 200, body: "exact"}
+  # One value too many.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/exact?tag=a&tag=b&tag=c"}
+    expect: {status: 404}
+  # One too few.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/exact?tag=a"}
+    expect: {status: 404}
+  # The right number of values, but nothing satisfies the `b` operand. This is
+  # the half of the rule the size test does not cover.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/exact?tag=a&tag=a"}
+    expect: {status: 404}
+
+  # Operands are matcher documents, and any single-value matcher is one — not
+  # just equalTo.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-semantics-001/mixed",
+                     "queryParameters": {"tag": {"hasExactly": [{"matches": "a.*"}, {"contains": "b"}]}}},
+         "response": {"status": 200, "body": "mixed", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-semantics-001/mixed?tag=a1&tag=xbx"}
+    expect: {status: 200, body: "mixed"}
+
+  # Headers carry the operators too, on the same terms.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-semantics-001/hdr",
+                     "headers": {"X-Tag": {"includes": [{"equalTo": "a"}]}}},
+         "response": {"status": 200, "body": "hdr", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-multivalue-semantics-001/hdr
+      headers: {X-Tag: "a"}
+    expect: {status: 200, body: "hdr"}
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-multivalue-semantics-001/hdr
+      headers: {X-Tag: "z"}
+    expect: {status: 404}

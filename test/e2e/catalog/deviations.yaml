@@ -575,3 +575,13 @@ behaviors:
     evidence: "a $ref cycle is answered rather than returning a server error"
     evidence_tokens: ["$ref", "matchesJsonSchema"]
     status: "ok"
+  - id: "B-DEV-58"
+    spec_row: "spec:5.5:deviations|deviation-58"
+    spec_hash: "20f95cc461081f9c"
+    spec: "#55-deviations-from-wiremock-complete-list-v1"
+    kind: "matcher"
+    impl_milestone: "M8"
+    summary: "deviation-58"
+    evidence: "hasExactly [] is refused at registration because no request can satisfy it, while includes [] registers and holds for any present key"
+    evidence_tokens: ["hasExactly", "can never match"]
+    status: "ok"

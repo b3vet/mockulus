@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-multivalue-not-a-bijection-001
+behaviors: [B-REQ-MULTI-VALUE-OPERATORS]
+wm: verified
+wm_ignore: ["$unmatched-body"]
+# This case exists because the obvious implementation is the wrong one.
+#
+# `hasExactly` reads as "these values and no others", which suggests pairing each
+# operand with a distinct value — a bijection. WireMock does not do that. It
+# checks the size, and then asks of each operand whether *some* value satisfies
+# it. Values are never consumed, so one value can answer several operands and a
+# value that answers none is tolerated as long as the count comes out right.
+#
+# The two rules agree on every input anybody writes on purpose, which is exactly
+# why this is pinned: a bijection would pass the rest of the corpus and fail only
+# here. Probed against pinned WireMock 3.13.2 on 2026-08-12.
+steps:
+  # Two operands, both `a.*`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000010",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-not-a-bijection-001/q",
+                     "queryParameters": {"tag": {"hasExactly": [{"matches": "a.*"}, {"matches": "a.*"}]}}},
+         "response": {"status": 200, "body": "matched", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The load-bearing assertion. "b1" satisfies neither operand. The key carries
+  # two values and the criterion names two operands, and both operands are
+  # satisfied — both by "a1". A bijection refuses this; WireMock serves it.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-not-a-bijection-001/q?tag=a1&tag=b1"}
+    expect: {status: 200, body: "matched"}
+
+  # The unsurprising direction, so the case is not passing for want of any rule
+  # at all: two values that both match also match.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-not-a-bijection-001/q?tag=a1&tag=a2"}
+    expect: {status: 200, body: "matched"}
+
+  # And the size test still bites, so "tolerant" is not "unconditional": one
+  # value cannot satisfy a two-operand hasExactly however well it matches.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-not-a-bijection-001/q?tag=a1"}
+    expect: {status: 404}
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-not-a-bijection-001/q?tag=a1&tag=a2&tag=a3"}
+    expect: {status: 404}
+
+  # The same sharing under `includes`, where there is no size test to lean on:
+  # one value satisfying both operands is enough on its own.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000011",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-multivalue-not-a-bijection-001/share",
+                     "queryParameters": {"tag": {"includes": [{"matches": "a.*"}, {"matches": ".*1"}]}}},
+         "response": {"status": 200, "body": "shared", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-not-a-bijection-001/share?tag=a1"}
+    expect: {status: 200, body: "shared"}
+  # "a2" satisfies the first operand and not the second, and nothing else is
+  # there to satisfy it.
+  - request: {port: mock, method: GET, path: "/e2e/matchers-multivalue-not-a-bijection-001/share?tag=a2"}
+    expect: {status: 404}
