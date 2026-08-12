@@ -34,6 +34,7 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 - **Depends on**: nothing. **Size**: S.
 
 ### 1.5 Multipart matching + extended multi-value operators
+- **Split in v1.2.0.** The multi-value operators are being taken on their own: they are a new mode on an existing `KeyMatcher` with no new body parsing, while `multipartPatterns` needs a lazy MIME parse memoized on `ParsedRequest` and a corpus surface larger than the rest of that release together. Multipart stays here for v1.3.0. **The operator names below are unverified** — SPEC §5.2 records them as `hasExactly`/`includes` and this entry has long said `havingExactly`; both cannot be right, and neither has been probed against the oracle. Establishing which is the first probe of the v1.2.0 work, for the same reason the date/time entry above had to be corrected: this file remembers, and only the oracle knows.
 - **What**: `multipartPatterns`; `havingExactly`/`includes` multi-value query/header operators.
 - **Sketch**: `mime/multipart` lazy parse memoized on `ParsedRequest`; multi-value ops as new `KeyMatcher` modes.
 - **Depends on**: nothing. **Size**: S/M.
@@ -88,7 +89,8 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 - **Sketch**: `otelhttp`-style middleware, sampled, off by default; hot-path guard: zero cost when disabled (nil-check pattern, no always-on spans).
 - **Size**: S/M.
 
-### 3.3 Migration & tooling CLI (`mockulusctl`)
+### 3.3 Migration & tooling CLI (`mockulusctl`) — rejected in v1.2.0, superseded
+- **Status**: **rejected**, and its one load-bearing piece re-homed. The value of this entry was concentrated in `validate` — a dry-run 422 report that lets a team assess a migration before deploying anything. That is now `POST /__admin/mockulus/validate` (SPEC §5.7.2), which delivers the same answer without a second artifact to ship, version, sign and document, and which the SDK and the admin UI consume for free. The rest did not survive the question "what does this do that the API does not": `import`/`export` duplicate `POST /__admin/mappings/import` and the store drivers behind it, and `diff` had no demand behind it and no agreed notion of stub identity across deployments. Entry retained under its number so existing references stay valid.
 - **What**: one-shot commands: import a WireMock `mappings/` dir into Couchbase, export back, validate a stub corpus against the v1 support matrix (dry-run 422 report — lets teams assess migration before deploying), diff two deployments.
 - **Sketch**: same binary, subcommands; reuses `internal/stub` validation and the store drivers.
 - **Size**: S/M.
