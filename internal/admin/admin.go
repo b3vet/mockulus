@@ -165,6 +165,13 @@ func New(opts Options) *Handler {
 		mux.HandleFunc("POST /__admin/shutdown", h.shutdownServer)
 	}
 
+	// Dry-run validation (§5.7.2): what an import of this batch would refuse,
+	// with nothing written. A mockulus extension, so it lives in the reserved
+	// namespace beside the UI. Unconditional — unlike the UI and the shutdown
+	// route there is no key that turns it off, because it changes nothing and
+	// reads nothing, so there is no posture a deployment could want it gone for.
+	mux.HandleFunc("POST /__admin/mockulus/validate", h.validateMappings)
+
 	// The embedded admin UI (§5.7). It is mockulus' own surface rather than
 	// WireMock's, so it lives under the reserved /__admin/mockulus/** namespace
 	// and nothing else in that namespace is claimed: an unknown path below it

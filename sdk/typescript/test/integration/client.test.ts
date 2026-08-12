@@ -176,6 +176,103 @@ describe('the client against a live server', () => {
     });
   });
 
+  describe('dry-run validation', () => {
+    it('reports what an import would refuse, and imports nothing', async () => {
+      const url = '/sdk-it/validate/would-not-import';
+      const report = await client.mockulus.validate({
+        mappings: [
+          { request: { method: 'GET', urlPath: url }, response: { status: 200 } },
+          {
+            request: {
+              method: 'GET',
+              urlPath: `${url}-bad`,
+              bodyPatterns: [{ equalToXml: '<a/>' }],
+            },
+            response: { status: 200 },
+          },
+        ],
+      });
+
+      // A refused mapping is the answer, not an error: this resolved.
+      expect(report.valid).toBe(false);
+      // Import is atomic, so one bad mapping means nothing would be written —
+      // which is the field to read when deciding whether to run the import.
+      expect(report.wouldImport).toBe(false);
+      expect(report.summary).toEqual({ total: 2, valid: 1, invalid: 1 });
+      expect(report.results[0]?.valid).toBe(true);
+      expect(report.results[1]?.valid).toBe(false);
+      expect(report.results[1]?.errors?.[0]?.code).toBe(ErrorCode.UnsupportedFeature);
+      expect(report.results[1]?.errors?.[0]?.source?.pointer).toBe(
+        '/request/bodyPatterns/0/equalToXml',
+      );
+
+      // Nothing was registered, including the mapping that was fine.
+      const listed = await client.mappings.list();
+      expect(listed.mappings.some((m) => m.request?.urlPath === url)).toBe(false);
+    });
+
+    it('says a clean batch would import', async () => {
+      const report = await client.mockulus.validate({
+        mappings: [
+          {
+            request: { method: 'GET', urlPath: '/sdk-it/validate/clean' },
+            response: { status: 200 },
+          },
+        ],
+      });
+      expect(report.valid).toBe(true);
+      expect(report.wouldImport).toBe(true);
+    });
+
+    it('is reachable from mappings.validate too, as the same call', async () => {
+      const batch = {
+        mappings: [
+          {
+            request: {
+              method: 'GET',
+              urlPath: '/sdk-it/validate/alias',
+              bodyPatterns: [{ equalToXml: '<a/>' }],
+            },
+            response: { status: 200 },
+          },
+        ],
+      };
+      // Same endpoint, so the same report — the alias exists for discoverability
+      // beside import(), not to mean anything different.
+      expect(await client.mappings.validate(batch)).toEqual(
+        await client.mockulus.validate(batch),
+      );
+    });
+
+    it('agrees with what a real registration answers', async () => {
+      const mapping = {
+        request: {
+          method: 'GET',
+          urlPath: '/sdk-it/validate/agreement',
+          bodyPatterns: [{ equalToXml: '<a/>' }],
+        },
+        response: { status: 200 },
+      };
+
+      const report = await client.mockulus.validate({ mappings: [mapping] });
+      const dryRun = report.results[0]?.errors ?? [];
+
+      // The same document through the registrar, which refuses it.
+      let registered: unknown[] = [];
+      try {
+        await client.mappings.create(mapping as StubMapping);
+        throw new Error('the registrar accepted a mapping validate called invalid');
+      } catch (err) {
+        if (!isMockulusError(err)) throw err;
+        registered = [...err.problems];
+      }
+
+      // A validator that can disagree with the registrar is worse than none,
+      // because it is believed.
+      expect(dryRun).toEqual(registered);
+    });
+  });
+
   describe('listing and paginating', () => {
     it('walks an imported batch and reports a total over the whole snapshot', async () => {
       const ids = ['a', 'b', 'c', 'd', 'e'].map((n) => `4d1b0000-0000-4000-8000-00000000000${n}`);

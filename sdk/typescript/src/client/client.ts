@@ -2,6 +2,7 @@
 
 import { FilesApi } from './files.js';
 import { MappingsApi } from './mappings.js';
+import { MockulusApi } from './mockulus.js';
 import { NearMissesApi } from './near-misses.js';
 import { RequestsApi } from './requests.js';
 import { ScenariosApi } from './scenarios.js';
@@ -63,6 +64,12 @@ export class MockulusClient {
   readonly settings: SettingsApi;
   /** Health, version, the combined reset and the drain. */
   readonly system: SystemApi;
+  /**
+   * The endpoints that are mockulus' own rather than WireMock's, under the
+   * reserved `/__admin/mockulus/**` prefix (SPEC §5.7). Nothing here exists on a
+   * WireMock server, and nothing here is required.
+   */
+  readonly mockulus: MockulusApi;
 
   constructor(options: MockulusClientOptions) {
     // One transport, shared. The namespaces hold it rather than the client, so
@@ -76,5 +83,6 @@ export class MockulusClient {
     this.files = new FilesApi(transport);
     this.settings = new SettingsApi(transport);
     this.system = new SystemApi(transport);
+    this.mockulus = new MockulusApi(transport);
   }
 }

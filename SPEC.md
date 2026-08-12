@@ -455,6 +455,12 @@ That pair is the load-bearing security behavior of this section and it is pinned
 
 It exists because the cost of finding out today is a deployment. A team holding a WireMock mappings directory has one question before it commits to anything — how much of this is inside the subset — and §5.1 offers only two ways to ask: register the stubs and read the refusals, or read `docs/compatibility.md` and check by hand. The first mutates a deployment that may be shared; the second is a person doing what a program can.
 
+Endpoints:
+
+| Endpoint | v1 | Notes |
+|---|---|---|
+| `POST /__admin/mockulus/validate` | ✅ | Reports what an import of the submitted batch would refuse, and writes nothing. Always `200` when the envelope is readable — a refused mapping is the payload, not a failure. Reports a verdict per mapping and, separately, whether the batch would import at all, because import is atomic. Errors are the registrar's own, produced by the same validation. Reads no store, so it answers while degraded |
+
 **Request.** The same `{"mappings": [...]}` envelope `POST /__admin/mappings/import` accepts, so a file that can be imported can be validated without being edited first. A bare array is not accepted, because import does not accept one either.
 
 **Effects.** None. No document is written, no snapshot is rebuilt, the epoch does not move, and the request journal does not record the mappings that were examined. Two concurrent validations of contradictory sets cannot interfere, because neither touches state.

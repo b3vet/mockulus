@@ -120,6 +120,36 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/__admin/mockulus/validate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Report what a mappings set would do, without registering it.
+     * @description Takes the same envelope `POST /__admin/mappings/import` takes and answers what that import would have refused. Nothing is written: no document, no snapshot rebuild, no epoch change, no journal entry.
+     *
+     *     **A refused mapping is this endpoint's payload, not its failure**, so a batch in which every mapping is invalid still answers 200. A 422 would force every caller to read an ordinary result out of an error path, and would make a partial report unreadable. The non-2xx answers below are the ones any admin endpoint has.
+     *
+     *     Two verdicts are reported because one would mislead. `results` carries a verdict per mapping; `wouldImport` carries the verdict for the batch, and is false whenever any mapping is invalid — import is atomic, so one bad mapping in fifty writes nothing at all, and a per-mapping list alone would read as "mostly fine".
+     *
+     *     Each element of `errors` is exactly what a real registration would have returned for that mapping: same code, same title, same detail, same JSON pointer. The endpoint calls the registrar's own validation rather than reimplementing it, because a validator that can disagree with the registrar is worse than none — it is believed.
+     *
+     *     Nothing here reads the store, so it answers normally while the deployment is degraded. Assessing a mappings file is exactly the sort of thing somebody does during an outage.
+     *
+     *     This is a mockulus extension (SPEC §5.7). WireMock has no equivalent and answers 404 for this path, so nothing here is a compatibility claim and no WireMock-compatible client can depend on it.
+     */
+    post: operations['validateStubMappings'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/__admin/mappings/import': {
     parameters: {
       query?: never;
@@ -824,6 +854,31 @@ export interface components {
       not?: components['schemas']['ContentMatcher'];
       /** @description The JSONPath expression of the object form of `matchesJsonPath` and `doesNotMatchJsonPath`. Refused anywhere else — see this schema's own description for why it is declared here rather than on a separate type. */
       expression?: string;
+    };
+    /**
+     * Validation report
+     * @description What `POST /__admin/mappings/import` would have refused for this batch. `valid` is the conjunction over `results`; `wouldImport` is the batch verdict and is false whenever any mapping is invalid, because import is atomic. They are reported separately rather than one inferred from the other because they answer different questions, and only the second is the one a caller about to run an import is asking.
+     */
+    ValidationReport: {
+      /** @description Every mapping in the batch is registrable. */
+      valid: boolean;
+      /** @description Whether an import of this batch would write anything. False whenever any mapping is invalid. */
+      wouldImport: boolean;
+      summary: {
+        total: number;
+        valid: number;
+        invalid: number;
+      };
+      /** @description One entry per submitted mapping, in request order. */
+      results: {
+        /** @description Position in the submitted array. This is how a caller joins a result back onto its input — `id` is not always present, and content is not a key. */
+        index: number;
+        /** @description Present only for a mapping that carried an id of its own. */
+        id?: string;
+        valid: boolean;
+        /** @description Exactly what a real registration would have answered for this mapping. Absent when `valid` is true. */
+        errors?: components['schemas']['Error'][];
+      }[];
     };
     /**
      * Multi-value criterion
@@ -1823,6 +1878,41 @@ export interface operations {
       200: components['responses']['Acknowledged'];
       401: components['responses']['Unauthorized'];
       503: components['responses']['StoreUnavailable'];
+    };
+  };
+  validateStubMappings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StubMappingImport'];
+      };
+    };
+    responses: {
+      /** @description The set was examined. Read `wouldImport` for whether the batch would import at all, and `results` for why not. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ValidationReport'];
+        };
+      };
+      401: components['responses']['Unauthorized'];
+      413: components['responses']['BodyTooLarge'];
+      /** @description The envelope itself could not be read — malformed JSON, or no `mappings` array. This is not the answer for invalid *mappings*, which are reported inside a 200. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
     };
   };
   importStubMappings: {
