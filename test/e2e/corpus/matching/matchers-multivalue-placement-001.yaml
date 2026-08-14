@@ -2,12 +2,19 @@
 id: matchers-multivalue-placement-001
 behaviors: [B-REQ-MULTI-VALUE-OPERATORS]
 wm: verified
-wm_ignore: ["$unmatched-body"]
+# `$.errors` because the two servers refuse these in the same place, with the
+# same status, and say so differently: WireMock answers "{…} is not a valid match
+# operation" and mockulus names where the operator *would* be legal. Requiring
+# the strings to match would assert that our error catalogue is Jackson's, which
+# §6.8 puts outside the strict-compat surface and Appendix B defines separately.
+# What the differential lane still checks here is the thing this case is about —
+# that every one of these positions is refused on both servers rather than
+# accepted on one. The mockulus envelope is asserted in full against mockulus by
+# the unit tests in internal/matchers.
+wm_ignore: ["$unmatched-body", "$.errors"]
 # Where the operators are legal, and where they are not. Every refusal here is
 # one WireMock makes too — probed on 2026-08-12, which is what lets this case be
-# `wm: verified` rather than an assertion about our own preferences. WireMock
-# words them as "is not a valid match operation"; the wording is diagnostic text
-# and outside the strict-compat surface (§6.8), so only the status is diffed.
+# `wm: verified` rather than an assertion about our own preferences.
 steps:
   # A body has one value, so there is no list to quantify over.
   - admin:
