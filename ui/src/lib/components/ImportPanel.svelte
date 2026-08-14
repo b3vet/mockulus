@@ -5,6 +5,7 @@
     type MockulusClient,
     type MockulusProblem,
     type StubMappingImport,
+    type ValidationReport,
   } from '@mockulus/admin-sdk';
   import { createAction } from '../action.svelte';
   import { getApi } from '../api.svelte';
@@ -44,6 +45,30 @@
   /** Why the chosen file cannot be sent. Set instead of `batch`, never with it. */
   let fileProblem = $state<string | undefined>(undefined);
   let written = $state<number | undefined>(undefined);
+  /** The last dry run's report, or undefined if none has been asked for. */
+  let report = $state<ValidationReport | undefined>(undefined);
+
+  /**
+   * The dry run.
+   *
+   * `POST /__admin/mockulus/validate` takes this same document and reports what
+   * importing it would refuse, writing nothing. It answers 200 even when every
+   * mapping is invalid — a refused mapping is the report's content rather than
+   * an error — so this resolves rather than throwing, and the verdict is read
+   * off the body.
+   *
+   * It exists on this panel rather than somewhere of its own because the
+   * question it answers is "should I press the other button", and the file is
+   * already chosen here.
+   */
+  const check = createAction(
+    api,
+    async (client: MockulusClient, document: StubMappingImport): Promise<ValidationReport> =>
+      client.mockulus.validate(document),
+    (result) => {
+      report = result;
+    },
+  );
 
   const load = createAction(
     api,
@@ -64,7 +89,9 @@
     count = 0;
     fileProblem = undefined;
     written = undefined;
+    report = undefined;
     load.reset();
+    check.reset();
   }
 
   async function choose(event: Event) {
@@ -99,10 +126,46 @@
     readonly problems: { readonly problem: MockulusProblem; readonly within: string }[];
   }
 
+  /**
+   * The problems to show, from whichever source produced them.
+   *
+   * A refusal carries pointers rooted at the batch (`/mappings/3/response`); a
+   * dry-run report carries a verdict per mapping with pointers rooted at that
+   * mapping. Both are flattened to the same shape here so one renderer serves
+   * both, and so the reader sees the same thing whether they checked first or
+   * pressed Write.
+   */
+  const reportProblems = $derived.by((): { pointer: string; problem: MockulusProblem }[] => {
+    if (!report) {
+      return [];
+    }
+    return report.results.flatMap((result) =>
+      (result.errors ?? []).map((problem): { pointer: string; problem: MockulusProblem } => ({
+        // Rewritten to the batch-rooted form the refusal path already uses, so
+        // importPointerParts can split it the same way.
+        pointer: `/mappings/${String(result.index)}${problem.source?.pointer ?? ''}`,
+        problem: problem as MockulusProblem,
+      })),
+    );
+  });
+
   const groups = $derived.by((): ProblemGroup[] => {
     const err = refusal;
     if (!err) {
-      return [];
+      if (reportProblems.length === 0) {
+        return [];
+      }
+      const fromReport: ProblemGroup[] = [];
+      for (const { pointer, problem } of reportProblems) {
+        const parts = importPointerParts(pointer);
+        let group = fromReport.find((candidate) => candidate.index === parts.index);
+        if (!group) {
+          group = { index: parts.index, problems: [] };
+          fromReport.push(group);
+        }
+        group.problems.push({ problem, within: parts.within });
+      }
+      return fromReport;
     }
     // Grouped by scanning rather than by a keyed map, which keeps the file's own
     // order — the order the reader will walk their document in — and costs
@@ -190,6 +253,29 @@
     </p>
   {/if}
 
+  {#if report}
+    <p
+      role="status"
+      class={report.wouldImport
+        ? 'mt-3 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-100'
+        : 'mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100'}
+    >
+      {#if report.wouldImport}
+        Checked {report.summary.total}
+        {report.summary.total === 1 ? 'mapping' : 'mappings'}. All of them would register. Nothing
+        has been written yet.
+      {:else}
+        <!-- The batch verdict first, because import is atomic and a reader
+             looking at a list of per-mapping problems will otherwise work out
+             the wrong answer to "so what happens if I press Write". -->
+        <strong>This file would not import.</strong>
+        {report.summary.invalid} of {report.summary.total}
+        {report.summary.total === 1 ? 'mapping' : 'mappings'} would be refused, and the import is atomic
+        — so nothing at all would be written. Nothing has been written now, either.
+      {/if}
+    </p>
+  {/if}
+
   <!-- Hidden while a refusal is on screen: re-sending the same document would
        be refused the same way, and the instruction is to fix the file. -->
   {#if batch && !refusal}
@@ -200,9 +286,19 @@
         <code class="font-mono">id</code> already exists here will be replaced, and the rest added.
       </p>
       <div class="mt-3 flex flex-wrap gap-2">
+        <!-- Offered before Write and styled below it: checking is the safe
+             thing to do first, but writing is what the panel is for. -->
         <button
           type="button"
-          disabled={load.pending}
+          disabled={load.pending || check.pending}
+          onclick={() => batch && check.run(batch)}
+          class="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+        >
+          {check.pending ? 'Checking…' : 'Check without writing'}
+        </button>
+        <button
+          type="button"
+          disabled={load.pending || check.pending}
           onclick={() => batch && load.run(batch)}
           class="rounded-md bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -220,15 +316,27 @@
     </div>
   {/if}
 
-  {#if refusal}
+  <!-- One list, two sources. A refusal and a dry-run report describe the same
+       mappings in the same terms, so a reader who checked first and a reader who
+       pressed Write see the same thing — only the heading above it differs,
+       because one of them has already changed nothing and the other was going
+       to change everything. -->
+  {#if refusal || groups.length > 0}
     <div
       class="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-5 py-4 text-rose-950 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100"
     >
-      <h3 class="text-base font-semibold">Nothing was written</h3>
+      <h3 class="text-base font-semibold">
+        {refusal ? 'Nothing was written' : 'These mappings would be refused'}
+      </h3>
       <p class="mt-2 max-w-2xl text-sm">
-        The import is atomic: the server compiles every mapping in the batch before it writes any of
-        them, so this deployment holds exactly what it held before you pressed the button. Fix the
-        mappings named below and choose the file again.
+        {#if refusal}
+          The import is atomic: the server compiles every mapping in the batch before it writes any
+          of them, so this deployment holds exactly what it held before you pressed the button. Fix
+          the mappings named below and choose the file again.
+        {:else}
+          Nothing has been written — this was a check. The import is atomic, so fixing the mappings
+          named below is what it takes for any of the file to land.
+        {/if}
       </p>
       <ul aria-label="Rejected mappings" class="mt-3 space-y-3">
         {#each groups as group, index (index)}

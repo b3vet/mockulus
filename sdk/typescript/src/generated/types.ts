@@ -120,6 +120,36 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/__admin/mockulus/validate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Report what a mappings set would do, without registering it.
+     * @description Takes the same envelope `POST /__admin/mappings/import` takes and answers what that import would have refused. Nothing is written: no document, no snapshot rebuild, no epoch change, no journal entry.
+     *
+     *     **A refused mapping is this endpoint's payload, not its failure**, so a batch in which every mapping is invalid still answers 200. A 422 would force every caller to read an ordinary result out of an error path, and would make a partial report unreadable. The non-2xx answers below are the ones any admin endpoint has.
+     *
+     *     Two verdicts are reported because one would mislead. `results` carries a verdict per mapping; `wouldImport` carries the verdict for the batch, and is false whenever any mapping is invalid — import is atomic, so one bad mapping in fifty writes nothing at all, and a per-mapping list alone would read as "mostly fine".
+     *
+     *     Each element of `errors` is exactly what a real registration would have returned for that mapping: same code, same title, same detail, same JSON pointer. The endpoint calls the registrar's own validation rather than reimplementing it, because a validator that can disagree with the registrar is worse than none — it is believed.
+     *
+     *     Nothing here reads the store, so it answers normally while the deployment is degraded. Assessing a mappings file is exactly the sort of thing somebody does during an outage.
+     *
+     *     This is a mockulus extension (SPEC §5.7). WireMock has no equivalent and answers 404 for this path, so nothing here is a compatibility claim and no WireMock-compatible client can depend on it.
+     */
+    post: operations['validateStubMappings'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/__admin/mappings/import': {
     parameters: {
       query?: never;
@@ -826,6 +856,51 @@ export interface components {
       expression?: string;
     };
     /**
+     * Validation report
+     * @description What `POST /__admin/mappings/import` would have refused for this batch. `valid` is the conjunction over `results`; `wouldImport` is the batch verdict and is false whenever any mapping is invalid, because import is atomic. They are reported separately rather than one inferred from the other because they answer different questions, and only the second is the one a caller about to run an import is asking.
+     */
+    ValidationReport: {
+      /** @description Every mapping in the batch is registrable. */
+      valid: boolean;
+      /** @description Whether an import of this batch would write anything. False whenever any mapping is invalid. */
+      wouldImport: boolean;
+      summary: {
+        total: number;
+        valid: number;
+        invalid: number;
+      };
+      /** @description One entry per submitted mapping, in request order. */
+      results: {
+        /** @description Position in the submitted array. This is how a caller joins a result back onto its input — `id` is not always present, and content is not a key. */
+        index: number;
+        /** @description Present only for a mapping that carried an id of its own. */
+        id?: string;
+        valid: boolean;
+        /** @description Exactly what a real registration would have answered for this mapping. Absent when `valid` is true. */
+        errors?: components['schemas']['Error'][];
+      }[];
+    };
+    /**
+     * Multi-value criterion
+     * @description `hasExactly` or `includes`: a criterion over the whole set of a key's values rather than over one of them. Valid **only** as the entire criterion for a `queryParameters` or `headers` entry — WireMock models these as a pattern type of their own, so one nested in a combinator, used in `bodyPatterns` or on `cookies`, or written beside any sibling key is refused there and here.
+     *
+     *     `includes` holds when every operand is satisfied by **some** value of the key. `hasExactly` adds a size equality: the key must carry exactly as many values as there are operands. Values are **not consumed** by an operand, so a value satisfying no operand at all is tolerated when the count is right — `hasExactly` with two `a.*` operands matches `?tag=a1&tag=b1`, because both operands are satisfied by `a1` and the list is two long. That is WireMock's rule reproduced; pairing operands with distinct values is the intuitive reading and the wrong one.
+     *
+     *     An absent key satisfies neither operator. `includes: []` is vacuous and holds for any key that is present, which makes it a presence assertion; `hasExactly: []` is refused, because a present key always carries at least one value and so nothing could ever satisfy it (deviation #58).
+     */
+    MultiValueCriterion: {
+      /** @description Every operand satisfied by some value, and exactly as many values as operands. Operands are matcher documents, not bare strings. */
+      hasExactly?: components['schemas']['ContentMatcher'][];
+      /** @description Every operand satisfied by some value. Extra values are allowed. */
+      includes?: components['schemas']['ContentMatcher'][];
+    };
+    /**
+     * Key criterion
+     * @description The criterion for one query parameter or header: either an ordinary matcher applied to the key's values under the any-of rule, or one of the multi-value operators that quantifies over the whole list. They are alternatives, not a union of members — a key carrying a multi-value operator takes nothing else alongside it.
+     */
+    KeyCriterion:
+      components['schemas']['ContentMatcher'] | components['schemas']['MultiValueCriterion'];
+    /**
      * JSONPath criterion
      * @description Either a bare expression or an expression with an inner matcher.
      *
@@ -914,11 +989,11 @@ export interface components {
       };
       /** @description A matcher per query parameter. A repeated parameter matches when **any** of its values satisfies the matcher; `?x=` and a bare `?x` are both present-with-empty-string, never absent. Use `{"absent": true}` for "must not be present". */
       queryParameters?: {
-        [key: string]: components['schemas']['ContentMatcher'];
+        [key: string]: components['schemas']['KeyCriterion'];
       };
       /** @description A matcher per header. Names are case-insensitive in both directions; values are case-sensitive unless the matcher sets `caseInsensitive`. A repeated header matches when any of its values satisfies the matcher — WireMock instead picks the value at minimum edit distance and matches that one, so mockulus matches strictly more here and no suite that passes on WireMock can fail on this (deviation #29). */
       headers?: {
-        [key: string]: components['schemas']['ContentMatcher'];
+        [key: string]: components['schemas']['KeyCriterion'];
       };
       /** @description A matcher per cookie name. */
       cookies?: {
@@ -1803,6 +1878,41 @@ export interface operations {
       200: components['responses']['Acknowledged'];
       401: components['responses']['Unauthorized'];
       503: components['responses']['StoreUnavailable'];
+    };
+  };
+  validateStubMappings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StubMappingImport'];
+      };
+    };
+    responses: {
+      /** @description The set was examined. Read `wouldImport` for whether the batch would import at all, and `results` for why not. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ValidationReport'];
+        };
+      };
+      401: components['responses']['Unauthorized'];
+      413: components['responses']['BodyTooLarge'];
+      /** @description The envelope itself could not be read — malformed JSON, or no `mappings` array. This is not the answer for invalid *mappings*, which are reported inside a 200. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ErrorBody'];
+        };
+      };
     };
   };
   importStubMappings: {

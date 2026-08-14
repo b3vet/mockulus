@@ -106,6 +106,12 @@ const (
 	// purpose, so a case can observe which of the two won instead of trusting
 	// that the rule holds.
 	VariantYAMLConfig = "yaml-config"
+	// VariantLocalProfile boots with `profile: local` and nothing else, which is
+	// the shape SPEC §13 documents for a laptop or a single-pod CI run. What it
+	// exists to observe is that a named profile presets keys the operator did
+	// not write — the journal answering rather than refusing is the visible half
+	// — and that it does so without any other configuration being present.
+	VariantLocalProfile = "local-profile"
 )
 
 // tlsFixtureDir is where the generated certificate lands. It sits under the
@@ -274,6 +280,12 @@ var variantEnv = map[string]map[string]string{
 	// MOCKULUS_CONFIG is filled in per run by StartInstance, since the file
 	// does not exist until the run writes it. What belongs here is the half of
 	// the precedence pair the environment owns.
+	VariantLocalProfile: {
+		// The whole variant. Every other key it needs comes from the profile,
+		// which is the claim under test: a case observing the journal answer
+		// here is observing a key nobody wrote.
+		"MOCKULUS_PROFILE": "local",
+	},
 	VariantYAMLConfig: {
 		// The file sets `off` for this key and this sets `on`. Both cannot be
 		// in force, and the difference between them is a response body rather
@@ -299,6 +311,8 @@ var t1OnlyVariants = map[string]string{
 	VariantFileStore: "it points the instance at a directory, so a case cannot ask for it and for a store topology at once",
 	VariantStartWithoutStore: "its whole subject is a store that is absent at boot, " +
 		"and a store topology would hand the instance a working one",
+	VariantLocalProfile: "the profile presets store: memory, which is the opposite of what a store " +
+		"topology exists to exercise",
 	VariantYAMLConfig: "the file it boots from names Couchbase credentials whose only claim is " +
 		"that they came out of a file, and a store topology's environment would overwrite exactly those",
 }

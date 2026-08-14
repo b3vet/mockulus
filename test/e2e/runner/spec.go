@@ -23,17 +23,21 @@ import (
 // Source names identify which structured block a row came from. They are part
 // of a behavior's identity, so they are stable API for the catalog files.
 const (
-	SourceAdminEndpoints  = "spec:5.1:admin-endpoints"
-	SourceStubTopLevel    = "spec:5.2:stub-top-level"
-	SourceStubRequest     = "spec:5.2:stub-request"
-	SourceStubMatchers    = "spec:5.2:content-matchers"
-	SourceStubResponse    = "spec:5.2:stub-response"
-	SourceDeviations      = "spec:5.5:deviations"
-	SourceDegradedModes   = "spec:4.6:degraded-modes"
-	SourceTemplateHelpers = "spec:10.3:template-helpers"
-	SourceConfigKeys      = "spec:13:config"
-	SourceMetrics         = "spec:14.1:metrics"
-	SourceErrorCatalog    = "spec:B:error-catalog"
+	SourceAdminEndpoints = "spec:5.1:admin-endpoints"
+	// The reserved /__admin/mockulus/** namespace of §5.7. Separate from
+	// §5.1 because that table is WireMock's surface and this one is ours:
+	// nothing here is a compatibility claim, and §5.6 diffs none of it.
+	SourceMockulusEndpoints = "spec:5.7:mockulus-endpoints"
+	SourceStubTopLevel      = "spec:5.2:stub-top-level"
+	SourceStubRequest       = "spec:5.2:stub-request"
+	SourceStubMatchers      = "spec:5.2:content-matchers"
+	SourceStubResponse      = "spec:5.2:stub-response"
+	SourceDeviations        = "spec:5.5:deviations"
+	SourceDegradedModes     = "spec:4.6:degraded-modes"
+	SourceTemplateHelpers   = "spec:10.3:template-helpers"
+	SourceConfigKeys        = "spec:13:config"
+	SourceMetrics           = "spec:14.1:metrics"
+	SourceErrorCatalog      = "spec:B:error-catalog"
 )
 
 // SpecRow is one behavior-bearing row extracted from the spec.
@@ -249,6 +253,7 @@ func (d *specDoc) Rows() ([]SpecRow, error) {
 	}
 
 	table(SourceAdminEndpoints, "5.1", "", 0)
+	table(SourceMockulusEndpoints, "5.7", "Endpoints:", 0)
 	table(SourceStubTopLevel, "5.2", "Top level:", 0)
 	table(SourceStubRequest, "5.2", "`request` object:", 0)
 	table(SourceStubMatchers, "5.2", "Content matchers", 0)

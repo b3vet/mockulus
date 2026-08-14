@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-multivalue-empty-operand-001
+behaviors: [B-DEV-58, B-REQ-MULTI-VALUE-OPERATORS]
+# WireMock registers `hasExactly: []` and then never serves the stub. We refuse
+# it, so this half cannot be diffed against the oracle.
+wm: n/a
+steps:
+  # A key that is present carries at least one value, so a criterion demanding
+  # exactly zero of them can never be satisfied. WireMock answers 201 and the
+  # stub is dead on arrival, with nothing anywhere to say why. Refusing it at
+  # registration is P3, and the same call §5.5 makes for a date-time operand
+  # that can never match (#49) and an inert truncation parameter (#50).
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000030",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-multivalue-empty-operand-001/inert",
+                     "queryParameters": {"tag": {"hasExactly": []}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/queryParameters/tag/hasExactly"}
+      body_regex: 'hasExactly \[\] can never match'
+
+  - admin: {method: GET, path: /__admin/mappings/b0000058-0000-4000-8000-000000000030}
+    expect: {status: 404}
+
+  # `includes: []` is vacuous rather than inert, and is not refused. Every
+  # operand in an empty list is satisfied, so it holds for any key that is
+  # present and fails for one that is absent — a presence assertion, which is a
+  # reachable meaning and one WireMock serves. Inert and vacuous are not the
+  # same thing, and only the first is refused.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000031",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-multivalue-empty-operand-001/vacuous",
+                     "queryParameters": {"tag": {"includes": []}}},
+         "response": {"status": 200, "body": "present", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-empty-operand-001/vacuous?tag=anything"}
+    expect: {status: 200, body: "present"}
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-empty-operand-001/vacuous?tag="}
+    expect: {status: 200, body: "present"}
+  - request: {port: mock, method: GET, path: "/e2e/deviation-multivalue-empty-operand-001/vacuous"}
+    expect: {status: 404}
+
+  # The name ROADMAP.md published for months is not a WireMock matcher, and the
+  # refusal names the real one rather than leaving the author to hunt for a
+  # misspelling that is not there.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0000058-0000-4000-8000-000000000032",
+         "request": {"method": "GET", "urlPath": "/e2e/deviation-multivalue-empty-operand-001/typo",
+                     "queryParameters": {"tag": {"havingExactly": [{"equalTo": "a"}]}}},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'unknown matcher havingExactly; the operator is hasExactly'

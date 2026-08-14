@@ -17,6 +17,8 @@ import {
   equalToIgnoreCase,
   equalToJson,
   get,
+  hasExactly,
+  includes,
   head,
   JsonUnit,
   jsonUnitRegex,
@@ -207,6 +209,14 @@ describe('the builders against a live server', () => {
           .withQueryParam('dryRun', matching('true|false'))
           .withCookie('session', equalTo('abc'))
           .withFormParam('channel', equalToIgnoreCase('WEB')),
+      ),
+    },
+    {
+      name: 'the multi-value operators on a query parameter and a header',
+      mapping: stubFor(
+        get(urlPathEqualTo('/sdk-builders/sweep/multivalue'))
+          .withQueryParam('tag', hasExactly(equalTo('a'), equalTo('b')))
+          .withHeader('X-Tag', includes(equalTo('a'))),
       ),
     },
     {
@@ -493,6 +503,61 @@ describe('the builders against a live server', () => {
     function call(path: string, init?: RequestInit): Promise<Response> {
       return fetch(server.mockUrl + path, init);
     }
+
+    it('applies hasExactly and includes to a repeated query parameter', async () => {
+      const url = '/sdk-builders/multivalue/tags';
+      await registerTagged(
+        stubFor(
+          get(urlPathEqualTo(url))
+            .withQueryParam('tag', hasExactly(equalTo('a'), equalTo('b')))
+            .willReturn(aResponse().withStatus(200).withBody('exactly two')),
+        ),
+      );
+
+      expect((await call(`${url}?tag=a&tag=b`)).status).toBe(200);
+      // Order is not significant: the operators quantify over a set.
+      expect((await call(`${url}?tag=b&tag=a`)).status).toBe(200);
+      // One value too many, and one too few.
+      expect((await call(`${url}?tag=a&tag=b&tag=c`)).status).toBe(404);
+      expect((await call(`${url}?tag=a`)).status).toBe(404);
+      // The right count, but nothing satisfies the second operand.
+      expect((await call(`${url}?tag=a&tag=a`)).status).toBe(404);
+
+      const loose = '/sdk-builders/multivalue/loose';
+      await registerTagged(
+        stubFor(
+          get(urlPathEqualTo(loose))
+            .withQueryParam('tag', includes(equalTo('a')))
+            .willReturn(aResponse().withStatus(200).withBody('includes a')),
+        ),
+      );
+
+      expect((await call(`${loose}?tag=a`)).status).toBe(200);
+      // includes tolerates values it did not name.
+      expect((await call(`${loose}?tag=a&tag=b`)).status).toBe(200);
+      expect((await call(`${loose}?tag=b`)).status).toBe(404);
+      // An absent key satisfies neither operator.
+      expect((await call(loose)).status).toBe(404);
+    });
+
+    it('does not pair operands with distinct values', async () => {
+      // The rule is a size test plus "every operand satisfied by some value",
+      // not a bijection. `b1` satisfies neither operand and is tolerated,
+      // because the key carries two values and the criterion names two operands.
+      // WireMock's behaviour reproduced; the intuitive reading refuses it.
+      const url = '/sdk-builders/multivalue/bijection';
+      await registerTagged(
+        stubFor(
+          get(urlPathEqualTo(url))
+            .withQueryParam('tag', hasExactly(matching('a.*'), matching('a.*')))
+            .willReturn(aResponse().withStatus(200).withBody('tolerated')),
+        ),
+      );
+
+      const res = await call(`${url}?tag=a1&tag=b1`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('tolerated');
+    });
 
     it('matches on a header, a query parameter, a cookie and a form field at once', async () => {
       const url = '/sdk-builders/keys/order';

@@ -8,6 +8,53 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
+## [Unreleased]
+
+### 1.2.0 (in progress)
+
+A small release: one compatibility gap closes, one extension arrives, one
+configuration preset. Nothing here changes the behaviour of a stub that
+registers today — the operators are a `422` becoming supported, which SPEC §22.5
+allows a minor to do, and the rest is additive.
+
+### Added
+
+- **`hasExactly` and `includes`**, the multi-value operators on repeated query
+  parameters and headers. `includes(M)` holds when every operand is satisfied by
+  some value; `hasExactly(M)` adds a size equality. **Values are not consumed**,
+  so `hasExactly` with two `a.*` operands matches `?tag=a1&tag=b1` even though
+  `b1` satisfies neither — the count is right and both operands found `a1`. That
+  is WireMock's rule reproduced; pairing operands with distinct values is the
+  intuitive reading and the wrong one. Legal only as the whole criterion for a
+  `queryParameters` or `headers` entry, as on WireMock. Typed in the SDK as
+  `hasExactly()` and `includes()`, where every placement rule is a compile error
+  rather than a `422`.
+- **`POST /__admin/mockulus/validate`** (SPEC §5.7.2) — submit a
+  `{"mappings": [...]}` document and get back, without registering anything,
+  the refusals a real import would produce: a verdict per mapping and, separately,
+  whether the batch would import at all, since import is atomic. The errors are
+  the registrar's own, produced by the same validation, so the report cannot
+  drift from what registration does. Reachable as `client.mockulus.validate`
+  (and `client.mappings.validate`), and from the admin UI's import panel as
+  *Check without writing*. A mockulus extension: WireMock answers `404` for the
+  whole namespace.
+- **`profile: local`**, presetting `store: memory` and `journal_enabled: true`
+  for a laptop or single-pod CI run. It presets defaults, so an explicit key
+  still wins, and it changes none of the §5.5 deviations — a stub behaves the
+  same locally as in the cluster.
+
+### Changed
+
+- Deviation **#58**: `hasExactly: []` is refused at registration. A present key
+  carries at least one value, so a criterion demanding zero can never match;
+  WireMock registers such a stub and never serves it. `includes: []` is *not*
+  refused — it is vacuous rather than inert, holding for any present key.
+- `havingExactly` now earns a targeted refusal naming `hasExactly`. It was never
+  a WireMock matcher, but `ROADMAP.md` published it as one until this release.
+- `mockulusctl` (ROADMAP 3.3) is **rejected** rather than deferred. Its one
+  valuable command is the validate endpoint above; the rest duplicated the admin
+  API.
+
 ## [1.1.0] - 2026-08-03
 
 Two compatibility gaps close and two surfaces of mockulus' own arrive.

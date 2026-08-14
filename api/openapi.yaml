@@ -318,6 +318,70 @@ paths:
         '503':
           $ref: '#/components/responses/StoreUnavailable'
 
+  /__admin/mockulus/validate:
+    post:
+      tags: [mockulus]
+      operationId: validateStubMappings
+      summary: Report what a mappings set would do, without registering it.
+      description: >-
+        Takes the same envelope `POST /__admin/mappings/import` takes and answers what that import
+        would have refused. Nothing is written: no document, no snapshot rebuild, no epoch change,
+        no journal entry.
+
+
+        **A refused mapping is this endpoint's payload, not its failure**, so a batch in which every
+        mapping is invalid still answers 200. A 422 would force every caller to read an ordinary
+        result out of an error path, and would make a partial report unreadable. The non-2xx answers
+        below are the ones any admin endpoint has.
+
+
+        Two verdicts are reported because one would mislead. `results` carries a verdict per mapping;
+        `wouldImport` carries the verdict for the batch, and is false whenever any mapping is invalid
+        — import is atomic, so one bad mapping in fifty writes nothing at all, and a per-mapping list
+        alone would read as "mostly fine".
+
+
+        Each element of `errors` is exactly what a real registration would have returned for that
+        mapping: same code, same title, same detail, same JSON pointer. The endpoint calls the
+        registrar's own validation rather than reimplementing it, because a validator that can
+        disagree with the registrar is worse than none — it is believed.
+
+
+        Nothing here reads the store, so it answers normally while the deployment is degraded.
+        Assessing a mappings file is exactly the sort of thing somebody does during an outage.
+
+
+        This is a mockulus extension (SPEC §5.7). WireMock has no equivalent and answers 404 for
+        this path, so nothing here is a compatibility claim and no WireMock-compatible client can
+        depend on it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StubMappingImport'
+      responses:
+        '200':
+          description: >-
+            The set was examined. Read `wouldImport` for whether the batch would import at all, and
+            `results` for why not.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          description: >-
+            The envelope itself could not be read — malformed JSON, or no `mappings` array. This is
+            not the answer for invalid *mappings*, which are reported inside a 200.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+
   /__admin/mappings/import:
     post:
       tags: [mappings]
@@ -1775,6 +1839,119 @@ components:
             why it is declared here rather than on a separate type.
       additionalProperties: false
 
+    ValidationReport:
+      title: Validation report
+      description: >-
+        What `POST /__admin/mappings/import` would have refused for this batch. `valid` is the
+        conjunction over `results`; `wouldImport` is the batch verdict and is false whenever any
+        mapping is invalid, because import is atomic. They are reported separately rather than one
+        inferred from the other because they answer different questions, and only the second is the
+        one a caller about to run an import is asking.
+      type: object
+      required: [valid, wouldImport, summary, results]
+      additionalProperties: false
+      properties:
+        valid:
+          type: boolean
+          description: Every mapping in the batch is registrable.
+        wouldImport:
+          type: boolean
+          description: >-
+            Whether an import of this batch would write anything. False whenever any mapping is
+            invalid.
+        summary:
+          type: object
+          required: [total, valid, invalid]
+          additionalProperties: false
+          properties:
+            total:
+              type: integer
+              minimum: 0
+            valid:
+              type: integer
+              minimum: 0
+            invalid:
+              type: integer
+              minimum: 0
+        results:
+          type: array
+          description: One entry per submitted mapping, in request order.
+          items:
+            type: object
+            required: [index, valid]
+            additionalProperties: false
+            properties:
+              index:
+                type: integer
+                minimum: 0
+                description: >-
+                  Position in the submitted array. This is how a caller joins a result back onto its
+                  input — `id` is not always present, and content is not a key.
+              id:
+                type: string
+                description: Present only for a mapping that carried an id of its own.
+              valid:
+                type: boolean
+              errors:
+                type: array
+                description: >-
+                  Exactly what a real registration would have answered for this mapping. Absent when
+                  `valid` is true.
+                items:
+                  $ref: '#/components/schemas/Error'
+
+    MultiValueCriterion:
+      title: Multi-value criterion
+      description: >-
+        `hasExactly` or `includes`: a criterion over the whole set of a key's values rather than over
+        one of them. Valid **only** as the entire criterion for a `queryParameters` or `headers`
+        entry — WireMock models these as a pattern type of their own, so one nested in a combinator,
+        used in `bodyPatterns` or on `cookies`, or written beside any sibling key is refused there
+        and here.
+
+
+        `includes` holds when every operand is satisfied by **some** value of the key. `hasExactly`
+        adds a size equality: the key must carry exactly as many values as there are operands.
+        Values are **not consumed** by an operand, so a value satisfying no operand at all is
+        tolerated when the count is right — `hasExactly` with two `a.*` operands matches
+        `?tag=a1&tag=b1`, because both operands are satisfied by `a1` and the list is two long. That
+        is WireMock's rule reproduced; pairing operands with distinct values is the intuitive
+        reading and the wrong one.
+
+
+        An absent key satisfies neither operator. `includes: []` is vacuous and holds for any key
+        that is present, which makes it a presence assertion; `hasExactly: []` is refused, because a
+        present key always carries at least one value and so nothing could ever satisfy it
+        (deviation #58).
+      type: object
+      minProperties: 1
+      maxProperties: 1
+      properties:
+        hasExactly:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentMatcher'
+          description: >-
+            Every operand satisfied by some value, and exactly as many values as operands. Operands
+            are matcher documents, not bare strings.
+        includes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentMatcher'
+          description: Every operand satisfied by some value. Extra values are allowed.
+      additionalProperties: false
+
+    KeyCriterion:
+      title: Key criterion
+      description: >-
+        The criterion for one query parameter or header: either an ordinary matcher applied to the
+        key's values under the any-of rule, or one of the multi-value operators that quantifies over
+        the whole list. They are alternatives, not a union of members — a key carrying a multi-value
+        operator takes nothing else alongside it.
+      oneOf:
+        - $ref: '#/components/schemas/ContentMatcher'
+        - $ref: '#/components/schemas/MultiValueCriterion'
+
     JsonPathCriterion:
       title: JSONPath criterion
       description: >-
@@ -1928,7 +2105,7 @@ components:
             satisfies the matcher; `?x=` and a bare `?x` are both present-with-empty-string, never
             absent. Use `{"absent": true}` for "must not be present".
           additionalProperties:
-            $ref: '#/components/schemas/ContentMatcher'
+            $ref: '#/components/schemas/KeyCriterion'
         headers:
           type: object
           description: >-
@@ -1938,7 +2115,7 @@ components:
             edit distance and matches that one, so mockulus matches strictly more here and no suite
             that passes on WireMock can fail on this (deviation #29).
           additionalProperties:
-            $ref: '#/components/schemas/ContentMatcher'
+            $ref: '#/components/schemas/KeyCriterion'
         cookies:
           type: object
           description: A matcher per cookie name.

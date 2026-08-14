@@ -131,19 +131,19 @@ what makes the Evidence column worth reading.
 
 | | Count |
 |---|---:|
-| WireMock surface — supported | 73 |
+| WireMock surface — supported | 74 |
 | WireMock surface — supported with a documented deviation | 9 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
-| Deliberate deviations from WireMock | 57 |
-| Catalogued behaviors in total | 231 |
+| Deliberate deviations from WireMock | 58 |
+| Catalogued behaviors in total | 235 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 591 |
-| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 394 |
-| … `wm: n/a` — expectations from the spec | 197 |
+| E2E corpus cases | 597 |
+| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 397 |
+| … `wm: n/a` — expectations from the spec | 200 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
-Milestone cursor `M7`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
+Milestone cursor `M8`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
 verified cases as a v1.0 release criterion.
 
 Every catalogued behavior is bound by at least one case. The E2E gate fails when that stops being true (SPEC §19.2).
@@ -159,7 +159,7 @@ Every catalogued behavior is bound by at least one case. The E2E gate fails when
 | `/__admin/recordings/**`, `/__admin/proxy/**`, `/__admin/certificates/**`, `/__admin/mappings/unmatched`* | ❌ | `B-ADMIN-RECORDINGS-PROXY-CERTIFICATES-MAPPINGS-UNMATCHED` | 404 + error body `{"errors":[{code:1001,...}]}` linking ROADMAP.md |
 | `postServeActions` | ❌ 422 | `B-STUB-POSTSERVEACTIONS` | Webhooks deferred |
 | `multipartPatterns` | ❌ 422 | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
-| `customMatcher`, `hasExactly`/`includes` multi-value ops | ❌ 422 | `B-REQ-CUSTOMMATCHER-HASEXACTLY-INCLUDES-MULTI-VALUE-OPS` | Roadmap |
+| `customMatcher` | ❌ 422 | `B-REQ-CUSTOMMATCHER` | Roadmap |
 | `equalToXml`, `matchesXPath` | ❌ 422 | `B-MATCH-EQUALTOXML-MATCHESXPATH` | Roadmap |
 | `proxyBaseUrl`, `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` | ❌ 422 | `B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR` | Roadmap (proxy mode) |
 | `fromConfiguredStub`, `additionalHeaders` (proxy-related) | ❌ 422 | `B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED` | — |
@@ -224,7 +224,7 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 
 ### Stub mapping — `request`
 
-[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 14 behaviors
+[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 15 behaviors
 
 | Field | v1 | Evidence | Behavior | Notes |
 |---|---|---|---|---|
@@ -241,7 +241,8 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 | `basicAuthCredentials` | ✅ | 1 · verified | `B-REQ-BASICAUTHCREDENTIALS` | Sugar over `Authorization` |
 | `bodyPatterns` | ✅ | 52 · verified | `B-REQ-BODYPATTERNS` | All listed patterns must match (AND). Matchers below |
 | `multipartPatterns` | ❌ 422 | 1 · n/a | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
-| `customMatcher`, `hasExactly`/`includes` multi-value ops | ❌ 422 | 1 · n/a | `B-REQ-CUSTOMMATCHER-HASEXACTLY-INCLUDES-MULTI-VALUE-OPS` | Roadmap |
+| `customMatcher` | ❌ 422 | 1 · n/a | `B-REQ-CUSTOMMATCHER` | Roadmap |
+| `hasExactly`, `includes` (multi-value operators) | ✅ | 4 · verified | `B-REQ-MULTI-VALUE-OPERATORS` | Only as the **sole** key of a criterion directly under `queryParameters` or `headers` — refused inside a combinator, in `bodyPatterns`, on `cookies`, and beside any sibling key, all of which WireMock refuses too. Operands are matcher documents, not bare strings; any single-value matcher is allowed. `includes(M)` holds when every operand is satisfied by **some** value; `hasExactly(M)` adds `len(values) == len(M)`. **Values are not consumed** — `hasExactly [matches "a.*", matches "a.*"]` matches `?tag=a1&tag=b1`, because the count is right and both operands are satisfied by `a1`, while `b1` satisfies neither and is tolerated. That is WireMock's rule, reproduced; a bijection is the intuitive reading and the wrong one. An absent key satisfies neither operator. `includes: []` is vacuous and holds for any present key; `hasExactly: []` is refused (deviation #58) |
 
 ### Content matchers
 
@@ -303,7 +304,7 @@ The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt
 
 ## Deliberate deviations
 
-[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 57 deviations
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 58 deviations
 
 The complete list — every place a request that WireMock would accept is answered
 differently here, or refused. Each is deliberate and, where it makes sense, has a
@@ -538,6 +539,10 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 > `B-DEV-DEVIATION-57` · 1 case · wm: n/a · a $ref cycle is answered rather than returning a server error
 
+**58.** **`hasExactly: []` is refused** (WM: registers, never matches). A key that is present carries at least one value, so a criterion demanding zero of them cannot be satisfied by any request — the stub registers on WireMock and is never served, with nothing to say why. Refusing it at registration is P3 and the same call §5.5 already makes for a date-time operand that can never match (#49) and a truncation parameter that cannot take effect (#50). `includes: []` is **not** refused: it is vacuous rather than inert, holding for any present key, which is a reachable meaning and one WireMock serves.
+
+> `B-DEV-58` · 1 case · wm: n/a · hasExactly [] is refused at registration because no request can satisfy it, while includes [] registers and holds for any present key
+
 ## Beyond the WireMock surface
 
 A single-node oracle has nothing to diff these against: an operational contract
@@ -584,12 +589,13 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 
 ### Configuration keys
 
-[SPEC §13](../SPEC.md#13-configuration-reference) · 44 behaviors
+[SPEC §13](../SPEC.md#13-configuration-reference) · 45 behaviors
 
 Precedence is env var > YAML file > default; the env spelling is `MOCKULUS_` plus the key in upper snake case.
 
 | Key | Default | Evidence | Behavior | Notes |
 |---|---|---|---|---|
+| `profile` | — | 1 · n/a | `B-CFG-PROFILE` | `local` presets a single-process setup (`store: memory`, `journal_enabled: true`); empty applies nothing |
 | `port` | `8080` | 1 · verified | `B-CFG-PORT` | Mock listener (`0` binds an ephemeral port) |
 | `admin_port` | `9090` | 1 · n/a | `B-CFG-ADMIN-PORT` | Admin/ops listener (`0` binds an ephemeral port) |
 | `admin_on_mock_port` | `true` | 2 · verified | `B-CFG-ADMIN-ON-MOCK-PORT` | Serve `/__admin` on the mock port (compat) |

@@ -63,6 +63,7 @@ export type {
   LoggedRequest,
   LoggedRequestList,
   MatchResult,
+  MultiValueCriterion,
   NearMiss,
   NearMissList,
   RemovedServeEvents,
@@ -78,5 +79,6 @@ export type {
   StubMapping,
   StubMappingImport,
   StubMappingList,
+  ValidationReport,
   VersionInfo,
 } from './types.js';

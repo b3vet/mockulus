@@ -95,6 +95,21 @@ behaviors:
     evidence: "OVERWRITE replaces in place while IGNORE leaves the existing stub, and deleteAllNotInImport removes the rest"
     evidence_tokens: ["/__admin/mappings/import", "duplicatePolicy"]
     status: "ok"
+  # The first operation in the reserved /__admin/mockulus/** namespace. It is
+  # catalogued here beside the WireMock-compatible surface because the contract
+  # describes both and contract-lint checks both, but it takes no part in the
+  # differential lane of §5.6 — there is no oracle answer to diff a mockulus
+  # extension against.
+  - id: "B-ADMIN-MOCKULUS-VALIDATE-POST"
+    spec_row: "spec:5.7:mockulus-endpoints|POST /__admin/mockulus/validate"
+    spec_hash: "cbc00eeb8cb1c8cc"
+    spec: "#572-dry-run-validation"
+    kind: "functional"
+    impl_milestone: "M8"
+    summary: "POST /__admin/mockulus/validate"
+    evidence: "a mixed batch answers 200 with a verdict per mapping and wouldImport false, nothing is written, and the errors match what a real registration answers for the same document"
+    evidence_tokens: ["/__admin/mockulus/validate", "wouldImport"]
+    status: "ok"
   - id: "B-ADMIN-MAPPINGS-FIND-BY-METADATA-POST"
     spec_row: "spec:5.1:admin-endpoints|POST /__admin/mappings/find-by-metadata"
     spec_hash: "fbc33d39a59b540a"

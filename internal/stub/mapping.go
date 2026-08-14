@@ -66,12 +66,18 @@ type TemplateCompiler func(source string) (*handlebars.Template, error)
 // allowContent admits the byte-oriented matchers. They compare the subject's
 // raw bytes, which only means something where the subject is a body, so a
 // criterion over a header or a query parameter is compiled without them.
-func (o Options) matcherOptions(allowContent bool) matchers.Options {
+// allowMultiValue admits `hasExactly` and `includes`. They quantify over a key's
+// whole value list, so they are only offered where a key can carry several
+// values and WireMock accepts them: queryParameters and headers. Cookies are a
+// supported section that refuses them there, and that refusal is mirrored rather
+// than reasoned about — it was probed.
+func (o Options) matcherOptions(allowContent, allowMultiValue bool) matchers.Options {
 	return matchers.Options{
 		CompileRegex:         o.CompileRegex,
 		CompileJSONPath:      o.CompileJSONPath,
 		CompileSchema:        o.CompileSchema,
 		AllowContentPatterns: allowContent,
+		AllowMultiValue:      allowMultiValue,
 	}
 }
 
@@ -327,11 +333,11 @@ func parseRequest(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledStu
 	parseMethod(errs, doc, cs)
 	parseURL(errs, doc, cs, opts)
 
-	cs.Headers = parseKeyCriteria(errs, doc, "headers", "/request/headers", opts)
-	cs.Query = parseKeyCriteria(errs, doc, "queryParameters", "/request/queryParameters", opts)
-	cs.Cookies = parseKeyCriteria(errs, doc, "cookies", "/request/cookies", opts)
-	cs.Form = parseKeyCriteria(errs, doc, "formParameters", "/request/formParameters", opts)
-	cs.PathParams = parseKeyCriteria(errs, doc, "pathParameters", "/request/pathParameters", opts)
+	cs.Headers = parseKeyCriteria(errs, doc, "headers", "/request/headers", opts, true)
+	cs.Query = parseKeyCriteria(errs, doc, "queryParameters", "/request/queryParameters", opts, true)
+	cs.Cookies = parseKeyCriteria(errs, doc, "cookies", "/request/cookies", opts, false)
+	cs.Form = parseKeyCriteria(errs, doc, "formParameters", "/request/formParameters", opts, false)
+	cs.PathParams = parseKeyCriteria(errs, doc, "pathParameters", "/request/pathParameters", opts, false)
 
 	parseBasicAuth(errs, doc, cs)
 	parseBodyPatterns(errs, doc, cs, opts)
@@ -462,7 +468,7 @@ func validatePathParamNames(errs *wmcompat.ErrorList, cs *CompiledStub) {
 }
 
 func parseKeyCriteria(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
-	field, pointer string, opts Options) []KeyCriterion {
+	field, pointer string, opts Options, allowMultiValue bool) []KeyCriterion {
 
 	raw, ok := doc[field]
 	if !ok {
@@ -476,7 +482,8 @@ func parseKeyCriteria(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 
 	out := make([]KeyCriterion, 0, len(entries))
 	for _, name := range sortedKeys(entries) {
-		m, problems := matchers.Compile(entries[name], pointer+"/"+name, opts.matcherOptions(false))
+		m, problems := matchers.Compile(entries[name], pointer+"/"+name,
+			opts.matcherOptions(false, allowMultiValue))
 		if len(problems) > 0 {
 			addMatcherProblems(errs, problems)
 			continue
@@ -524,7 +531,7 @@ func parseBodyPatterns(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 
 	for i, item := range items {
 		m, problems := matchers.Compile(item, fmt.Sprintf("/request/bodyPatterns/%d", i),
-			opts.matcherOptions(true))
+			opts.matcherOptions(true, false))
 		if len(problems) > 0 {
 			addMatcherProblems(errs, problems)
 			continue

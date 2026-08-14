@@ -283,7 +283,8 @@ Top level:
 | `basicAuthCredentials` | ✅ | Sugar over `Authorization` |
 | `bodyPatterns` | ✅ | All listed patterns must match (AND). Matchers below |
 | `multipartPatterns` | ❌ 422 | Roadmap |
-| `customMatcher`, `hasExactly`/`includes` multi-value ops | ❌ 422 | Roadmap |
+| `customMatcher` | ❌ 422 | Roadmap |
+| `hasExactly`, `includes` (multi-value operators) | ✅ | Only as the **sole** key of a criterion directly under `queryParameters` or `headers` — refused inside a combinator, in `bodyPatterns`, on `cookies`, and beside any sibling key, all of which WireMock refuses too. Operands are matcher documents, not bare strings; any single-value matcher is allowed. `includes(M)` holds when every operand is satisfied by **some** value; `hasExactly(M)` adds `len(values) == len(M)`. **Values are not consumed** — `hasExactly [matches "a.*", matches "a.*"]` matches `?tag=a1&tag=b1`, because the count is right and both operands are satisfied by `a1`, while `b1` satisfies neither and is tolerated. That is WireMock's rule, reproduced; a bijection is the intuitive reading and the wrong one. An absent key satisfies neither operator. `includes: []` is vacuous and holds for any present key; `hasExactly: []` is refused (deviation #58) |
 
 Content matchers (used in `bodyPatterns`, and as values in `headers`/`queryParameters`/`cookies`/`pathParameters`/`formParameters`, and by verification criteria & find-by-metadata):
 
@@ -393,6 +394,8 @@ Every deviation is deliberate, documented here, and (where sensible) has a confi
 56. A **JSON Schema that does not compile is refused 422** with code 1006, and so is a `schemaVersion` outside the five accepted spellings, an unrecognised `$schema` URI, and a `$ref` that points anywhere but inside the document. WireMock validates only that the operand is JSON: `{"type":"banana"}` and a dangling `$ref` register there and then match nothing ever, a bare `42` registers and matches *everything*, an unrecognised `$schema` silently poisons the whole matcher, and an unresolvable `$ref` aborts the evaluation with no error text anywhere in the response. Every one of those is a stub that looks like a criterion and is not one. The remote-`$ref` refusal in particular closes no network hole — WireMock never fetches, which was established rather than assumed — it converts a silent, undiagnosable no-match into a message naming the field, at the cost that WireMock's failure is *lazy*, so a stub whose bad reference sits under a property no request carries works there and is refused here.
 57. A **`$ref` cycle that consumes no instance is answered rather than crashing**. WireMock registers such a stub and then returns 500 with a `StackOverflowError` on the first matching request — `{"$ref":"#"}` is enough, as are the mutual and `allOf` forms. Ours compiles them: a cycle with no escape is unsatisfiable, so nothing matches it, and a cycle with an escape branch resolves through it normally. No stub WireMock accepts is refused on this account, so the difference is only that a request answered with a server error there is answered here.
 
+58. **`hasExactly: []` is refused** (WM: registers, never matches). A key that is present carries at least one value, so a criterion demanding zero of them cannot be satisfied by any request — the stub registers on WireMock and is never served, with nothing to say why. Refusing it at registration is P3 and the same call §5.5 already makes for a date-time operand that can never match (#49) and a truncation parameter that cannot take effect (#50). `includes: []` is **not** refused: it is vacuous rather than inert, holding for any present key, which is a reachable meaning and one WireMock serves.
+
 ### 5.6 Differential compatibility verification (the compat tiebreaker)
 
 Compatibility truth is established **differentially**: the same operations run against pinned WM and mockulus, outcomes diffed. This is implemented as topology **T5 of the E2E harness** (§19) — one corpus, one runner; there is no separate compat rig:
@@ -445,6 +448,52 @@ That pair is the load-bearing security behavior of this section and it is pinned
 **Configuration.** `ui_enabled` (§13), default `true`. The UI is the reason to ship one, so it is on by default; a deployment that wants the surface gone rather than merely unused sets it to `false` and the routes stop existing.
 
 **What the UI is not.** It is an in-cluster and port-forward tool. The admin listener has no TLS (§12.1 — TLS is mock-port-only), so exposing it beyond a cluster boundary is an ingress decision, not a mockulus one, and §15.2 says so.
+
+#### 5.7.2 Dry-run validation
+
+**`POST /__admin/mockulus/validate`** answers what a mappings set *would* do if it were registered, and registers nothing.
+
+It exists because the cost of finding out today is a deployment. A team holding a WireMock mappings directory has one question before it commits to anything — how much of this is inside the subset — and §5.1 offers only two ways to ask: register the stubs and read the refusals, or read `docs/compatibility.md` and check by hand. The first mutates a deployment that may be shared; the second is a person doing what a program can.
+
+Endpoints:
+
+| Endpoint | v1 | Notes |
+|---|---|---|
+| `POST /__admin/mockulus/validate` | ✅ | Reports what an import of the submitted batch would refuse, and writes nothing. Always `200` when the envelope is readable — a refused mapping is the payload, not a failure. Reports a verdict per mapping and, separately, whether the batch would import at all, because import is atomic. Errors are the registrar's own, produced by the same validation. Reads no store, so it answers while degraded |
+
+**Request.** The same `{"mappings": [...]}` envelope `POST /__admin/mappings/import` accepts, so a file that can be imported can be validated without being edited first. A bare array is not accepted, because import does not accept one either.
+
+**Effects.** None. No document is written, no snapshot is rebuilt, the epoch does not move, and the request journal does not record the mappings that were examined. Two concurrent validations of contradictory sets cannot interfere, because neither touches state.
+
+**Answer.** `200` — always, when the request itself is well-formed:
+
+```json
+{
+  "valid": false,
+  "wouldImport": false,
+  "summary": { "total": 3, "valid": 2, "invalid": 1 },
+  "results": [
+    { "index": 0, "id": "8f1c…", "valid": true },
+    { "index": 1, "valid": false,
+      "errors": [ { "code": 1002, "title": "Unsupported feature",
+                    "detail": "equalToXml is not supported in mockulus v1 — see ROADMAP.md",
+                    "source": { "pointer": "/request/bodyPatterns/0/equalToXml" } } ] },
+    { "index": 2, "id": "2b90…", "valid": true }
+  ]
+}
+```
+
+**A refused mapping is this endpoint's payload, not its failure.** The call succeeded: it was asked what would happen and it said. Answering `422` would make every caller wrap an ordinary result in an error path to read it, and would make a partial report unreadable — which is the opposite of what a report is for. The endpoint answers non-2xx only for the reasons any admin endpoint does: an unparseable body, a missing envelope, a failed token check (§17).
+
+**Two verdicts, because one would mislead.** `results` carries a verdict per mapping. `wouldImport` carries the verdict for the batch, and is `false` whenever any mapping is invalid — because import is atomic (§5.1, deviation #21): one bad mapping in fifty writes nothing at all. A report that listed only per-mapping results would let a reader count forty-nine passes and conclude the file was mostly fine, when importing it would produce an empty deployment. `valid` is the conjunction over `results` and is stated separately from `wouldImport` so that the two never have to be inferred from each other.
+
+**The errors are the registrar's own.** Each element of `errors` is exactly the element `POST /__admin/mappings` would have put in its `422` envelope — same code from Appendix B, same title, same detail, same JSON pointer. This is a constraint on the implementation and not only on the wire format: the endpoint calls the same validation path, and does not reimplement it. **A validator that can disagree with the registrar is worse than no validator**, because it is believed. One corpus case pins the agreement directly: a mapping this endpoint reports invalid is refused by a real registration with the same codes and the same pointers.
+
+**Ordering and identity.** `results` is in request order and `index` is the position in the submitted array, so a caller can join the report back onto its input without matching on content. `id` is present only for a mapping that carries one or would be assigned one deterministically; a caller must not depend on it to identify a result — that is what `index` is for.
+
+**Not a compatibility claim.** WireMock has no such endpoint. Under §5.7 rule 1 nothing may depend on it, and under rule 2 it could not have lived anywhere else. It takes no part in the differential lane of §5.6: there is no oracle answer to diff against, and a case asserting one would be asserting our own invention.
+
+**Scope.** It reports what registration would refuse. It does not report the **deviations of §5.5** — the places a mapping registers successfully and then behaves differently from WireMock. That is a strictly larger surface and a different question, and answering it here would let a clean report be read as "this mappings set behaves identically", which is not what it would mean.
 
 ---
 
@@ -809,6 +858,7 @@ Precedence: **env var > YAML file (`--config` / `MOCKULUS_CONFIG`) > default**. 
 
 | Key (yaml) | Default | Description |
 |---|---|---|
+| `profile` | — | `local` presets a single-process setup (`store: memory`, `journal_enabled: true`); empty applies nothing |
 | `port` | `8080` | Mock listener (`0` binds an ephemeral port) |
 | `admin_port` | `9090` | Admin/ops listener (`0` binds an ephemeral port) |
 | `admin_on_mock_port` | `true` | Serve `/__admin` on the mock port (compat) |

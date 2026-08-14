@@ -30,7 +30,7 @@
  * stub these builders produce means the same thing on both servers.
  */
 
-import type { ContentMatcher } from '../types.js';
+import type { ContentMatcher, MultiValueCriterion } from '../types.js';
 import { asBase64 } from './base64.js';
 
 /**
@@ -76,6 +76,24 @@ export interface BodyOnlyMatcher extends ContentMatcher {
 
 /** What a `bodyPatterns` entry may be: any matcher, plus the byte-oriented one. */
 export type BodyPattern = Matcher | BodyOnlyMatcher;
+
+/**
+ * A criterion accepted only as the whole value of a `queryParameters` or
+ * `headers` entry.
+ *
+ * The mirror of {@link BodyOnlyMatcher}: `hasExactly` and `includes` quantify
+ * over a key's whole list of values, so there is nothing for them to mean where
+ * a subject carries one value. WireMock models them as a pattern type of their
+ * own and refuses one nested in a combinator, used in `bodyPatterns` or on
+ * `cookies`, or written beside any sibling key — and because it is a type rather
+ * than a member, "beside a sibling" is not expressible here at all.
+ */
+export interface KeyOnlyMatcher extends MultiValueCriterion {
+  readonly [position]: 'key';
+}
+
+/** What a `queryParameters` or `headers` entry may be. */
+export type KeyCriterion = Matcher | KeyOnlyMatcher;
 
 /**
  * The JSON Schema drafts `matchesJsonSchema` compiles under.
@@ -637,4 +655,50 @@ export const JsonUnit = {
  */
 export function jsonUnitRegex(pattern: string): string {
   return `\${json-unit.regex}${pattern}`;
+}
+
+/** {@link anywhere} for the multi-value operators, which nest nowhere. */
+function keyOnly(document: MultiValueCriterion): KeyOnlyMatcher {
+  return document as KeyOnlyMatcher;
+}
+
+/**
+ * Every operand satisfied by some value of the key, and exactly as many values
+ * as operands.
+ *
+ * The size equality is the only thing separating this from {@link includes}.
+ * What it is *not* is a pairing of operands with distinct values: values are
+ * never consumed, so one value may satisfy several operands and a value
+ * satisfying none is tolerated when the count comes out right.
+ *
+ * ```ts
+ * hasExactly(matching('a.*'), matching('a.*'))   // matches ?tag=a1&tag=b1
+ * ```
+ *
+ * `b1` satisfies neither operand there. The list is two long and both operands
+ * are satisfied by `a1`, and that is the whole test. This is WireMock's rule
+ * reproduced rather than chosen — the intuitive reading is a bijection and it is
+ * the wrong one.
+ *
+ * An empty operand list is refused by the server: a key that is present carries
+ * at least one value, so requiring zero of them could never match (deviation
+ * #58). The overload below makes that a compile error instead.
+ */
+export function hasExactly(first: Matcher, ...rest: Matcher[]): KeyOnlyMatcher {
+  return keyOnly({ hasExactly: [first, ...rest] });
+}
+
+/**
+ * Every operand satisfied by some value of the key, with extra values allowed.
+ *
+ * As with {@link hasExactly}, one value may satisfy several operands —
+ * `includes(matching('a.*'), matching('.*1'))` holds for a key carrying only
+ * `a1`.
+ *
+ * Unlike `hasExactly`, the empty form is meaningful: `includes()` asks nothing
+ * of the values and so holds for any key that is *present*, which makes it a
+ * presence assertion. The server accepts it, so it is offered here.
+ */
+export function includes(...operands: Matcher[]): KeyOnlyMatcher {
+  return keyOnly({ includes: operands });
 }

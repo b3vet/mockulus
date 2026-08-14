@@ -225,15 +225,29 @@ behaviors:
     evidence: "422 code 1000 pointing at /request/multipartPatterns"
     evidence_tokens: ["1000", "multipartPatterns"]
     status: "ok"
-  - id: "B-REQ-CUSTOMMATCHER-HASEXACTLY-INCLUDES-MULTI-VALUE-OPS"
-    spec_row: "spec:5.2:stub-request|customMatcher, hasExactly/includes multi-value ops"
-    spec_hash: "2f0c966079a4c39b"
+  - id: "B-REQ-CUSTOMMATCHER"
+    spec_row: "spec:5.2:stub-request|customMatcher"
+    spec_hash: "417415f55494b217"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
     impl_milestone: "M1"
-    summary: "customMatcher, hasExactly/includes multi-value ops"
-    evidence: "422 code 1000 for customMatcher and the extended multi-value operators"
+    summary: "customMatcher"
+    evidence: "422 code 1000 for customMatcher"
     evidence_tokens: ["1000", "customMatcher"]
+    status: "ok"
+  # Split from the entry above in v1.2.0: the multi-value operators became
+  # supported while customMatcher did not, so one row could no longer describe
+  # both. The id here is new rather than inherited, because the behavior it
+  # names is the opposite of what the old one asserted.
+  - id: "B-REQ-MULTI-VALUE-OPERATORS"
+    spec_row: "spec:5.2:stub-request|hasExactly, includes (multi-value operators)"
+    spec_hash: "3f663a970ca0ccd8"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M8"
+    summary: "hasExactly, includes (multi-value operators)"
+    evidence: "includes holds when every operand is satisfied by some value and hasExactly adds a size equality, with values not consumed; both are refused outside a queryParameters or headers criterion and beside any sibling key"
+    evidence_tokens: ["hasExactly", "includes"]
     status: "ok"
   - id: "B-MATCH-EQUALTO-CASEINSENSITIVE"
     spec_row: "spec:5.2:content-matchers|equalTo (+caseInsensitive)"

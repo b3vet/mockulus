@@ -549,6 +549,49 @@ $ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
 201
 ```
 
+### #58 — `hasExactly: []`, which could never match
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/mv1","queryParameters":{"tag":{"hasExactly":[]}}},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/queryParameters/tag/hasExactly"},"title":"Malformed request","detail":"hasExactly [] can never match: a key that is present carries at least one value, so no request satisfies it"}]}
+```
+
+WireMock registers it. `201`, and then the stub is never served, because
+`hasExactly` requires the key to carry exactly as many values as the operand
+list names — and an empty list names none, while a query parameter or header
+that is present carries at least one. There is no request that satisfies it and
+nothing anywhere says so.
+
+That is the accept-and-ignore shape P3 exists to prevent, one step removed: the
+mapping is not partially ignored, it is entirely inert. §5.5 already makes this
+call twice for the same reason — a date-time operand whose spelling can never
+match (#49) and a truncation parameter that cannot take effect (#50) are both
+refused at registration rather than left to be discovered from a test that does
+not go green.
+
+**`includes: []` is not refused**, and the difference is worth stating because
+the two look alike:
+
+```console
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/mv2","queryParameters":{"tag":{"includes":[]}}},"response":{"status":200}}'
+201
+
+$ curl -s -o /dev/null -w '%{http_code}\n' "$MOCK/mv2?tag=anything"
+200
+
+$ curl -s -o /dev/null -w '%{http_code}\n' "$MOCK/mv2"
+404
+```
+
+`includes` asks that every operand be satisfied by some value. An empty operand
+list asks nothing, so it holds for any key that is *present* and fails for one
+that is absent — which is a reachable meaning, and a useful one: it is a
+presence assertion. WireMock serves it exactly this way, so refusing it would
+decline a stub that works there. Inert and vacuous are not the same thing, and
+only the first is refused.
+
 ### #53 — A date-time modifier with no date-time matcher to modify
 
 `actualFormat`, `truncateExpected`, `truncateActual` and `applyTruncationLast`
