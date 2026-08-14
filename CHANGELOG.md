@@ -8,9 +8,7 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
-## [Unreleased]
-
-### 1.2.0 (in progress)
+## [1.2.0] - 2026-08-14
 
 A small release: one compatibility gap closes, one extension arrives, one
 configuration preset. Nothing here changes the behaviour of a stub that
