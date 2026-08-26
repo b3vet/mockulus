@@ -8,6 +8,25 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
+## [Unreleased]
+
+### 1.3.0 (in progress)
+
+The release that closes the request-matching gap: after it the only WireMock
+request matcher mockulus refuses is `customMatcher`, which names a Java class
+and is a stated non-goal. Entries land as their stages do; nothing here is final
+until the tag.
+
+### Added
+
+- `equalToXml` and `matchesXPath`, with the `xPath`, `soapXPath` and `formatXml`
+  template helpers that read the same document. **XML responses were never a
+  gap** — a stub has always served any bytes under any `Content-Type`; what was
+  missing is selecting a stub *by* the XML a caller sent.
+- `multipartPatterns`, the deferred half of ROADMAP 1.5.
+- The `host`, `port` and `scheme` request matchers. They were refused by name in
+  the code and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them.
+
 ## [1.2.0] - 2026-08-14
 
 A small release: one compatibility gap closes, one extension arrives, one
