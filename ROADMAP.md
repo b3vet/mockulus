@@ -12,7 +12,8 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 
 ## Bucket 1 — v1.x candidates (compat gaps with known demand)
 
-### 1.1 XML & XPath matching (`equalToXml`, `matchesXPath`)
+### 1.1 XML & XPath matching (`equalToXml`, `matchesXPath`) — v1.3.0
+- **Scope correction (2026-08-14).** This entry has always described the *matchers* and stopped there, which understates the work by a third and would ship a release branded "XML support" in which `{{xPath …}}` is still refused. Three template helpers — `xPath`, `soapXPath` and `formatXml` — are refused by §10.3's allowlist today and read the same document with the same parser. They belong in this entry and land with it. **XML *responses* are not a gap and never were**: a stub serves any bytes under any `Content-Type`, verified directly. What is missing is selecting a stub *by* the XML a caller sent, and reading values out of it in a template.
 - **What**: structural XML equality (whitespace/attribute-order insensitive) and XPath 1.0 matching, incl. namespaces and WM's `xPath` sub-matcher form; XMLUnit-style ignore placeholders as a stretch.
 - **Why deferred**: bounded but non-trivial (canonicalization corner cases); v1 focused on JSON-first traffic.
 - **Sketch**: pure-Go via `antchfx/xmlquery` + `antchfx/xpath`; canonical form computed at compile time for the expected document; same compile-at-registration discipline (P1/P2 hold — XML parse of request body is lazy and memoized on `ParsedRequest` like JSON). New matchers slot into `internal/matchers` with zero engine changes.
@@ -34,10 +35,17 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 - **Depends on**: nothing. **Size**: S.
 
 ### 1.5 Multipart matching + extended multi-value operators
+- **Multipart is scheduled for v1.3.0** alongside XML (decision 2026-08-14), which closes the request-matching surface in one release. The multi-value half shipped in v1.2.0.
 - **Split in v1.2.0.** The multi-value operators are being taken on their own: they are a new mode on an existing `KeyMatcher` with no new body parsing, while `multipartPatterns` needs a lazy MIME parse memoized on `ParsedRequest` and a corpus surface larger than the rest of that release together. Multipart stays here for v1.3.0. **The operator names below are unverified** — SPEC §5.2 records them as `hasExactly`/`includes` and this entry has long said `havingExactly`; both cannot be right, and neither has been probed against the oracle. Establishing which is the first probe of the v1.2.0 work, for the same reason the date/time entry above had to be corrected: this file remembers, and only the oracle knows.
 - **What**: `multipartPatterns`; `havingExactly`/`includes` multi-value query/header operators.
 - **Sketch**: `mime/multipart` lazy parse memoized on `ParsedRequest`; multi-value ops as new `KeyMatcher` modes.
 - **Depends on**: nothing. **Size**: S/M.
+
+### 1.6 `host`, `port` and `scheme` request matchers — v1.3.0
+- **What**: WireMock's three request matchers over the connection rather than the message. They select on the `Host` header, the port the request arrived on, and http vs https, which is what lets one deployment front several virtual hosts and answer differently per origin.
+- **Why it was not here**: an oversight rather than a decision. They are refused by name in `internal/stub` (`deferredFields`) and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them, so nobody could weigh them against anything. Added 2026-08-14 when the remaining gap was enumerated from the spec and the refusal table rather than from this file — which is the second time this document has been the least reliable record of what is missing.
+- **Sketch**: three `KeyMatcher`-shaped criteria over values the request already carries; no new parsing, no hot-path cost beyond a comparison. `scheme` needs the TLS terminator's view rather than the listener's where a proxy fronts the pod (§12.1), which is the only part worth probing.
+- **Depends on**: nothing. **Size**: S.
 
 ---
 
