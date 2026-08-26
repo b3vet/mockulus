@@ -624,7 +624,7 @@ import panel: *Check without writing*.
 
 ## Step 6 — The deviations most likely to change your suite
 
-Mockulus answers differently from WireMock in 58 catalogued places, all of them
+Mockulus answers differently from WireMock in 61 catalogued places, all of them
 listed with their rationale in [Deviations from WireMock](deviations.md). Most
 will never touch you. These are the ones that do.
 

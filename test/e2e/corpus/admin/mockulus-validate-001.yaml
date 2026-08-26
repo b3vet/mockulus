@@ -17,7 +17,7 @@ steps:
            "request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/ok"},
            "response": {"status": 200}},
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/bad",
-                       "bodyPatterns": [{"equalToXml": "<a/>"}]},
+                       "multipartPatterns": [{"name": "part"}]},
            "response": {"status": 200}},
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/ok2"},
            "response": {"status": 200}}
@@ -36,7 +36,7 @@ steps:
             valid: false
             errors:
               - code: 1000
-                source: {pointer: "/request/bodyPatterns/0/equalToXml"}
+                source: {pointer: "/request/multipartPatterns"}
           - index: 2
             valid: true
 
@@ -56,7 +56,7 @@ steps:
       body: |
         {"mappings": [
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/x",
-                       "bodyPatterns": [{"equalToXml": "<a/>"}]},
+                       "multipartPatterns": [{"name": "part"}]},
            "response": {"status": 200}}
         ]}
     expect:
@@ -111,14 +111,17 @@ steps:
   # real registration answers for the same document. A validator that can
   # disagree with the registrar is worse than none, because it is believed. Both
   # halves are asserted on one mapping carrying two independent problems, so the
-  # collect-all property is checked at the same time.
+  # collect-all property is checked at the same time. Both lists are in the
+  # registrar's own order — unknown and deferred *fields* are reported before any
+  # per-field parsing runs — and validate reproducing that order is part of what
+  # "agrees with the registrar" means.
   - admin:
       method: POST
       path: /__admin/mockulus/validate
       body: |
         {"mappings": [
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/agree",
-                       "bodyPatterns": [{"equalToXml": "<a/>"}],
+                       "multipartPatterns": [{"name": "part"}],
                        "cookies": {"c": {"includes": [{"equalTo": "a"}]}}},
            "response": {"status": 200}}
         ]}
@@ -129,27 +132,27 @@ steps:
           - index: 0
             valid: false
             errors:
+              - code: 1000
+                source: {pointer: "/request/multipartPatterns"}
               - code: 10
                 source: {pointer: "/request/cookies/c"}
-              - code: 1000
-                source: {pointer: "/request/bodyPatterns/0/equalToXml"}
 
   - admin:
       method: POST
       path: /__admin/mappings
       body: |
         {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/agree",
-                     "bodyPatterns": [{"equalToXml": "<a/>"}],
+                     "multipartPatterns": [{"name": "part"}],
                      "cookies": {"c": {"includes": [{"equalTo": "a"}]}}},
          "response": {"status": 200}}
     expect:
       status: 422
       body_json_subset:
         errors:
+          - code: 1000
+            source: {pointer: "/request/multipartPatterns"}
           - code: 10
             source: {pointer: "/request/cookies/c"}
-          - code: 1000
-            source: {pointer: "/request/bodyPatterns/0/equalToXml"}
 
   # The namespace stays a contract rather than a catch-all: a path beside the
   # one this endpoint claims is the ordinary unsupported-endpoint 404 (§5.7

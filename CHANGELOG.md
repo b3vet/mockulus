@@ -19,13 +19,28 @@ until the tag.
 
 ### Added
 
-- `equalToXml` and `matchesXPath`, with the `xPath`, `soapXPath` and `formatXml`
-  template helpers that read the same document. **XML responses were never a
-  gap** — a stub has always served any bytes under any `Content-Type`; what was
-  missing is selecting a stub *by* the XML a caller sent.
-- `multipartPatterns`, the deferred half of ROADMAP 1.5.
+- `equalToXml` and `matchesXPath`. **XML responses were never a gap** — a stub
+  has always served any bytes under any `Content-Type`; what was missing is
+  selecting a stub *by* the XML a caller sent. Children are paired by element
+  name, so differently-named siblings compare order-insensitively and same-named
+  ones do not; namespaces compare by URI, and the prefix is a local alias.
 - The `host`, `port` and `scheme` request matchers. They were refused by name in
   the code and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them.
+
+### Changed
+
+- Deviation **#59** and **#60**: an XPath that evaluates to a value rather than
+  selecting nodes (`count(//item) = 2`), and one that does not parse at all, are
+  both refused at registration. WireMock registers either and then never matches,
+  which is the failure that costs an afternoon because the stub looks installed.
+- Deviation **#61**: CDATA and plain text compare equal in `equalToXml`, in both
+  directions. WireMock treats the section itself as significant. The infoset says
+  they are the same text, and this matches strictly *more* than WireMock does, so
+  no suite that passes there can fail here.
+
+Still to land before the tag: the `xPath`, `soapXPath` and `formatXml` template
+helpers that read the same document, and `multipartPatterns` (the deferred half
+of ROADMAP 1.5).
 
 ## [1.2.0] - 2026-08-14
 

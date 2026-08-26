@@ -13,12 +13,14 @@ import {
   equalToDateTime,
   equalToIgnoreCase,
   equalToJson,
+  equalToXml,
   hasExactly,
   includes,
   JsonUnit,
   jsonUnitRegex,
   matching,
   matchingJsonPath,
+  matchingXPath,
   matchingJsonSchema,
   not,
   notContaining,
@@ -304,5 +306,38 @@ describe('the multi-value operators', () => {
     expect(JSON.parse(JSON.stringify(hasExactly(equalTo('a'))))).toEqual({
       hasExactly: [{ equalTo: 'a' }],
     });
+  });
+});
+
+describe('the XML matchers', () => {
+  it('builds equalToXml as the document it was given', () => {
+    expect(equalToXml('<r><x/></r>')).toEqual({ equalToXml: '<r><x/></r>' });
+  });
+
+  it('builds the bare form of matchesXPath as a string', () => {
+    expect(matchingXPath('//item')).toEqual({ matchesXPath: '//item' });
+  });
+
+  it('builds the object form when an inner matcher is given', () => {
+    expect(matchingXPath('//item/@sku', equalTo('B'))).toEqual({
+      matchesXPath: { expression: '//item/@sku', equalTo: 'B' },
+    });
+  });
+
+  it('carries namespace bindings under xPathNamespaces', () => {
+    // The key is xPathNamespaces, not namespaces — probed against WireMock,
+    // because `namespaces` is the one you would reach for and it does not exist.
+    expect(matchingXPath('//n:t/text()', equalTo('v'), { n: 'urn:x' })).toEqual({
+      matchesXPath: { expression: '//n:t/text()', xPathNamespaces: { n: 'urn:x' }, equalTo: 'v' },
+    });
+  });
+
+  it('copies the namespace map rather than aliasing what the caller passed', () => {
+    const ns = { n: 'urn:x' };
+    const built = matchingXPath('//n:t', undefined, ns) as {
+      matchesXPath: { xPathNamespaces: Record<string, string> };
+    };
+    ns.n = 'urn:mutated';
+    expect(built.matchesXPath.xPathNamespaces.n).toBe('urn:x');
   });
 });

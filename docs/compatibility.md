@@ -131,16 +131,16 @@ what makes the Evidence column worth reading.
 
 | | Count |
 |---|---:|
-| WireMock surface — supported | 77 |
+| WireMock surface — supported | 79 |
 | WireMock surface — supported with a documented deviation | 9 |
-| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
-| Deliberate deviations from WireMock | 58 |
-| Catalogued behaviors in total | 238 |
+| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 6 |
+| Deliberate deviations from WireMock | 61 |
+| Catalogued behaviors in total | 242 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 598 |
-| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 397 |
-| … `wm: n/a` — expectations from the spec | 201 |
+| E2E corpus cases | 601 |
+| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 399 |
+| … `wm: n/a` — expectations from the spec | 202 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
 Milestone cursor `M9`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
@@ -152,7 +152,7 @@ Every catalogued behavior is bound by at least one case. The E2E gate fails when
 
 ### What is refused
 
-7 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
+6 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
 
 | Feature | Answer | Behavior | Note |
 |---|---|---|---|
@@ -160,7 +160,6 @@ Every catalogued behavior is bound by at least one case. The E2E gate fails when
 | `postServeActions` | ❌ 422 | `B-STUB-POSTSERVEACTIONS` | Webhooks deferred |
 | `multipartPatterns` | ❌ 422 | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
 | `customMatcher` | ❌ 422 | `B-REQ-CUSTOMMATCHER` | Roadmap |
-| `equalToXml`, `matchesXPath` | ❌ 422 | `B-MATCH-EQUALTOXML-MATCHESXPATH` | Roadmap |
 | `proxyBaseUrl`, `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` | ❌ 422 | `B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR` | Roadmap (proxy mode) |
 | `fromConfiguredStub`, `additionalHeaders` (proxy-related) | ❌ 422 | `B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED` | — |
 
@@ -249,7 +248,7 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 
 ### Content matchers
 
-[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 11 behaviors
+[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 12 behaviors
 
 Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`, `pathParameters` and `formParameters`, and by verification criteria and `find-by-metadata`.
 
@@ -263,7 +262,8 @@ Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`
 | `equalToJson` (+`ignoreArrayOrder`, `ignoreExtraElements`) | ✅ | 40 · verified | `B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS` | Structural JSON equality; numbers compared by value, so `1` equals `1.0`. `ignoreExtraElements` forgives elements the expected document never accounted for in **arrays as well as objects**: positionally those are the ones past the end, so expected `[1,2]` accepts `[1,2,3]` and still refuses `[3,1,2]`, and an actual array *shorter* than the expected one remains a mismatch. `ignoreArrayOrder` gives up the positions and keeps the count; together they are a subset test — each expected element pairs with a distinct actual element, the unclaimed ones are ignored, and duplicates still have to go round (deviation #25). json-unit placeholders are interpreted as WM does: `ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, and `regex` (full match); in an array a placeholder occupies a slot rather than excusing one. An **unrecognised** placeholder is rejected at registration (deviation #5) |
 | `matchesJsonPath`, `doesNotMatchJsonPath` | ✅ | 47 · verified | `B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH` | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. `doesNotMatchJsonPath` negates the whole criterion in either form, so a path that selects nothing satisfies it. JSONPath dialect: §6.7 |
 | `matchesJsonSchema` | 🔶 | 16 · verified | `B-MATCH-MATCHESJSONSCHEMA` | Validates the subject against an embedded JSON Schema, inline or as an escaped string. Draft from `schemaVersion` — exactly `V4`, `V6`, `V7`, `V201909`, `V202012`, defaulting to `V202012` — and a document's own `$schema` overrides that field in both directions. **`format` is asserted only under V4/V6/V7**; 2019-09 and 2020-12 treat it as an annotation, which is the spec's own vocabulary boundary and means the default asserts nothing. `$ref` resolves **within the document only** (`$defs`, `definitions`, JSON pointers, `$anchor`, `$id`); WireMock does not fetch a remote one either, it just fails silently. A subject that is not a JSON document is a non-match. Deviations #55–#57 |
-| `equalToXml`, `matchesXPath` | ❌ 422 | 1 · n/a | `B-MATCH-EQUALTOXML-MATCHESXPATH` | Roadmap |
+| `equalToXml` | ✅ | 2 · verified | `B-MATCH-EQUALTOXML` | Structural, not textual. Attribute order, self-closing-vs-empty, whitespace-only text and indentation are all insignificant; text is compared trimmed. Comments and the XML declaration are ignored; a processing instruction inside the document is **not**. Namespaces compare by URI, so the prefix is a local alias. **Children are paired by element name, and within a name group by document order** — so `<x/><y/>` equals `<y/><x/>` while `<x>1</x><x>2</x>` does not equal `<x>2</x><x>1</x>`. A malformed operand is refused at registration. CDATA and text compare **equal** (deviation #61) |
+| `matchesXPath` | ✅ | 2 · verified | `B-MATCH-MATCHESXPATH` | Bare form holds when the expression selects a non-empty node-set. Object form carries `expression` plus an inner matcher and is **any-of** over the selection — it holds when at least one selected node satisfies the inner matcher, the same rule §5.3 applies to a repeated key — with `xPathNamespaces` binding prefixes used in the expression to URIs. An expression that evaluates to a value rather than a node-set is refused (deviation #59), as is one that does not parse (deviation #60) |
 | `absent` | ✅ | 32 · verified | `B-MATCH-ABSENT` | Key-level matcher |
 | `and`, `or`, `not` | ✅ | 19 · verified | `B-MATCH-AND-OR-NOT` | Combinators over the above |
 
@@ -307,7 +307,7 @@ The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt
 
 ## Deliberate deviations
 
-[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 58 deviations
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 61 deviations
 
 The complete list — every place a request that WireMock would accept is answered
 differently here, or refused. Each is deliberate and, where it makes sense, has a
@@ -368,7 +368,7 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 **14.** Unsupported features → 422/404 with error catalog codes (WM would accept some and behave differently — this is the fail-loud contract, D2).
 
-> `B-DEV-DEVIATION-14` · 7 cases · wm: n/a · an unsupported feature is rejected rather than silently ignored
+> `B-DEV-DEVIATION-14` · 6 cases · wm: n/a · an unsupported feature is rejected rather than silently ignored
 
 **15.** Fault injection is byte-faithful on HTTP/1.1 only; over HTTP/2 faults degrade to a stream reset. h2c is therefore **off by default** (§12.1).
 
@@ -546,6 +546,18 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 > `B-DEV-58` · 1 case · wm: n/a · hasExactly [] is refused at registration because no request can satisfy it, while includes [] registers and holds for any present key
 
+**59.** **An XPath that evaluates to a value rather than selecting nodes is refused** (WM: registers, matches everything). WireMock evaluates `matchesXPath` as a node list, and an expression whose result is a boolean, a number or a string is not one — so `count(//item) = 2` matches a request with one item, and `false()` matches every request. The criterion reads as an assertion and is a no-op, which is the accept-and-ignore shape P3 forbids; the refusal names the shape to write instead. The result kind is a property of the expression and not of the document, so one probe document settles it at registration.
+
+> `B-DEV-59` · 1 case · wm: n/a · an XPath that evaluates to a value rather than selecting nodes is refused at registration
+
+**60.** **A malformed XPath is refused at registration** (WM: registers, never matches). `//[` answers 201 there and then silently matches nothing, so the stub is dead and the mapping says nothing about why. Same call as #59 and as #49, #50 and #58.
+
+> `B-DEV-60` · 1 case · wm: n/a · a malformed XPath is refused at registration rather than registering and never matching
+
+**61.** **CDATA and text compare equal in `equalToXml`** (WM: never equal, in either direction). `<t><![CDATA[v]]></t>` and `<t>v</t>` are the same text in the XML infoset, and only the parser distinguishes them; an author who asked for `v` and was sent `v` has what they asked for. This matches strictly **more** than WireMock, so no suite that passes there fails here.
+
+> `B-DEV-61` · 1 case · wm: n/a · CDATA and text compare equal in equalToXml, in both directions
+
 ## Beyond the WireMock surface
 
 A single-node oracle has nothing to diff these against: an operational contract
@@ -576,7 +588,7 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 |---|---|---|---|---|
 | 10 | 422 | 29 · verified | `B-ERR-10` | Malformed JSON / schema violation (WM parity code, verified) |
 | 109 | 422 | 6 · verified | `B-ERR-109` | Stub id already exists on create (WM parity code) |
-| 1000 | 422 | 8 · n/a | `B-ERR-1000` | Unsupported stub feature (pointer names the field) |
+| 1000 | 422 | 7 · n/a | `B-ERR-1000` | Unsupported stub feature (pointer names the field) |
 | 1001 | 404 | 1 · n/a | `B-ERR-1001` | Unsupported admin endpoint (body links ROADMAP) |
 | 1002 | 422 | 4 · n/a | `B-ERR-1002` | Unknown template helper / template parse error |
 | 1003 | 422 | 5 · n/a | `B-ERR-1003` | Regex does not compile (both engines) |

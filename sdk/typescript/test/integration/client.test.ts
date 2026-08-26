@@ -187,7 +187,12 @@ describe('the client against a live server', () => {
    */
   const unsupportedMapping = (urlPath: string): StubMapping =>
     ({
-      request: { method: 'GET', urlPath, bodyPatterns: [{ equalToXml: '<a/>' }] },
+      // `multipartPatterns`, not `equalToXml`: the latter was this helper's
+      // unsupported feature until v1.3.0 implemented it, at which point these
+      // cases started asserting that a valid mapping is invalid. Whatever is
+      // named here has to be something the server still refuses, so it moves
+      // each time the gap closes — which is the point of the release.
+      request: { method: 'GET', urlPath, multipartPatterns: [{ name: 'x' }] },
       response: { status: 200 },
     }) as unknown as StubMapping;
 
@@ -210,9 +215,7 @@ describe('the client against a live server', () => {
       expect(report.results[0]?.valid).toBe(true);
       expect(report.results[1]?.valid).toBe(false);
       expect(report.results[1]?.errors?.[0]?.code).toBe(ErrorCode.UnsupportedFeature);
-      expect(report.results[1]?.errors?.[0]?.source?.pointer).toBe(
-        '/request/bodyPatterns/0/equalToXml',
-      );
+      expect(report.results[1]?.errors?.[0]?.source?.pointer).toBe('/request/multipartPatterns');
 
       // Nothing was registered, including the mapping that was fine.
       const listed = await client.mappings.list();

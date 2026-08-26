@@ -363,15 +363,29 @@ behaviors:
     evidence: "the subject is validated against the schema, under the draft schemaVersion names or the document's own $schema"
     evidence_tokens: ["matchesJsonSchema", "schemaVersion"]
     status: "ok"
-  - id: "B-MATCH-EQUALTOXML-MATCHESXPATH"
-    spec_row: "spec:5.2:content-matchers|equalToXml, matchesXPath"
-    spec_hash: "1248b108447c64fe"
+  # Split in v1.3.0: the two matchers became supported and each carries its own
+  # semantics now, so one row could no longer describe both. The ids are new
+  # rather than inherited, because what they assert is the opposite of what the
+  # old one did.
+  - id: "B-MATCH-EQUALTOXML"
+    spec_row: "spec:5.2:content-matchers|equalToXml"
+    spec_hash: "1cd2b4ca2935e7e7"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
-    impl_milestone: "M1"
-    summary: "equalToXml, matchesXPath"
-    evidence: "422 code 1000 for equalToXml and matchesXPath"
-    evidence_tokens: ["1000", "matchesXPath"]
+    impl_milestone: "M9"
+    summary: "equalToXml"
+    evidence: "structural comparison: attribute order and whitespace insignificant, namespaces by URI, children paired by name and within a name group by document order, comments ignored and processing instructions significant"
+    evidence_tokens: ["equalToXml", "xml"]
+    status: "ok"
+  - id: "B-MATCH-MATCHESXPATH"
+    spec_row: "spec:5.2:content-matchers|matchesXPath"
+    spec_hash: "466a1960504bb846"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "matchesXPath"
+    evidence: "the bare form holds for a non-empty node-set and the object form is any-of over the selection, with xPathNamespaces binding prefixes"
+    evidence_tokens: ["matchesXPath", "expression"]
     status: "ok"
   - id: "B-MATCH-ABSENT"
     spec_row: "spec:5.2:content-matchers|absent"

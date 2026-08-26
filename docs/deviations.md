@@ -549,6 +549,69 @@ $ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
 201
 ```
 
+### #59, #60 — An XPath that cannot discriminate
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/d59","bodyPatterns":[{"matchesXPath":"count(//item) = 2"}]},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/bodyPatterns/0/matchesXPath"},"title":"Malformed request","detail":"\"count(//item) = 2\" evaluates to a value rather than selecting nodes, so it can never fail to match; write it as a node selection such as \"//item[2]\""}]}
+
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/d60","bodyPatterns":[{"matchesXPath":"//["}]},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/bodyPatterns/0/matchesXPath"},"title":"Malformed request","detail":"\"//[\" is not a valid XPath expression: expression must evaluate to a node-set"}]}
+```
+
+WireMock registers both, and then neither does what it looks like.
+
+`matchesXPath` is evaluated there as a node list. An expression whose result is a
+boolean, a number or a string is not one, and the outcome is that **it matches
+every request**: `count(//item) = 2` holds against a document with one item,
+and `false()` holds against everything. Probed directly — `true()`, `false()`,
+`count(//item) = 999` and `string(//missing)` all answer 200 on the pinned
+version. A criterion that reads as an assertion is a no-op.
+
+A malformed expression is the same shape with a different cause: `//[` answers
+`201` there and then silently selects nothing, so the stub is dead on arrival
+and the stored mapping says nothing about why.
+
+Both are refused here, which is P3 and the call §5.5 already makes at #49, #50
+and #58 — a criterion that provably cannot discriminate is a stub that cannot
+be served, and finding out at registration beats finding out from a suite that
+never goes green. The result kind is a property of the expression rather than of
+the document, so a single probe document settles it without waiting for traffic.
+
+**This is the direction that can block a migration.** A mappings set carrying
+either shape imports on WireMock and is refused here. That is deliberate: the
+alternative is accepting a criterion we know does nothing, and the refusal names
+the node selection to write instead.
+
+### #61 — CDATA is text
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/cd","bodyPatterns":[{"equalToXml":"<r><t>v</t></r>"}]},"response":{"status":200}}'
+
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$MOCK/cd" \
+    -H 'Content-Type: application/xml' --data-binary '<r><t><![CDATA[v]]></t></r>'
+200
+```
+
+WireMock answers `404`, and in both directions: a CDATA section never equals the
+same text written plainly, and plain text never equals the same content in a
+CDATA section. Verified with controls — CDATA matches CDATA, and a different
+CDATA value is caught — so it is the section rather than the value that decides
+it there.
+
+The XML infoset says the two are the same text. `<![CDATA[v]]>` is an escaping
+convenience for content that would otherwise need entities, and a producer that
+switches to it has not changed what it sent. A stub author who wrote `<t>v</t>`
+and received `<t><![CDATA[v]]></t>` got the value they asked for.
+
+So the comparison folds CDATA in with text, and this deviation exists because
+that is a difference somebody could otherwise spend an afternoon on. It matches
+strictly **more** than WireMock: every document that satisfies an `equalToXml`
+there satisfies it here, so no suite that passes on WireMock can fail on this.
+
 ### #58 — `hasExactly: []`, which could never match
 
 ```console

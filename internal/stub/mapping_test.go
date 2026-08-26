@@ -192,10 +192,8 @@ func TestDeferredFeaturesAreRejectedWithPointers(t *testing.T) {
 		{`{"request":{"urlPath":"/x","multipartPatterns":[{}]}}`, "/request/multipartPatterns"},
 		{`{"request":{"urlPath":"/x","customMatcher":{"name":"x"}}}`, "/request/customMatcher"},
 		{`{"request":{"urlPath":"/x"},"response":{"proxyBaseUrl":"http://x"}}`, "/response/proxyBaseUrl"},
-		{`{"request":{"urlPath":"/x","bodyPatterns":[{"matchesXPath":"//a"}]}}`,
-			"/request/bodyPatterns/0/matchesXPath"},
-		{`{"request":{"urlPath":"/x","bodyPatterns":[{"equalToXml":"<a/>"}]}}`,
-			"/request/bodyPatterns/0/equalToXml"},
+		{`{"request":{"urlPath":"/x"},"response":{"fromConfiguredStub":true}}`,
+			"/response/fromConfiguredStub"},
 	}
 	for _, c := range cases {
 		problems := compileErrs(t, c.doc)
@@ -264,7 +262,7 @@ func TestUnimplementedWireMockFieldsStayDeferred(t *testing.T) {
 func TestEveryProblemIsReportedAtOnce(t *testing.T) {
 	problems := compileErrs(t, `{
 		"postServeActions": [{"name":"a"}],
-		"request": {"urlPath":"/x","multipartPatterns":[{}],"bodyPatterns":[{"matchesXPath":"//a"}]},
+		"request": {"urlPath":"/x","multipartPatterns":[{}],"customMatcher":{"name":"x"}},
 		"response": {"proxyBaseUrl":"http://x","status":999}
 	}`)
 	if len(problems) < 5 {

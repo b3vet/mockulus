@@ -349,7 +349,7 @@ Two defaults will surprise a WireMock user before anything else does, and both a
 
 - **Near-miss diagnostics on unmatched requests are off**, as described above.
 
-Beyond the outright absences there are 58 catalogued, deliberate behavioural differences from the
+Beyond the outright absences there are 61 catalogued, deliberate behavioural differences from the
 pinned WireMock 3.13.2 — each one named, justified, and in most cases carrying a knob to restore
 WireMock's behaviour. They are written up in [Deviations from WireMock](deviations.md), and stated
 normatively in [SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1). Read one of them

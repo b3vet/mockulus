@@ -4,7 +4,10 @@ package matchers
 
 import (
 	"encoding/json"
+
 	"strings"
+
+	"github.com/antchfx/xmlquery"
 )
 
 // Subjects are always used through a pointer. Boxing a pointer into an
@@ -183,6 +186,30 @@ type Body struct {
 
 	state jsonState
 	value any
+
+	// The XML tree, memoized exactly as the JSON value above is: a stub matched
+	// on URL alone never parses, and a body examined by three XML criteria
+	// parses once. Parsing XML is the most expensive thing any matcher asks of
+	// a body, so this is the seam P2 is about.
+	xmlState jsonState
+	xmlDoc   *xmlquery.Node
+}
+
+// XML implements the xmlDocument capability, parsing the body at most once.
+//
+// It reads the same text the string matchers see, so a body declaring a charset
+// is decoded before it is parsed rather than handed to the XML reader as bytes
+// in an encoding it would have to guess at.
+func (b *Body) XML() (*xmlquery.Node, bool) {
+	if b.xmlState == jsonUnparsed {
+		b.xmlState = jsonInvalid
+		if b.present {
+			if doc, ok := ParseXML(b.asText()); ok {
+				b.xmlDoc, b.xmlState = doc, jsonOK
+			}
+		}
+	}
+	return b.xmlDoc, b.xmlState == jsonOK
 }
 
 // NewBody builds a subject over raw request bytes that carry no declaration of
@@ -209,6 +236,7 @@ func (b *Body) SetWithContentType(raw []byte, contentType string) {
 	b.text, b.textSet = "", false
 	b.doc, b.docSet = nil, false
 	b.state, b.value = jsonUnparsed, nil
+	b.xmlState, b.xmlDoc = jsonUnparsed, nil
 }
 
 // Reset clears the subject, dropping every reference so pooled memory does not
@@ -221,6 +249,7 @@ func (b *Body) Reset() {
 	b.text, b.textSet = "", false
 	b.doc, b.docSet = nil, false
 	b.state, b.value = jsonUnparsed, nil
+	b.xmlState, b.xmlDoc = jsonUnparsed, nil
 }
 
 // Present implements Subject.

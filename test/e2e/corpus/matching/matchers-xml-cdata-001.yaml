@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-xml-cdata-001
+behaviors: [B-DEV-61]
+# Deviation #61. WireMock answers 404 to every pairing below in which one side
+# writes its text as a CDATA section and the other does not, so the matching
+# results here disagree with it by construction and are not diffable.
+wm: n/a
+steps:
+  # Direction A: the stub writes plain text, the caller sends CDATA.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0610002-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xml-cdata-001/plain",
+                     "bodyPatterns": [{"equalToXml": "<r><t>v</t></r>"}]},
+         "response": {"status": 200, "body": "plain-stub", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-cdata-001/plain,
+              headers: {Content-Type: application/xml}, body: "<r><t><![CDATA[v]]></t></r>"}
+    expect: {status: 200, body: "plain-stub"}
+
+  # Direction B: the stub writes CDATA, the caller sends plain text. The
+  # deviation is symmetric, and asserting only one direction would let an
+  # implementation that strips CDATA on just one side of the comparison pass.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0610002-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xml-cdata-001/cdata",
+                     "bodyPatterns": [{"equalToXml": "<r><t><![CDATA[v]]></t></r>"}]},
+         "response": {"status": 200, "body": "cdata-stub", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-cdata-001/cdata,
+              headers: {Content-Type: application/xml}, body: "<r><t>v</t></r>"}
+    expect: {status: 200, body: "cdata-stub"}
+
+  # The control that keeps the two above honest: folding CDATA in with text is
+  # not the same as ignoring the text. A different value still fails to match,
+  # in a CDATA section as anywhere else — otherwise this deviation would read as
+  # "CDATA content is not compared at all", which is a far larger claim.
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-cdata-001/plain,
+              headers: {Content-Type: application/xml}, body: "<r><t><![CDATA[w]]></t></r>"}
+    expect: {status: 404}
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-cdata-001/cdata,
+              headers: {Content-Type: application/xml}, body: "<r><t>w</t></r>"}
+    expect: {status: 404}

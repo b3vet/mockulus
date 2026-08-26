@@ -702,3 +702,70 @@ export function hasExactly(first: Matcher, ...rest: Matcher[]): KeyOnlyMatcher {
 export function includes(...operands: Matcher[]): KeyOnlyMatcher {
   return keyOnly({ includes: operands });
 }
+
+/**
+ * Structural XML equality against an expected document.
+ *
+ * Structural, not textual, and the rules were probed rather than assumed:
+ * attribute order, self-closing-vs-empty elements, indentation and
+ * whitespace-only text are all insignificant, text compares trimmed, comments
+ * and the XML declaration are ignored, and namespaces compare by URI.
+ *
+ * The rule worth knowing before writing one is how children are paired:
+ *
+ * ```ts
+ * equalToXml('<r><x/><y/></r>')       // matches <r><y/><x/></r>
+ * equalToXml('<r><x>1</x><x>2</x></r>') // does NOT match <r><x>2</x><x>1</x></r>
+ * ```
+ *
+ * Children are paired **by element name**, and within a name group by document
+ * order. Differently-named siblings are therefore order-insensitive and
+ * same-named ones are not — neither "ordered" nor "unordered", which are the two
+ * rules you would guess.
+ *
+ * A malformed operand is refused by the server at registration. CDATA and text
+ * compare equal here and not on WireMock (deviation #61), which matches strictly
+ * more, so nothing that passes there fails here.
+ */
+export function equalToXml(document: string): Matcher {
+  return anywhere({ equalToXml: document });
+}
+
+/**
+ * Select nodes from the subject with an XPath expression.
+ *
+ * The bare form holds when the expression selects a non-empty node-set. Pass an
+ * inner matcher for the object form, which is **any-of** over the selection — it
+ * holds when at least one selected node satisfies it, the same rule a repeated
+ * header follows.
+ *
+ * ```ts
+ * matchingXPath('//item')                              // any item at all
+ * matchingXPath('//item/@sku', equalTo('B'))           // some item has sku B
+ * matchingXPath('//n:total/text()', equalTo('10'), { n: 'urn:x' })
+ * ```
+ *
+ * **An expression that evaluates to a value rather than selecting nodes is
+ * refused by the server** (deviation #59). `count(//item) = 2` and `false()`
+ * read as assertions and match every request on WireMock, so mockulus declines
+ * them at registration rather than shipping a criterion that does nothing. A
+ * malformed expression is refused too (deviation #60). Both are runtime
+ * refusals rather than type errors: whether an expression selects nodes is a
+ * property of XPath, not of TypeScript.
+ */
+export function matchingXPath(
+  expression: string,
+  inner?: Matcher,
+  namespaces?: Readonly<Record<string, string>>,
+): Matcher {
+  if (inner === undefined && namespaces === undefined) {
+    return anywhere({ matchesXPath: expression });
+  }
+  return anywhere({
+    matchesXPath: {
+      expression,
+      ...(namespaces ? { xPathNamespaces: { ...namespaces } } : {}),
+      ...(inner ?? {}),
+    },
+  } as ContentMatcher);
+}

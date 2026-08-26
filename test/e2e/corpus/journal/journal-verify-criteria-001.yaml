@@ -129,10 +129,10 @@ steps:
       path: /__admin/requests/find
       body: |
         {"urlPath":"/e2e/journal-verify-criteria-001/orders",
-         "bodyPatterns":[{"matchesXPath":"/order/sku"}]}
+         "multipartPatterns":[{"name":"part"}]}
     expect:
       status: 422
       body_json_subset:
         errors:
           - code: 1000
-            source: {pointer: /request/bodyPatterns/0/matchesXPath}
+            source: {pointer: /request/multipartPatterns}

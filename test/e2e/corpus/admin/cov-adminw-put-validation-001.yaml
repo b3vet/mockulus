@@ -51,7 +51,7 @@ steps:
       path: /__admin/mappings/c0000003-0001-4000-8000-000000000001
       body: |
         {"request": {"method": "GET", "urlPath": "/e2e/cov-adminw-put-validation-001/order",
-                     "bodyPatterns": [{"equalToXml": "<order/>"}]},
+                     "multipartPatterns": [{"name": "part"}]},
          "response": {"status": 200},
          "nosuchfield": 1}
     expect:
@@ -62,7 +62,7 @@ steps:
             source: {pointer: "/nosuchfield"}
             title: "Malformed request"
           - code: 1000
-            source: {pointer: "/request/bodyPatterns/0/equalToXml"}
+            source: {pointer: "/request/multipartPatterns"}
             title: "Unsupported feature"
 
   # A pattern that compiles on neither engine is refused with the regex code

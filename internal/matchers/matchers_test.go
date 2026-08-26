@@ -1078,52 +1078,33 @@ func TestIgnoreExtraElementsRelaxesArrayLength(t *testing.T) {
 	})
 }
 
-// Every deferred matcher must be rejected by name, so a team migrating from
-// WireMock learns exactly which roadmap item they are waiting on.
-func TestDeferredMatchersAreRejectedByName(t *testing.T) {
-	// hasExactly and includes were here until v1.2.0 and are now implemented.
-	// They are still refused in this position — a body has one value, so there
-	// is no list to quantify over — but as a position error rather than a
-	// deferred feature, which TestMultiValueIsRefusedOutsideKeyPositions covers.
-	cases := map[string]string{
-		`{"matchesXPath":"//a"}`: "matchesXPath",
-		`{"equalToXml":"<a/>"}`:  "equalToXml",
-	}
-	for doc, want := range cases {
-		m, probs := Compile(json.RawMessage(doc), "/request/bodyPatterns/0", testOpts())
-		if m != nil {
-			t.Errorf("%s should not compile", doc)
-		}
-		if len(probs) == 0 {
-			t.Errorf("%s should be rejected", doc)
-			continue
-		}
-		if !probs[0].Deferred {
-			t.Errorf("%s should be reported as deferred, not malformed", doc)
-		}
-		if !strings.Contains(probs[0].Detail, want) {
-			t.Errorf("%s: detail %q should name %q", doc, probs[0].Detail, want)
-		}
-		if !strings.HasPrefix(probs[0].Pointer, "/request/bodyPatterns/0/") {
-			t.Errorf("%s: pointer %q should locate the offending field", doc, probs[0].Pointer)
-		}
-	}
-}
-
-func TestUnknownMatcherIsRejected(t *testing.T) {
-	_, probs := Compile(json.RawMessage(`{"soundsLike":"x"}`), "", testOpts())
-	if len(probs) == 0 {
-		t.Fatal("an unknown matcher must be rejected rather than ignored")
-	}
-	if !strings.Contains(probs[0].Detail, "soundsLike") {
-		t.Errorf("the problem should name the unknown matcher, got %q", probs[0].Detail)
+// No WireMock matcher is deferred any more.
+//
+// This test used to walk `deferredMatchers` and assert each one earned the
+// roadmap-pointing 1000 rather than the unknown-matcher 10. v1.3.0 emptied the
+// map: `equalToXml` and `matchesXPath` were the last two, and with them
+// supported there is no matcher left to defer. The distinction still matters and
+// is still tested — for stub *fields*, in internal/stub, where
+// `multipartPatterns` and `customMatcher` still take it.
+//
+// Asserting the map is empty is not ceremony: it is what makes the day somebody
+// adds an entry the day this test tells them to cover it.
+func TestNoMatcherIsDeferred(t *testing.T) {
+	if len(deferredMatchers) != 0 {
+		t.Errorf("deferredMatchers gained %d entry/entries; each needs a case proving it "+
+			"earns code 1000 and names its roadmap item: %v", len(deferredMatchers), deferredMatchers)
 	}
 }
 
 // Every problem in one document is reported at once, so a CI user fixes them
 // all in one round (SPEC Appendix B).
 func TestAllProblemsReportedTogether(t *testing.T) {
-	_, probs := Compile(json.RawMessage(`{"matchesXPath":"//a","equalToXml":"<a/>","bogus":1}`), "", testOpts())
+	// Three unrelated problems in one document: an unknown key, a regex that
+	// cannot compile, and an XPath that cannot discriminate (deviation #59).
+	// The first two used to be `matchesXPath` and `equalToXml`, which are
+	// supported since v1.3.0 and so no longer problems at all.
+	_, probs := Compile(json.RawMessage(
+		`{"bogus":1,"matches":"(","matchesXPath":"count(//a) = 1"}`), "", testOpts())
 	if len(probs) < 3 {
 		t.Fatalf("expected every problem to be reported, got %d: %v", len(probs), probs)
 	}

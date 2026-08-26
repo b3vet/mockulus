@@ -16,6 +16,7 @@ import {
   equalToDateTime,
   equalToIgnoreCase,
   equalToJson,
+  equalToXml,
   get,
   hasExactly,
   includes,
@@ -24,6 +25,7 @@ import {
   jsonUnitRegex,
   matching,
   matchingJsonPath,
+  matchingXPath,
   matchingJsonSchema,
   MockulusClient,
   not,
@@ -217,6 +219,15 @@ describe('the builders against a live server', () => {
         get(urlPathEqualTo('/sdk-builders/sweep/multivalue'))
           .withQueryParam('tag', hasExactly(equalTo('a'), equalTo('b')))
           .withHeader('X-Tag', includes(equalTo('a'))),
+      ),
+    },
+    {
+      name: 'the XML matchers',
+      mapping: stubFor(
+        post(urlPathEqualTo('/sdk-builders/sweep/xml'))
+          .withRequestBody(equalToXml('<r><x/></r>'))
+          .withRequestBody(matchingXPath('//item'))
+          .withRequestBody(matchingXPath('//n:t/text()', equalTo('v'), { n: 'urn:x' })),
       ),
     },
     {
@@ -557,6 +568,62 @@ describe('the builders against a live server', () => {
       const res = await call(`${url}?tag=a1&tag=b1`);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe('tolerated');
+    });
+
+    it('matches XML structurally, pairing children by name', async () => {
+      const url = '/sdk-builders/xml/doc';
+      await registerTagged(
+        stubFor(
+          post(urlPathEqualTo(url))
+            .withRequestBody(equalToXml('<r><x>1</x><y>2</y></r>'))
+            .willReturn(aResponse().withStatus(200).withBody('xml')),
+        ),
+      );
+
+      const send = (body: string) =>
+        call(url, { method: 'POST', headers: { 'Content-Type': 'application/xml' }, body });
+
+      expect((await send('<r><x>1</x><y>2</y></r>')).status).toBe(200);
+      // Differently-named siblings: order does not matter.
+      expect((await send('<r><y>2</y><x>1</x></r>')).status).toBe(200);
+      // Indentation, comments and the declaration are ignorable.
+      expect(
+        (await send('<?xml version="1.0"?><r>\n <!--c--> <x>1</x>\n <y>2</y>\n</r>')).status,
+      ).toBe(200);
+      expect((await send('<r><x>9</x><y>2</y></r>')).status).toBe(404);
+    });
+
+    it('selects with XPath, any-of over the selection', async () => {
+      const url = '/sdk-builders/xml/xpath';
+      await registerTagged(
+        stubFor(
+          post(urlPathEqualTo(url))
+            .withRequestBody(matchingXPath('//item/@sku', equalTo('B')))
+            .willReturn(aResponse().withStatus(200).withBody('xpath')),
+        ),
+      );
+
+      const send = (body: string) =>
+        call(url, { method: 'POST', headers: { 'Content-Type': 'application/xml' }, body });
+
+      // Two skus and the named one is second: any-of, not first-of.
+      expect((await send('<order><item sku="A"/><item sku="B"/></order>')).status).toBe(200);
+      expect((await send('<order><item sku="A"/></order>')).status).toBe(404);
+    });
+
+    it('is refused by the server when the expression cannot discriminate', async () => {
+      // Deviation #59. Not a type error — whether an expression selects nodes is
+      // a property of XPath rather than of TypeScript — so the SDK's job is to
+      // surface the refusal, and this is the case that proves it does.
+      await expect(
+        client.mappings.create(
+          stubFor(
+            post(urlPathEqualTo('/sdk-builders/xml/inert')).withRequestBody(
+              matchingXPath('count(//item) = 2'),
+            ),
+          ),
+        ),
+      ).rejects.toThrow(/evaluates to a value rather than selecting nodes/);
     });
 
     it('matches on a header, a query parameter, a cookie and a form field at once', async () => {

@@ -718,7 +718,7 @@ export interface components {
      * @description Locates the offending element of the submitted document.
      */
     ErrorSource: {
-      /** @description A JSON pointer into the request document, as `/request/bodyPatterns/0/matchesXPath`. Two refusals do not carry a pointer into a body at all: an invalid `since` reports the bare parameter name `since`, and a document that failed to parse as JSON reports the empty pointer, which names the document itself. */
+      /** @description A JSON pointer into the request document, as `/request/bodyPatterns/0/equalToXml`. Two refusals do not carry a pointer into a body at all: an invalid `since` reports the bare parameter name `since`, and a document that failed to parse as JSON reports the empty pointer, which names the document itself. */
       pointer: string;
     };
     /**
@@ -741,10 +741,10 @@ export interface components {
      *         {
      *           "code": 1000,
      *           "source": {
-     *             "pointer": "/request/bodyPatterns/0/matchesXPath"
+     *             "pointer": "/request/multipartPatterns"
      *           },
      *           "title": "Unsupported feature",
-     *           "detail": "matchesXPath (XPath matching) is not supported in mockulus v1 — see ROADMAP.md"
+     *           "detail": "multipartPatterns is not supported in mockulus v1 — see ROADMAP.md"
      *         }
      *       ]
      *     }
@@ -767,6 +767,20 @@ export interface components {
       equalTo?: string;
       /** @description Folds case for `equalTo`. Folding is by Unicode simple case folding, where Java folds per UTF-16 code unit; the two disagree in both directions and neither is more correct (deviation #43). */
       caseInsensitive?: boolean;
+      /**
+       * @description Structural XML equality against this document. Attribute order, self-closing-vs-empty elements, indentation and whitespace-only text are insignificant, and text is compared trimmed; comments and the XML declaration are ignored, while a processing instruction inside the document is not. Namespaces compare by URI, so a prefix is a local alias.
+       *
+       *     **Children are paired by element name, and within a name group by document order.** `<x/><y/>` therefore equals `<y/><x/>`, while `<x>1</x><x>2</x>` does not equal `<x>2</x><x>1</x>` — neither "ordered" nor "unordered", which are the two rules an implementer would guess. A malformed operand is refused at registration.
+       *
+       *     CDATA and text compare equal, which WireMock does not do in either direction (deviation #61). That matches strictly more than WireMock, so nothing that passes there fails here.
+       */
+      equalToXml?: string;
+      /**
+       * @description Select nodes from the subject. The bare string form holds when the expression selects a non-empty node-set; the object form applies an inner matcher and is **any-of** over the selection, holding when at least one selected node satisfies it.
+       *
+       *     An expression that evaluates to a value rather than selecting nodes — `false()`, `count(//item) = 2` — is **refused at registration** (deviation #59). WireMock registers it and then matches every request, so a criterion that reads as an assertion is a no-op there. A malformed expression is refused too (deviation #60) rather than registering and never matching.
+       */
+      matchesXPath?: string | components['schemas']['XPathCriterion'];
       /**
        * @description Exact byte equality against a base64 operand. It compares the subject's raw bytes, so it is accepted **only in `bodyPatterns`** and only at the top level — WireMock declares its combinators over string patterns, so a `binaryEqualTo` nested inside `not`, `and`, `or` or the object form of `matchesJsonPath` is refused there and here.
        *
@@ -900,6 +914,18 @@ export interface components {
      */
     KeyCriterion:
       components['schemas']['ContentMatcher'] | components['schemas']['MultiValueCriterion'];
+    /**
+     * XPath criterion
+     * @description The object form of `matchesXPath`: an expression, an inner matcher applied any-of over the nodes it selects, and optional namespace bindings.
+     */
+    XPathCriterion: {
+      /** @description The XPath expression. It has to select nodes rather than evaluate to a value. */
+      expression: string;
+      /** @description Prefixes used in the expression, bound to URIs. The key is `xPathNamespaces` rather than `namespaces`, which is the one an implementer would reach for and WireMock does not have — probed rather than guessed. */
+      xPathNamespaces?: {
+        [key: string]: string;
+      };
+    };
     /**
      * JSONPath criterion
      * @description Either a bare expression or an expression with an inner matcher.

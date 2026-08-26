@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-xpath-001
+behaviors: [B-MATCH-MATCHESXPATH, B-DEV-59, B-DEV-60]
+# The matching halves agree with WireMock; the two refusals do not — they are
+# deviations #59 and #60, and WireMock registers both documents. Registration is
+# therefore not diffable here.
+wm: n/a
+steps:
+  # The bare form: a non-empty node-set matches.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0590001-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xpath-001/bare",
+                     "bodyPatterns": [{"matchesXPath": "//item"}]},
+         "response": {"status": 200, "body": "bare", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-xpath-001/bare,
+              headers: {Content-Type: application/xml}, body: "<order><item sku=\"A\"/></order>"}
+    expect: {status: 200, body: "bare"}
+  - request: {port: mock, method: POST, path: /e2e/matchers-xpath-001/bare,
+              headers: {Content-Type: application/xml}, body: "<order><total>1</total></order>"}
+    expect: {status: 404}
+  # A non-XML body is a non-match, not an error.
+  - request: {port: mock, method: POST, path: /e2e/matchers-xpath-001/bare,
+              headers: {Content-Type: text/plain}, body: "not xml at all"}
+    expect: {status: 404}
+
+  # The object form is any-of over the selection: it holds when at least one
+  # selected node satisfies the inner matcher.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0590001-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xpath-001/inner",
+                     "bodyPatterns": [{"matchesXPath": {"expression": "//item/@sku", "equalTo": "B"}}]},
+         "response": {"status": 200, "body": "inner", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # Two skus, and the one the criterion names is the second — any-of, not first-of.
+  - request: {port: mock, method: POST, path: /e2e/matchers-xpath-001/inner,
+              headers: {Content-Type: application/xml},
+              body: "<order><item sku=\"A\"/><item sku=\"B\"/></order>"}
+    expect: {status: 200, body: "inner"}
+  - request: {port: mock, method: POST, path: /e2e/matchers-xpath-001/inner,
+              headers: {Content-Type: application/xml}, body: "<order><item sku=\"A\"/></order>"}
+    expect: {status: 404}
+
+  # Deviation #59: an expression that evaluates to a value rather than selecting
+  # nodes matches everything on WireMock, so it is refused here. The detail names
+  # the shape to write instead, because an author who wrote this meant it as an
+  # assertion.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0590001-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xpath-001/inert",
+                     "bodyPatterns": [{"matchesXPath": "count(//item) = 2"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/matchesXPath"}
+      body_regex: 'evaluates to a value rather than selecting nodes, so it can never fail to match'
+
+  # Deviation #60: a malformed expression registers on WireMock and then never
+  # matches. Refused here for the same reason.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0590001-0000-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xpath-001/broken",
+                     "bodyPatterns": [{"matchesXPath": "//["}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_regex: 'is not a valid XPath expression'
+
+  # Neither refused document was registered.
+  - admin: {method: GET, path: /__admin/mappings/c0590001-0000-4000-8000-000000000003}
+    expect: {status: 404}
+  - admin: {method: GET, path: /__admin/mappings/c0590001-0000-4000-8000-000000000004}
+    expect: {status: 404}
