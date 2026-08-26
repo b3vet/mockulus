@@ -281,6 +281,9 @@ Top level:
 | `cookies` | ✅ | |
 | `formParameters` | ✅ | `application/x-www-form-urlencoded` bodies; parsed lazily |
 | `basicAuthCredentials` | ✅ | Sugar over `Authorization` |
+| `host` | ✅ | The host the request was addressed to, from the `Host` header and without the port — an IPv6 literal keeps its brackets. Takes the ordinary matcher vocabulary, so `matches` over a wildcard domain works. Read from the header rather than the listener, because one deployment fronting several virtual hosts is the case it exists for |
+| `port` | ✅ | The port named in the `Host` header, or **the empty string** when it named none — not the scheme's default, because the request did not carry one and inventing `80` would be answering a question nobody asked. A stub wanting "no port was named" matches `""` |
+| `scheme` | ✅ | `https` when *this process* terminated TLS, `http` otherwise. Behind an ingress that terminates TLS the request arrives here as plain http and is reported as such; forwarding headers are deliberately not consulted, because a matcher steered by a request header decides nothing. §12.1 puts TLS on the mock listener only, so a deployment terminating TLS earlier should match on a header its own ingress sets |
 | `bodyPatterns` | ✅ | All listed patterns must match (AND). Matchers below |
 | `multipartPatterns` | ❌ 422 | Roadmap |
 | `customMatcher` | ❌ 422 | Roadmap |

@@ -131,19 +131,19 @@ what makes the Evidence column worth reading.
 
 | | Count |
 |---|---:|
-| WireMock surface — supported | 74 |
+| WireMock surface — supported | 77 |
 | WireMock surface — supported with a documented deviation | 9 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
 | Deliberate deviations from WireMock | 58 |
-| Catalogued behaviors in total | 235 |
+| Catalogued behaviors in total | 238 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 597 |
+| E2E corpus cases | 598 |
 | … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 397 |
-| … `wm: n/a` — expectations from the spec | 200 |
+| … `wm: n/a` — expectations from the spec | 201 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
-Milestone cursor `M8`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
+Milestone cursor `M9`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
 verified cases as a v1.0 release criterion.
 
 Every catalogued behavior is bound by at least one case. The E2E gate fails when that stops being true (SPEC §19.2).
@@ -224,7 +224,7 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 
 ### Stub mapping — `request`
 
-[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 15 behaviors
+[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 18 behaviors
 
 | Field | v1 | Evidence | Behavior | Notes |
 |---|---|---|---|---|
@@ -239,6 +239,9 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 | `cookies` | ✅ | 5 · verified | `B-REQ-COOKIES` | — |
 | `formParameters` | ✅ | 3 · verified | `B-REQ-FORMPARAMETERS` | `application/x-www-form-urlencoded` bodies; parsed lazily |
 | `basicAuthCredentials` | ✅ | 1 · verified | `B-REQ-BASICAUTHCREDENTIALS` | Sugar over `Authorization` |
+| `host` | ✅ | 1 · n/a | `B-REQ-HOST` | The host the request was addressed to, from the `Host` header and without the port — an IPv6 literal keeps its brackets. Takes the ordinary matcher vocabulary, so `matches` over a wildcard domain works. Read from the header rather than the listener, because one deployment fronting several virtual hosts is the case it exists for |
+| `port` | ✅ | 1 · n/a | `B-REQ-PORT` | The port named in the `Host` header, or **the empty string** when it named none — not the scheme's default, because the request did not carry one and inventing `80` would be answering a question nobody asked. A stub wanting "no port was named" matches `""` |
+| `scheme` | ✅ | 1 · n/a | `B-REQ-SCHEME` | `https` when *this process* terminated TLS, `http` otherwise. Behind an ingress that terminates TLS the request arrives here as plain http and is reported as such; forwarding headers are deliberately not consulted, because a matcher steered by a request header decides nothing. §12.1 puts TLS on the mock listener only, so a deployment terminating TLS earlier should match on a header its own ingress sets |
 | `bodyPatterns` | ✅ | 52 · verified | `B-REQ-BODYPATTERNS` | All listed patterns must match (AND). Matchers below |
 | `multipartPatterns` | ❌ 422 | 1 · n/a | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
 | `customMatcher` | ❌ 422 | 1 · n/a | `B-REQ-CUSTOMMATCHER` | Roadmap |

@@ -240,6 +240,16 @@ func (e *Executor) httpStep(ctx context.Context, c *Case, dep *Deployment,
 				// which is how a case asserts the unauthenticated path.
 				continue
 			}
+			// Host is not an ordinary header on the way out: net/http sends
+			// Request.Host, or the URL's authority when that is empty, and
+			// silently ignores whatever Header carries under that name. A case
+			// setting it through Header would have been asserting against the
+			// harness's own address rather than the one it wrote — which is how
+			// this was found, by the `host` criterion being untestable.
+			if http.CanonicalHeaderKey(k) == "Host" {
+				req.Host = v
+				continue
+			}
 			req.Header.Set(k, v)
 		}
 		if body != "" && req.Header.Get("Content-Type") == "" {
@@ -318,6 +328,16 @@ func (e *Executor) diffAgainstOracle(ctx context.Context, c *Case, hs *HTTPStep,
 	}
 	for k, v := range hs.Headers {
 		if v == "" {
+			continue
+		}
+		// Host is not an ordinary header on the way out. net/http sends
+		// Request.Host — or the URL's authority when that is empty — and
+		// silently ignores anything Header carries under that name, so a case
+		// setting it here would have been asserting against the harness's own
+		// address rather than the one it wrote. That makes the `host` criterion
+		// untestable, which is how this was found.
+		if http.CanonicalHeaderKey(k) == "Host" {
+			req.Host = v
 			continue
 		}
 		req.Header.Set(k, v)

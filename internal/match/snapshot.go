@@ -262,6 +262,20 @@ func fullMatch(cs *stub.CompiledStub, req *ParsedRequest) bool {
 		return true
 	}
 
+	// The connection-level criteria first: each is one comparison against a
+	// string the request already carries, with no map lookup and no parsing, so
+	// they are the cheapest thing a stub can specify (SPEC §6.5 orders criteria
+	// cheapest-first).
+	if cs.Host != nil && !cs.Host.Match(req.HostSubject()) {
+		return false
+	}
+	if cs.Port != nil && !cs.Port.Match(req.PortSubject()) {
+		return false
+	}
+	if cs.Scheme != nil && !cs.Scheme.Match(req.SchemeSubject()) {
+		return false
+	}
+
 	for _, c := range cs.Headers {
 		if !c.Matcher.Match(req.HeaderSubject(c.Name)) {
 			return false

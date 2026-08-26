@@ -247,8 +247,8 @@ func TestUnimplementedWireMockFieldsStayDeferred(t *testing.T) {
 	for _, c := range []struct{ doc, pointer string }{
 		{`{"request":{"urlPath":"/x"},"serveEventListeners":[]}`, "/serveEventListeners"},
 		{`{"request":{"urlPath":"/x"},"insertionIndex":3}`, "/insertionIndex"},
-		{`{"request":{"urlPath":"/x","host":{"equalTo":"h"}}}`, "/request/host"},
-		{`{"request":{"urlPath":"/x","scheme":"https"}}`, "/request/scheme"},
+		{`{"request":{"urlPath":"/x"},"postServeActions":[]}`, "/postServeActions"},
+		{`{"request":{"urlPath":"/x","multipartPatterns":[]}}`, "/request/multipartPatterns"},
 		{`{"request":{"urlPath":"/x"},"response":{"removeProxyRequestHeaders":["X"]}}`,
 			"/response/removeProxyRequestHeaders"},
 	} {

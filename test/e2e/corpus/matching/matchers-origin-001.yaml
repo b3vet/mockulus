@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-origin-001
+behaviors: [B-REQ-HOST, B-REQ-PORT, B-REQ-SCHEME]
+# The connection-level criteria. WireMock has all three, but the harness drives
+# a single listener on one host, so the interesting halves — a second virtual
+# host, and TLS terminated upstream — cannot be posed to an oracle from here.
+# What is asserted is our own contract; the differential lane still diffs the
+# status of every step.
+wm: n/a
+steps:
+  # `host` reads the Host header, which is what the client asked for, rather
+  # than the listener, which is the same for every virtual host on it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0090001-0000-4000-8000-000000000001",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-origin-001/vhost",
+                     "host": {"equalTo": "shop.example"}},
+         "response": {"status": 200, "body": "shop", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/vhost
+      headers: {Host: "shop.example"}
+    expect: {status: 200, body: "shop"}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/vhost
+      headers: {Host: "other.example"}
+    expect: {status: 404}
+
+  # The port is not part of the host. A criterion written for the bare name
+  # matches a request that named a port, which is what makes the criterion about
+  # the virtual host rather than about the address.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/vhost
+      headers: {Host: "shop.example:8443"}
+    expect: {status: 200, body: "shop"}
+
+  # The ordinary matcher vocabulary applies, because the subject is an ordinary
+  # one — nothing about `host` needed a matcher of its own.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0090001-0000-4000-8000-000000000002",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-origin-001/wild",
+                     "host": {"matches": ".*\\.example"}},
+         "response": {"status": 200, "body": "wild", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/wild
+      headers: {Host: "anything.example"}
+    expect: {status: 200, body: "wild"}
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/wild
+      headers: {Host: "anything.other"}
+    expect: {status: 404}
+
+  # `scheme` reports what this process terminated. The harness listener is plain
+  # HTTP, so http matches and https does not — and that pair is the whole
+  # contract: it is about this hop, not about what the client originally used.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0090001-0000-4000-8000-000000000003",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-origin-001/plain",
+                     "scheme": {"equalTo": "http"}},
+         "response": {"status": 200, "body": "plain", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: GET, path: /e2e/matchers-origin-001/plain}
+    expect: {status: 200, body: "plain"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0090001-0000-4000-8000-000000000004",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-origin-001/tls",
+                     "scheme": {"equalTo": "https"}},
+         "response": {"status": 200}}
+    expect: {status: 201}
+
+  # A forwarding header does not move it. A matcher a caller can steer with a
+  # request header is a matcher that decides nothing.
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/tls
+      headers: {X-Forwarded-Proto: "https"}
+    expect: {status: 404}
+
+  # The three compose with everything else, and with each other.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0090001-0000-4000-8000-000000000005",
+         "request": {"method": "GET", "urlPath": "/e2e/matchers-origin-001/both",
+                     "host": {"equalTo": "api.example"}, "scheme": {"equalTo": "http"}},
+         "response": {"status": 200, "body": "both", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/both
+      headers: {Host: "api.example"}
+    expect: {status: 200, body: "both"}
+  - request:
+      port: mock
+      method: GET
+      path: /e2e/matchers-origin-001/both
+      headers: {Host: "nope.example"}
+    expect: {status: 404}

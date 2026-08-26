@@ -225,6 +225,40 @@ behaviors:
     evidence: "422 code 1000 pointing at /request/multipartPatterns"
     evidence_tokens: ["1000", "multipartPatterns"]
     status: "ok"
+  # The three connection-level criteria. They were refused by name in
+  # internal/stub and had no spec row at all until v1.3.0 — invisible in the
+  # spec and in the roadmap alike, which is how they went three releases
+  # without being costed.
+  - id: "B-REQ-HOST"
+    spec_row: "spec:5.2:stub-request|host"
+    spec_hash: "ea4fecda9609e408"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "host"
+    evidence: "the host criterion matches the Host header without its port and takes the ordinary matcher vocabulary"
+    evidence_tokens: ["host", "Host"]
+    status: "ok"
+  - id: "B-REQ-PORT"
+    spec_row: "spec:5.2:stub-request|port"
+    spec_hash: "89a27dbcdd9bf32b"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "port"
+    evidence: "the port criterion matches the port named in the Host header, and the empty string when none was named"
+    evidence_tokens: ["port", "Host"]
+    status: "ok"
+  - id: "B-REQ-SCHEME"
+    spec_row: "spec:5.2:stub-request|scheme"
+    spec_hash: "ca97051c3a0d8cd0"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "scheme"
+    evidence: "the scheme criterion reports https only when this process terminated TLS, and ignores forwarding headers"
+    evidence_tokens: ["scheme", "http"]
+    status: "ok"
   - id: "B-REQ-CUSTOMMATCHER"
     spec_row: "spec:5.2:stub-request|customMatcher"
     spec_hash: "417415f55494b217"

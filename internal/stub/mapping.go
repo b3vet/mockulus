@@ -92,6 +92,7 @@ var supportedRequestFields = map[string]bool{
 	"method": true, "url": true, "urlPattern": true, "urlPath": true,
 	"urlPathPattern": true, "urlPathTemplate": true, "pathParameters": true,
 	"queryParameters": true, "headers": true, "cookies": true,
+	"host": true, "port": true, "scheme": true,
 	"formParameters": true, "basicAuthCredentials": true, "bodyPatterns": true,
 }
 
@@ -116,9 +117,6 @@ var deferredFields = map[string]string{
 	"insertionIndex":                "insertionIndex",
 	"multipartPatterns":             "multipartPatterns",
 	"customMatcher":                 "customMatcher",
-	"host":                          "the host request matcher",
-	"port":                          "the port request matcher",
-	"scheme":                        "the scheme request matcher",
 	"proxyBaseUrl":                  "proxyBaseUrl (proxy mode)",
 	"additionalProxyRequestHeaders": "additionalProxyRequestHeaders (proxy mode)",
 	"removeProxyRequestHeaders":     "removeProxyRequestHeaders (proxy mode)",
@@ -339,6 +337,10 @@ func parseRequest(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledStu
 	cs.Form = parseKeyCriteria(errs, doc, "formParameters", "/request/formParameters", opts, false)
 	cs.PathParams = parseKeyCriteria(errs, doc, "pathParameters", "/request/pathParameters", opts, false)
 
+	cs.Host = parseOriginCriterion(errs, doc, "host", "/request/host", opts)
+	cs.Port = parseOriginCriterion(errs, doc, "port", "/request/port", opts)
+	cs.Scheme = parseOriginCriterion(errs, doc, "scheme", "/request/scheme", opts)
+
 	parseBasicAuth(errs, doc, cs)
 	parseBodyPatterns(errs, doc, cs, opts)
 
@@ -491,6 +493,33 @@ func parseKeyCriteria(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 		out = append(out, KeyCriterion{Name: name, Matcher: m})
 	}
 	return out
+}
+
+// parseOriginCriterion compiles one of the connection-level criteria — `host`,
+// `port` or `scheme` (SPEC §5.2).
+//
+// Each is a single matcher document rather than a map of them, because each
+// names one fact about the connection rather than a namespace of keys. The
+// ordinary matcher vocabulary applies: `equalTo`, `matches`, `contains` and the
+// combinators all work, because the subject on the other side is an ordinary
+// one.
+//
+// The byte-oriented matchers are refused here, as they are for every key
+// criterion — there are no raw bytes to compare a host against — and so are the
+// multi-value operators, because a connection has exactly one host.
+func parseOriginCriterion(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
+	field, pointer string, opts Options) matchers.Matcher {
+
+	raw, ok := doc[field]
+	if !ok {
+		return nil
+	}
+	m, problems := matchers.Compile(raw, pointer, opts.matcherOptions(false, false))
+	if len(problems) > 0 {
+		addMatcherProblems(errs, problems)
+		return nil
+	}
+	return m
 }
 
 func parseBasicAuth(errs *wmcompat.ErrorList, doc map[string]json.RawMessage, cs *CompiledStub) {
