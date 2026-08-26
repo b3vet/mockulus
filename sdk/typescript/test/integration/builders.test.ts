@@ -231,6 +231,21 @@ describe('the builders against a live server', () => {
       ),
     },
     {
+      name: 'the multipart patterns, with both quantifiers and a part header',
+      mapping: stubFor(
+        post(urlPathEqualTo('/sdk-builders/sweep/multipart'))
+          .withMultipartRequestBody({
+            name: 'meta',
+            bodyPatterns: [equalTo('hello')],
+          })
+          .withMultipartRequestBody({
+            matchingType: 'ALL',
+            headers: { 'Content-Disposition': containing('form-data') },
+            bodyPatterns: [notMatching('.*forbidden.*')],
+          }),
+      ),
+    },
+    {
       name: 'basic auth credentials',
       mapping: stubFor(get(urlPathEqualTo('/sdk-builders/sweep/auth')).withBasicAuth('a', 'b')),
     },

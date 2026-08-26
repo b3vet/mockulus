@@ -26,6 +26,13 @@ until the tag.
   ones do not; namespaces compare by URI, and the prefix is a local alias.
 - The `host`, `port` and `scheme` request matchers. They were refused by name in
   the code and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them.
+- `multipartPatterns`, closing the deferred half of ROADMAP 1.5. Elements of the
+  array are ANDed, while `matchingType` quantifies over the *parts* inside one
+  element — so two elements each saying `ANY` require two satisfied parts, which
+  is the reading most people get backwards. A body that is not multipart is a
+  non-match rather than an error, a multipart body carrying no parts never
+  matches, and an empty array constrains nothing. Typed in the SDK as
+  `withMultipartRequestBody`.
 - The `xPath`, `soapXPath` and `formatXml` template helpers, reading the request
   body through the same parser the matchers use — so the external-entity refusal
   is one implementation rather than two, and a template cannot become a second
@@ -55,8 +62,13 @@ until the tag.
   of 61, because it counted headings and several headings cover two deviations.
   `make deviation-docs-check` fails on either half of that drift.
 
-Still to land before the tag: `multipartPatterns`, the deferred half of
-ROADMAP 1.5.
+- Deviation **#63**: `multipartPatterns`'s `name` selects the part. WireMock
+  accepts the field and never reads it — a pattern naming a part that is not
+  present matches anyway, and so does one whose `name` contradicts the
+  `Content-Disposition` criterion beside it. **This is the one change in this
+  release that can turn a passing WireMock suite red**, because it matches
+  strictly fewer requests; the deviations page states the risk and says where to
+  revert. Everything else about the criterion is differentially verified.
 
 ## [1.2.0] - 2026-08-14
 

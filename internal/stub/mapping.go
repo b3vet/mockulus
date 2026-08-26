@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -89,7 +90,8 @@ var supportedTopLevel = map[string]bool{
 }
 
 var supportedRequestFields = map[string]bool{
-	"method": true, "url": true, "urlPattern": true, "urlPath": true,
+	"multipartPatterns": true,
+	"method":            true, "url": true, "urlPattern": true, "urlPath": true,
 	"urlPathPattern": true, "urlPathTemplate": true, "pathParameters": true,
 	"queryParameters": true, "headers": true, "cookies": true,
 	"host": true, "port": true, "scheme": true,
@@ -115,7 +117,6 @@ var deferredFields = map[string]string{
 	"postServeActions":              "postServeActions (webhooks)",
 	"serveEventListeners":           "serveEventListeners",
 	"insertionIndex":                "insertionIndex",
-	"multipartPatterns":             "multipartPatterns",
 	"customMatcher":                 "customMatcher",
 	"proxyBaseUrl":                  "proxyBaseUrl (proxy mode)",
 	"additionalProxyRequestHeaders": "additionalProxyRequestHeaders (proxy mode)",
@@ -343,6 +344,7 @@ func parseRequest(errs *wmcompat.ErrorList, raw json.RawMessage, cs *CompiledStu
 
 	parseBasicAuth(errs, doc, cs)
 	parseBodyPatterns(errs, doc, cs, opts)
+	parseMultipartPatterns(errs, doc, cs, opts)
 
 	if len(cs.PathParams) > 0 && cs.PathTemplate == nil {
 		errs.Addf(wmcompat.CodeMalformed, "/request/pathParameters",
@@ -575,6 +577,125 @@ func parseBodyPatterns(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
 	})
 }
 
+// parseMultipartPatterns compiles the `multipartPatterns` criterion (SPEC §5.2).
+//
+// It lands in BodyMatchers rather than in a field of its own because it is a
+// criterion over the request body and shares everything that follows from that:
+// the same subject, the same cheapest-last ordering, and the same near-miss
+// scoring. A separate field would have needed all three written again.
+//
+// An empty array is not a criterion at all and adds no matcher. That is the
+// oracle's behaviour and it is worth the check: `[]` matches a text/plain body,
+// while `[{}]` — one element carrying no criteria — refuses it, because an
+// element requires the request to have parts and an absent array does not.
+func parseMultipartPatterns(errs *wmcompat.ErrorList, doc map[string]json.RawMessage,
+	cs *CompiledStub, opts Options) {
+
+	raw, ok := doc["multipartPatterns"]
+	if !ok {
+		return
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		errs.Addf(wmcompat.CodeMalformed, "/request/multipartPatterns",
+			"multipartPatterns must be an array of part patterns")
+		return
+	}
+	if len(items) == 0 {
+		return
+	}
+
+	criterion := &matchers.MultipartPatterns{Patterns: make([]matchers.MultipartPattern, 0, len(items))}
+	for i, item := range items {
+		pattern, ok := parseMultipartPattern(errs, item, fmt.Sprintf("/request/multipartPatterns/%d", i), opts)
+		if !ok {
+			continue
+		}
+		criterion.Patterns = append(criterion.Patterns, pattern)
+	}
+	if len(criterion.Patterns) != len(items) {
+		// Some element was refused; the error list already says which, and
+		// registering the survivors would serve a stub nobody wrote.
+		return
+	}
+
+	cs.BodyMatchers = append(cs.BodyMatchers, criterion)
+	sort.SliceStable(cs.BodyMatchers, func(i, j int) bool {
+		return matcherCost(cs.BodyMatchers[i]) < matcherCost(cs.BodyMatchers[j])
+	})
+}
+
+func parseMultipartPattern(errs *wmcompat.ErrorList, raw json.RawMessage,
+	pointer string, opts Options) (matchers.MultipartPattern, bool) {
+
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		errs.Addf(wmcompat.CodeMalformed, pointer, "a multipart pattern must be a JSON object")
+		return matchers.MultipartPattern{}, false
+	}
+
+	var pattern matchers.MultipartPattern
+	ok := true
+	for _, field := range sortedKeys(doc) {
+		switch field {
+		case "name", "matchingType", "headers", "bodyPatterns":
+		default:
+			errs.Addf(wmcompat.CodeMalformed, pointer+"/"+field, "unknown field "+field)
+			ok = false
+		}
+	}
+
+	decodeString(errs, doc, "name", pointer+"/name", &pattern.Name)
+
+	// `ANY` and `ALL` exactly, case-sensitively: the oracle refuses `any` as
+	// readily as it refuses nonsense, with this code and this pointer.
+	if raw, present := doc["matchingType"]; present {
+		var kind string
+		if err := json.Unmarshal(raw, &kind); err != nil {
+			errs.Addf(wmcompat.CodeMalformed, pointer+"/matchingType", "matchingType must be a string")
+			ok = false
+		} else {
+			switch kind {
+			case "ANY":
+			case "ALL":
+				pattern.All = true
+			default:
+				errs.Addf(wmcompat.CodeMalformed, pointer+"/matchingType",
+					"matchingType must be ANY or ALL, not "+strconv.Quote(kind))
+				ok = false
+			}
+		}
+	}
+
+	for _, c := range parseKeyCriteria(errs, doc, "headers", pointer+"/headers", opts, false) {
+		pattern.Headers = append(pattern.Headers, matchers.PartCriterion{Name: c.Name, Matcher: c.Matcher})
+	}
+
+	if raw, present := doc["bodyPatterns"]; present {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			errs.Addf(wmcompat.CodeMalformed, pointer+"/bodyPatterns",
+				"bodyPatterns must be an array of matchers")
+			ok = false
+		}
+		for i, item := range items {
+			m, problems := matchers.Compile(item, fmt.Sprintf("%s/bodyPatterns/%d", pointer, i),
+				opts.matcherOptions(true, false))
+			if len(problems) > 0 {
+				addMatcherProblems(errs, problems)
+				ok = false
+				continue
+			}
+			pattern.BodyMatchers = append(pattern.BodyMatchers, m)
+		}
+		sort.SliceStable(pattern.BodyMatchers, func(i, j int) bool {
+			return matcherCost(pattern.BodyMatchers[i]) < matcherCost(pattern.BodyMatchers[j])
+		})
+	}
+
+	return pattern, ok
+}
+
 // matcherCost ranks matchers by how much work evaluating one costs, so the
 // cheapest criterion gets the chance to reject the candidate first.
 func matcherCost(m matchers.Matcher) int {
@@ -597,6 +718,11 @@ func matcherCost(m matchers.Matcher) int {
 	// patterns (SPEC §6.5).
 	case *matchers.MatchesJSONSchema:
 		return 5
+	// Splitting a body into parts allocates per part and then runs a whole
+	// nested criterion set against each, so it sorts behind everything that
+	// reads the body as one value.
+	case *matchers.MultipartPatterns:
+		return 7
 	case *matchers.Not:
 		return matcherCost(t.Matcher)
 	case *matchers.And:

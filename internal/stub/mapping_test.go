@@ -189,7 +189,7 @@ func TestDeferredFeaturesAreRejectedWithPointers(t *testing.T) {
 		pointer string
 	}{
 		{`{"postServeActions":[{"name":"webhook"}],"request":{"urlPath":"/x"}}`, "/postServeActions"},
-		{`{"request":{"urlPath":"/x","multipartPatterns":[{}]}}`, "/request/multipartPatterns"},
+		{`{"request":{"urlPath":"/x"},"insertionIndex":3}`, "/insertionIndex"},
 		{`{"request":{"urlPath":"/x","customMatcher":{"name":"x"}}}`, "/request/customMatcher"},
 		{`{"request":{"urlPath":"/x"},"response":{"proxyBaseUrl":"http://x"}}`, "/response/proxyBaseUrl"},
 		{`{"request":{"urlPath":"/x"},"response":{"fromConfiguredStub":true}}`,
@@ -246,7 +246,7 @@ func TestUnimplementedWireMockFieldsStayDeferred(t *testing.T) {
 		{`{"request":{"urlPath":"/x"},"serveEventListeners":[]}`, "/serveEventListeners"},
 		{`{"request":{"urlPath":"/x"},"insertionIndex":3}`, "/insertionIndex"},
 		{`{"request":{"urlPath":"/x"},"postServeActions":[]}`, "/postServeActions"},
-		{`{"request":{"urlPath":"/x","multipartPatterns":[]}}`, "/request/multipartPatterns"},
+		{`{"request":{"urlPath":"/x","customMatcher":{"name":"x"}}}`, "/request/customMatcher"},
 		{`{"request":{"urlPath":"/x"},"response":{"removeProxyRequestHeaders":["X"]}}`,
 			"/response/removeProxyRequestHeaders"},
 	} {
@@ -262,7 +262,7 @@ func TestUnimplementedWireMockFieldsStayDeferred(t *testing.T) {
 func TestEveryProblemIsReportedAtOnce(t *testing.T) {
 	problems := compileErrs(t, `{
 		"postServeActions": [{"name":"a"}],
-		"request": {"urlPath":"/x","multipartPatterns":[{}],"customMatcher":{"name":"x"}},
+		"request": {"urlPath":"/x","serveEventListeners":[],"customMatcher":{"name":"x"}},
 		"response": {"proxyBaseUrl":"http://x","status":999}
 	}`)
 	if len(problems) < 5 {

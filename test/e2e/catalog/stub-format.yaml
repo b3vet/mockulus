@@ -217,13 +217,13 @@ behaviors:
     status: "ok"
   - id: "B-REQ-MULTIPARTPATTERNS"
     spec_row: "spec:5.2:stub-request|multipartPatterns"
-    spec_hash: "83c027a77c30b231"
+    spec_hash: "0d7ba76cabded0e0"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
-    impl_milestone: "M1"
+    impl_milestone: "M9"
     summary: "multipartPatterns"
-    evidence: "422 code 1000 pointing at /request/multipartPatterns"
-    evidence_tokens: ["1000", "multipartPatterns"]
+    evidence: "elements are ANDed, matchingType quantifies over parts, and a body with no parts never matches"
+    evidence_tokens: ["multipartPatterns", "matchingType"]
     status: "ok"
   # The three connection-level criteria. They were refused by name in
   # internal/stub and had no spec row at all until v1.3.0 — invisible in the

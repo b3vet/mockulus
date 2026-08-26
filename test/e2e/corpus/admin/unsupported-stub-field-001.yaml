@@ -32,8 +32,8 @@ steps:
       path: /__admin/mappings
       body: |
         {"request": {"method": "GET", "urlPath": "/e2e/unsupported-stub-field-001/y",
-                     "multipartPatterns": [{"name": "part"}]},
+                     "customMatcher": {"name": "com.example.Matcher"}},
          "response": {"status": 200, "proxyBaseUrl": "http://upstream"}}
     expect:
       status: 422
-      body_regex: '"pointer":"/request/multipartPatterns".*"pointer":"/response/proxyBaseUrl"|"pointer":"/response/proxyBaseUrl".*"pointer":"/request/multipartPatterns"'
+      body_regex: '"pointer":"/request/customMatcher".*"pointer":"/response/proxyBaseUrl"|"pointer":"/response/proxyBaseUrl".*"pointer":"/request/customMatcher"'

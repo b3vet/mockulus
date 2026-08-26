@@ -131,16 +131,16 @@ what makes the Evidence column worth reading.
 
 | | Count |
 |---|---:|
-| WireMock surface — supported | 82 |
+| WireMock surface — supported | 83 |
 | WireMock surface — supported with a documented deviation | 9 |
-| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 6 |
-| Deliberate deviations from WireMock | 62 |
-| Catalogued behaviors in total | 246 |
+| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 5 |
+| Deliberate deviations from WireMock | 63 |
+| Catalogued behaviors in total | 247 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 605 |
-| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 402 |
-| … `wm: n/a` — expectations from the spec | 203 |
+| E2E corpus cases | 607 |
+| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 403 |
+| … `wm: n/a` — expectations from the spec | 204 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
 Milestone cursor `M9`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
@@ -152,13 +152,12 @@ Every catalogued behavior is bound by at least one case. The E2E gate fails when
 
 ### What is refused
 
-6 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
+5 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
 
 | Feature | Answer | Behavior | Note |
 |---|---|---|---|
 | `/__admin/recordings/**`, `/__admin/proxy/**`, `/__admin/certificates/**`, `/__admin/mappings/unmatched`* | ❌ | `B-ADMIN-RECORDINGS-PROXY-CERTIFICATES-MAPPINGS-UNMATCHED` | 404 + error body `{"errors":[{code:1001,...}]}` linking ROADMAP.md |
 | `postServeActions` | ❌ 422 | `B-STUB-POSTSERVEACTIONS` | Webhooks deferred |
-| `multipartPatterns` | ❌ 422 | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
 | `customMatcher` | ❌ 422 | `B-REQ-CUSTOMMATCHER` | Roadmap |
 | `proxyBaseUrl`, `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` | ❌ 422 | `B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR` | Roadmap (proxy mode) |
 | `fromConfiguredStub`, `additionalHeaders` (proxy-related) | ❌ 422 | `B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED` | — |
@@ -242,7 +241,7 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 | `port` | ✅ | 1 · n/a | `B-REQ-PORT` | The port named in the `Host` header, or **the empty string** when it named none — not the scheme's default, because the request did not carry one and inventing `80` would be answering a question nobody asked. A stub wanting "no port was named" matches `""` |
 | `scheme` | ✅ | 1 · n/a | `B-REQ-SCHEME` | `https` when *this process* terminated TLS, `http` otherwise. Behind an ingress that terminates TLS the request arrives here as plain http and is reported as such; forwarding headers are deliberately not consulted, because a matcher steered by a request header decides nothing. §12.1 puts TLS on the mock listener only, so a deployment terminating TLS earlier should match on a header its own ingress sets |
 | `bodyPatterns` | ✅ | 52 · verified | `B-REQ-BODYPATTERNS` | All listed patterns must match (AND). Matchers below |
-| `multipartPatterns` | ❌ 422 | 1 · n/a | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
+| `multipartPatterns` | ✅ | 2 · verified | `B-REQ-MULTIPARTPATTERNS` | An array of part patterns, **ANDed**: every element must be satisfied. Each element takes `name`, `matchingType`, `headers` and `bodyPatterns`, all optional. `matchingType` quantifies over the *parts* within one element — `ANY` (the default) needs one satisfying part, `ALL` needs every part to satisfy — and must be spelled exactly `ANY` or `ALL`. `headers` apply to the part's own headers and `bodyPatterns` to the part's body, both with the ordinary matcher vocabulary. A body that is not multipart is a non-match, not an error; a multipart body carrying **no parts** never matches, even against an element specifying no criteria at all. An empty array is not a criterion and constrains nothing. `name` selects the part whose `Content-Disposition` name parameter it equals — WireMock ignores the field entirely (deviation #63) |
 | `customMatcher` | ❌ 422 | 1 · n/a | `B-REQ-CUSTOMMATCHER` | Roadmap |
 | `hasExactly`, `includes` (multi-value operators) | ✅ | 4 · verified | `B-REQ-MULTI-VALUE-OPERATORS` | Only as the **sole** key of a criterion directly under `queryParameters` or `headers` — refused inside a combinator, in `bodyPatterns`, on `cookies`, and beside any sibling key, all of which WireMock refuses too. Operands are matcher documents, not bare strings; any single-value matcher is allowed. `includes(M)` holds when every operand is satisfied by **some** value; `hasExactly(M)` adds `len(values) == len(M)`. **Values are not consumed** — `hasExactly [matches "a.*", matches "a.*"]` matches `?tag=a1&tag=b1`, because the count is right and both operands are satisfied by `a1`, while `b1` satisfies neither and is tolerated. That is WireMock's rule, reproduced; a bijection is the intuitive reading and the wrong one. An absent key satisfies neither operator. `includes: []` is vacuous and holds for any present key; `hasExactly: []` is refused (deviation #58) |
 
@@ -310,7 +309,7 @@ The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt
 
 ## Deliberate deviations
 
-[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 62 deviations
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 63 deviations
 
 The complete list — every place a request that WireMock would accept is answered
 differently here, or refused. Each is deliberate and, where it makes sense, has a
@@ -564,6 +563,10 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 **62.** **A numeric `xPath` result renders without locale grouping** (WM: groups by the JVM's default locale). `{{xPath body 'count(//item) * 1000000'}}` renders `2,000,000` on a container started in `en` and `2.000.000` on the identical image started with `-Duser.language=de` — same stub, same request, same pinned version. The oracle's output here is a property of the container it booted in rather than of the wire, so there is nothing stable to reproduce; mockulus renders the digits and a `.` decimal point everywhere. Node selection, which is what the helper is nearly always used for, is unaffected.
 
 > `B-DEV-62` · 1 case · wm: n/a · a numeric xPath result renders without locale grouping separators
+
+**63.** **`multipartPatterns`'s `name` selects the part** (WM: the field is inert). On WireMock `name` is accepted, optional and never consulted: a pattern naming `meta` matches a part called `other`, a pattern naming `THIS-MATCHES-NOTHING` matches anything, and a `name` that directly contradicts the `Content-Disposition` criterion beside it changes nothing. Part selection is done through `headers` against `Content-Disposition` and through nothing else. Here the field means what it reads as: the part's parsed `Content-Disposition` name parameter must equal it — parsed rather than matched as a substring, so `name="meta"` and `name=meta` both work where a `contains` criterion distinguishes them. **This matches strictly fewer requests than WireMock**, which is the direction #29 exists to avoid, and it is the release's riskiest call: a stub that named one part while relying on any part matching stops matching here. The judgement is that such a stub is relying on a bug, and that a 404 at registration-time testing beats one at three in the morning. Reverting is one line and this entry is where to start.
+
+> `B-DEV-63` · 1 case · wm: n/a · a multipart pattern naming a part that is not there does not match
 
 ## Beyond the WireMock surface
 

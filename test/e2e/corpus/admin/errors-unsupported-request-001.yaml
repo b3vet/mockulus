@@ -9,15 +9,20 @@ behaviors:
 # these documents.
 wm: n/a
 steps:
-  # multipartPatterns is deferred. Registering the stub and ignoring the
-  # criterion would make it match multipart requests it was written to reject.
+  # customMatcher is deferred, and unlike a roadmap item it is a stated
+  # non-goal: the field names a Java class to load, which this server has no way
+  # to honour. That makes it the stable example for these cases — this step named
+  # multipartPatterns until v1.3.0 implemented it, and the ones before that named
+  # a matcher, so a case pinned to whatever happens to be unsupported this month
+  # gets rewritten every release. Registering the stub and ignoring the criterion
+  # would make it match requests it was written to reject.
   - admin:
       method: POST
       path: /__admin/mappings
       body: |
         {"id": "e770e770-0000-4000-8000-000000000020",
          "request": {"method": "POST", "urlPath": "/e2e/errors-unsupported-request-001/upload",
-                     "multipartPatterns": [{"name": "part1", "matchingType": "ALL"}]},
+                     "customMatcher": {"name": "com.example.Matcher"}},
          "response": {"status": 200}}
     expect:
       status: 422
@@ -25,8 +30,8 @@ steps:
         errors:
           - code: 1000
             title: "Unsupported feature"
-            source: {pointer: "/request/multipartPatterns"}
-      body_regex: 'multipartPatterns is not supported in mockulus v1.*ROADMAP\.md'
+            source: {pointer: "/request/customMatcher"}
+      body_regex: 'customMatcher is not supported in mockulus v1.*ROADMAP\.md'
 
   - admin: {method: GET, path: /__admin/mappings/e770e770-0000-4000-8000-000000000020}
     expect: {status: 404}

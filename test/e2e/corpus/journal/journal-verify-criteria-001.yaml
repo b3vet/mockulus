@@ -129,10 +129,10 @@ steps:
       path: /__admin/requests/find
       body: |
         {"urlPath":"/e2e/journal-verify-criteria-001/orders",
-         "multipartPatterns":[{"name":"part"}]}
+         "customMatcher": {"name": "com.example.Matcher"}}
     expect:
       status: 422
       body_json_subset:
         errors:
           - code: 1000
-            source: {pointer: /request/multipartPatterns}
+            source: {pointer: /request/customMatcher}

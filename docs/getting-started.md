@@ -322,10 +322,11 @@ $ curl -s http://localhost:8080/__admin/recordings/status
 
 ### What is not here
 
-Absent entirely, and rejected on sight: XML and XPath matching (`equalToXml`,
-`matchesXPath`), multipart matching (`multipartPatterns`), proxying (`proxyBaseUrl`), record and
-playback, webhooks (`postServeActions`), custom matchers, gRPC, browser proxying, and Java-class
-extensions. The full field-by-field matrix is
+Absent entirely, and rejected on sight: proxying (`proxyBaseUrl`), record and playback, webhooks
+(`postServeActions`), custom matchers, gRPC, browser proxying, and Java-class extensions. XML and
+XPath matching (`equalToXml`, `matchesXPath`), the `xPath`/`soapXPath`/`formatXml` template helpers
+and multipart matching (`multipartPatterns`) were on this list through v1.2.0 and arrived in
+v1.3.0. The full field-by-field matrix is
 [SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix); the endpoint matrix is
 [§5.1](../SPEC.md#51-admin-api-endpoint-matrix).
 

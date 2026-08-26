@@ -51,7 +51,7 @@ steps:
       path: /__admin/mappings/c0000003-0001-4000-8000-000000000001
       body: |
         {"request": {"method": "GET", "urlPath": "/e2e/cov-adminw-put-validation-001/order",
-                     "multipartPatterns": [{"name": "part"}]},
+                     "customMatcher": {"name": "com.example.Matcher"}},
          "response": {"status": 200},
          "nosuchfield": 1}
     expect:
@@ -62,7 +62,7 @@ steps:
             source: {pointer: "/nosuchfield"}
             title: "Malformed request"
           - code: 1000
-            source: {pointer: "/request/multipartPatterns"}
+            source: {pointer: "/request/customMatcher"}
             title: "Unsupported feature"
 
   # A pattern that compiles on neither engine is refused with the regex code

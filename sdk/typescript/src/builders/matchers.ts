@@ -78,6 +78,28 @@ export interface BodyOnlyMatcher extends ContentMatcher {
 export type BodyPattern = Matcher | BodyOnlyMatcher;
 
 /**
+ * One element of `multipartPatterns`.
+ *
+ * Every field is optional, and an element carrying none of them matches any
+ * request that has at least one part — while a body with *no* parts matches no
+ * element at all, not even that one.
+ *
+ * `matchingType` quantifies over the parts inside this element, not over the
+ * array: several elements are an AND, so two elements each saying `ANY` require
+ * two satisfied parts.
+ *
+ * `name` selects the part whose `Content-Disposition` name parameter equals it.
+ * WireMock accepts the field and never reads it, so this matches strictly fewer
+ * requests than WireMock does — deviation #63.
+ */
+export interface MultipartPattern {
+  name?: string;
+  matchingType?: 'ANY' | 'ALL';
+  headers?: Record<string, Matcher>;
+  bodyPatterns?: BodyPattern[];
+}
+
+/**
  * A criterion accepted only as the whole value of a `queryParameters` or
  * `headers` entry.
  *

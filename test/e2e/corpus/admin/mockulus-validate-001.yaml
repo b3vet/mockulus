@@ -17,7 +17,7 @@ steps:
            "request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/ok"},
            "response": {"status": 200}},
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/bad",
-                       "multipartPatterns": [{"name": "part"}]},
+                       "customMatcher": {"name": "com.example.Matcher"}},
            "response": {"status": 200}},
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/ok2"},
            "response": {"status": 200}}
@@ -36,7 +36,7 @@ steps:
             valid: false
             errors:
               - code: 1000
-                source: {pointer: "/request/multipartPatterns"}
+                source: {pointer: "/request/customMatcher"}
           - index: 2
             valid: true
 
@@ -56,7 +56,7 @@ steps:
       body: |
         {"mappings": [
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/x",
-                       "multipartPatterns": [{"name": "part"}]},
+                       "customMatcher": {"name": "com.example.Matcher"}},
            "response": {"status": 200}}
         ]}
     expect:
@@ -121,7 +121,7 @@ steps:
       body: |
         {"mappings": [
           {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/agree",
-                       "multipartPatterns": [{"name": "part"}],
+                       "customMatcher": {"name": "com.example.Matcher"},
                        "cookies": {"c": {"includes": [{"equalTo": "a"}]}}},
            "response": {"status": 200}}
         ]}
@@ -133,7 +133,7 @@ steps:
             valid: false
             errors:
               - code: 1000
-                source: {pointer: "/request/multipartPatterns"}
+                source: {pointer: "/request/customMatcher"}
               - code: 10
                 source: {pointer: "/request/cookies/c"}
 
@@ -142,7 +142,7 @@ steps:
       path: /__admin/mappings
       body: |
         {"request": {"method": "GET", "urlPath": "/e2e/mockulus-validate-001/agree",
-                     "multipartPatterns": [{"name": "part"}],
+                     "customMatcher": {"name": "com.example.Matcher"},
                      "cookies": {"c": {"includes": [{"equalTo": "a"}]}}},
          "response": {"status": 200}}
     expect:
@@ -150,7 +150,7 @@ steps:
       body_json_subset:
         errors:
           - code: 1000
-            source: {pointer: "/request/multipartPatterns"}
+            source: {pointer: "/request/customMatcher"}
           - code: 10
             source: {pointer: "/request/cookies/c"}
 

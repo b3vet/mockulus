@@ -187,12 +187,13 @@ describe('the client against a live server', () => {
    */
   const unsupportedMapping = (urlPath: string): StubMapping =>
     ({
-      // `multipartPatterns`, not `equalToXml`: the latter was this helper's
-      // unsupported feature until v1.3.0 implemented it, at which point these
-      // cases started asserting that a valid mapping is invalid. Whatever is
-      // named here has to be something the server still refuses, so it moves
-      // each time the gap closes — which is the point of the release.
-      request: { method: 'GET', urlPath, multipartPatterns: [{ name: 'x' }] },
+      // `customMatcher`, and deliberately not a roadmap item. This helper named
+      // `equalToXml` until XML-2 implemented it and `multipartPatterns` until
+      // MP-2 did, and each time these cases quietly began asserting that a valid
+      // mapping is invalid. `customMatcher` names a Java class to load, which is
+      // a stated non-goal rather than a gap, so it is the one refusal that will
+      // not be implemented out from under this helper.
+      request: { method: 'GET', urlPath, customMatcher: { name: 'com.example.Matcher' } },
       response: { status: 200 },
     }) as unknown as StubMapping;
 
@@ -215,7 +216,7 @@ describe('the client against a live server', () => {
       expect(report.results[0]?.valid).toBe(true);
       expect(report.results[1]?.valid).toBe(false);
       expect(report.results[1]?.errors?.[0]?.code).toBe(ErrorCode.UnsupportedFeature);
-      expect(report.results[1]?.errors?.[0]?.source?.pointer).toBe('/request/multipartPatterns');
+      expect(report.results[1]?.errors?.[0]?.source?.pointer).toBe('/request/customMatcher');
 
       // Nothing was registered, including the mapping that was fine.
       const listed = await client.mappings.list();

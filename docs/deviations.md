@@ -1,6 +1,6 @@
 # Deviations from WireMock
 
-Mockulus answers differently from WireMock in 62 places. This page is all of
+Mockulus answers differently from WireMock in 63 places. This page is all of
 them, grouped by what you are doing when you hit one, with what to expect and
 what to do about it. A few sections cover two closely related numbers together,
 so there are fewer headings than deviations.
@@ -829,6 +829,65 @@ ordinary meaning.
 No stub WireMock accepts is refused on this account, so this deviation costs
 nothing to migrate. The only difference is that a request answered with a server
 error there is answered here.
+
+### #63 — `multipartPatterns`'s `name` selects the part
+
+This is the riskiest entry on the page, and the only one in v1.3.0 that can turn
+a passing WireMock suite red. Read it before adopting `multipartPatterns`.
+
+On WireMock the `name` field is accepted, optional, and **never consulted**:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" -d '{"request":{"urlPath":"/upload",
+    "multipartPatterns":[{"name":"meta","bodyPatterns":[{"equalTo":"hello"}]}]},
+    "response":{"status":200}}'
+
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$MOCK/upload" -F 'other=hello'
+404
+```
+
+WireMock answers `200` there. The part is called `other`, the pattern asks for
+`meta`, and it matches anyway — part selection is done through `headers` against
+`Content-Disposition` and through nothing else. The sharpest form is a pattern
+whose `name` **contradicts** the header criterion beside it:
+
+```json
+{"name": "meta",
+ "headers": {"Content-Disposition": {"contains": "name=\"other\""}},
+ "bodyPatterns": [{"equalTo": "bye"}]}
+```
+
+Two fields disagreeing about which part is wanted, and WireMock serves the stub,
+because only one of them was ever read.
+
+Here `name` means what it reads as: the part's `Content-Disposition` `name`
+parameter must equal it. The parameter is **parsed** rather than matched as
+text, so both spellings a client may send are found —
+
+```
+Content-Disposition: form-data; name="meta"
+Content-Disposition: form-data; name=meta
+```
+
+— where the equivalent `{"contains": "name=\"meta\""}` criterion matches the
+first and misses the second.
+
+**The risk, stated plainly.** This matches *strictly fewer* requests than
+WireMock. Everywhere else on this page that mockulus differs on matching, it
+either refuses at registration or matches more; this one changes a `200` into a
+`404` at serve time, which is the direction [#29](#29--repeated-headers-and-query-parameters-are-plain-any-of)
+exists to avoid. A stub that names one part while relying on any part matching
+works there and fails here.
+
+The judgement is that such a stub is relying on a bug rather than on a feature,
+and that a mismatch found while writing tests beats one found at three in the
+morning. It is a judgement and not a fact, the code is one condition, and this
+paragraph is where to start if it turns out to be the wrong call.
+
+Nothing else about the criterion deviates. Elements are ANDed, `matchingType`
+quantifies over the parts inside one element, a non-multipart body is a
+non-match rather than an error, a body with no parts never matches, and an empty
+array constrains nothing — all verified differentially.
 
 ### #29 — Repeated headers and query parameters are plain any-of
 

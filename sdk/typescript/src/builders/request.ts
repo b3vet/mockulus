@@ -31,7 +31,7 @@
  */
 
 import type { RequestPattern, StubMapping } from '../types.js';
-import type { BodyPattern, KeyCriterion, Matcher } from './matchers.js';
+import type { BodyPattern, KeyCriterion, Matcher, MultipartPattern } from './matchers.js';
 import type { ResponseBuilder } from './response.js';
 
 /**
@@ -240,6 +240,26 @@ export class MappingBuilder<
   withRequestBody(matcher: BodyPattern): MappingBuilder<Variables, Scenario> {
     return this.withRequest({
       bodyPatterns: [...(this.document.request?.bodyPatterns ?? []), matcher],
+    });
+  }
+
+  /**
+   * A criterion over the parts of a multipart body.
+   *
+   * Several of these are an AND, like `bodyPatterns` — but the quantifier
+   * inside one of them is not. `matchingType` ranges over the *parts*: `ANY`
+   * (the default) needs one satisfying part, `ALL` needs every part to satisfy.
+   * Two elements each saying `ANY` therefore require two satisfied parts, which
+   * is the reading people most often get backwards.
+   *
+   * `name` selects the part whose `Content-Disposition` name parameter equals
+   * it. **WireMock ignores that field**, so a stub relying on it being inert
+   * matches there and not here — deviation #63, and the one difference in this
+   * release that can turn a passing suite red.
+   */
+  withMultipartRequestBody(pattern: MultipartPattern): MappingBuilder<Variables, Scenario> {
+    return this.withRequest({
+      multipartPatterns: [...(this.document.request?.multipartPatterns ?? []), pattern],
     });
   }
 

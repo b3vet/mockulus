@@ -104,15 +104,15 @@ that answers `422` with:
     },
     {
       "code": 1000,
-      "source": { "pointer": "/mappings/2/request/bodyPatterns/0/equalToXml" },
+      "source": { "pointer": "/mappings/2/request/customMatcher" },
       "title": "Unsupported feature",
-      "detail": "equalToXml (XML matching) is not supported in mockulus v1 — see ROADMAP.md"
+      "detail": "customMatcher is not supported in mockulus v1 — see ROADMAP.md"
     },
     {
       "code": 1000,
-      "source": { "pointer": "/mappings/5/request/multipartPatterns" },
+      "source": { "pointer": "/mappings/5/response/proxyBaseUrl" },
       "title": "Unsupported feature",
-      "detail": "multipartPatterns is not supported in mockulus v1 — see ROADMAP.md"
+      "detail": "proxyBaseUrl (proxy mode) is not supported in mockulus v1 — see ROADMAP.md"
     }
   ]
 }

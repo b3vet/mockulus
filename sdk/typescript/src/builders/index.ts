@@ -83,6 +83,7 @@ export type {
   KeyOnlyMatcher,
   LiteralDateTimeOptions,
   Matcher,
+  MultipartPattern,
   NowRelative,
   RelativeDateTimeOptions,
   TemporalUnit,

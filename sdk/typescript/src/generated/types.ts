@@ -741,10 +741,10 @@ export interface components {
      *         {
      *           "code": 1000,
      *           "source": {
-     *             "pointer": "/request/multipartPatterns"
+     *             "pointer": "/request/customMatcher"
      *           },
      *           "title": "Unsupported feature",
-     *           "detail": "multipartPatterns is not supported in mockulus v1 — see ROADMAP.md"
+     *           "detail": "customMatcher is not supported in mockulus v1 — see ROADMAP.md"
      *         }
      *       ]
      *     }
@@ -1031,6 +1031,28 @@ export interface components {
       };
       basicAuthCredentials?: components['schemas']['BasicAuthCredentials'];
       /** @description Criteria over the request body. **All** of them must match. They are evaluated cheapest first — equality before regex before anything that has to parse the body — which is an ordering the server chooses and no stub needs to think about. */
+      bodyPatterns?: components['schemas']['ContentMatcher'][];
+      /** @description Criteria over the parts of a multipart body. **All** elements must be satisfied; within a single element `matchingType` decides how many *parts* have to satisfy it. A body that is not multipart is a non-match rather than an error, and a multipart body carrying no parts never matches — including against an element specifying no criteria at all. An empty array is not a criterion and constrains nothing. */
+      multipartPatterns?: components['schemas']['MultipartPattern'][];
+    };
+    /**
+     * Multipart part pattern
+     * @description One element of `multipartPatterns`. Every field is optional, and an element carrying none of them matches any request that has at least one part.
+     */
+    MultipartPattern: {
+      /** @description Selects the part whose `Content-Disposition` `name` parameter equals this. The parameter is parsed rather than matched as text, so `name="meta"` and `name=meta` are both found. **WireMock ignores this field entirely** — there, a pattern naming a part that is not present still matches — so honouring it matches strictly fewer requests, which is deviation #63 and the riskiest difference in this release. */
+      name?: string;
+      /**
+       * @description How many parts must satisfy this element: `ANY` needs one, `ALL` needs every part. These two spellings are the only accepted values, case-sensitively.
+       * @default ANY
+       * @enum {string}
+       */
+      matchingType?: 'ANY' | 'ALL';
+      /** @description A matcher per header of the part itself, not of the request. */
+      headers?: {
+        [key: string]: components['schemas']['ContentMatcher'];
+      };
+      /** @description Criteria over the part's body, taking the same vocabulary as the request's own `bodyPatterns`. */
       bodyPatterns?: components['schemas']['ContentMatcher'][];
     };
     /**
