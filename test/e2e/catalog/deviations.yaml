@@ -595,6 +595,16 @@ behaviors:
     evidence: "a malformed XPath is refused at registration rather than registering and never matching"
     evidence_tokens: ["matchesXPath", "not a valid XPath"]
     status: "ok"
+  - id: "B-DEV-62"
+    spec_row: "spec:5.5:deviations|deviation-62"
+    spec_hash: "6d14ff920ab49391"
+    spec: "#55-deviations-from-wiremock-complete-list-v1"
+    kind: "template"
+    impl_milestone: "M9"
+    summary: "deviation-62"
+    evidence: "a numeric xPath result renders without locale grouping separators"
+    evidence_tokens: ["xPath", "2000000"]
+    status: "ok"
   - id: "B-DEV-61"
     spec_row: "spec:5.5:deviations|deviation-61"
     spec_hash: "f78fb8b008e445bd"

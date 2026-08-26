@@ -23,6 +23,7 @@ import (
 
 	"github.com/b3vet/mockulus/internal/admin"
 	"github.com/b3vet/mockulus/internal/config"
+	"github.com/b3vet/mockulus/internal/handlebars"
 	"github.com/b3vet/mockulus/internal/journal"
 	"github.com/b3vet/mockulus/internal/jsonpath"
 	"github.com/b3vet/mockulus/internal/jsonschemax"
@@ -138,7 +139,12 @@ func run() error {
 	var templateEngine *template.Engine
 	if cfg.TemplatingEnabled != config.TemplatingOff {
 		templateEngine = template.NewEngine(int(cfg.TemplateMaxOutputBytes.B()),
-			jsonpath.TemplateHelper)
+			map[string]handlebars.Helper{
+				"jsonPath":  jsonpath.TemplateHelper,
+				"xPath":     matchers.XPathHelper,
+				"soapXPath": matchers.SOAPXPathHelper,
+				"formatXml": matchers.FormatXMLHelper,
+			})
 		renderer = templateEngine
 	}
 

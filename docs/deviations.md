@@ -1,8 +1,9 @@
 # Deviations from WireMock
 
-Mockulus answers differently from WireMock in 57 places. This page is all of
+Mockulus answers differently from WireMock in 62 places. This page is all of
 them, grouped by what you are doing when you hit one, with what to expect and
-what to do about it.
+what to do about it. A few sections cover two closely related numbers together,
+so there are fewer headings than deviations.
 
 A deviation is a decision, not a defect. Each one was taken because the
 alternative cost something specific, and in almost every case the cost is one of
@@ -1144,7 +1145,7 @@ at registration —
 ```console
 $ curl -s -X POST "$ADMIN/__admin/mappings" \
     -d '{"request":{"url":"/h"},"response":{"body":"{{jwt \"x\"}}","transformers":["response-template"]}}'
-{"errors":[{"code":1002,"source":{"pointer":"/response/body"},"title":"Template error","detail":"unknown helper \"jwt\"; mockulus supports base64, concat, default, join, jsonPath, lookup, lower, lowercase, math, now, number, pickRandom, randomDecimal, randomInt, randomValue, range, replace, size, split, substring, trim, upper, uppercase, urlEncode"}]}
+{"errors":[{"code":1002,"source":{"pointer":"/response/body"},"title":"Template error","detail":"unknown helper \"jwt\"; mockulus supports base64, concat, default, formatXml, join, jsonPath, lookup, lower, lowercase, math, now, number, pickRandom, randomDecimal, randomInt, randomValue, range, replace, size, soapXPath, split, substring, trim, upper, uppercase, urlEncode, xPath"}]}
 ```
 
 — while an error that can only happen against a real request renders into the
@@ -1159,9 +1160,12 @@ Template render error: jsonPath: the document is not valid JSON
 
 Serve-time render errors are counted by `mockulus_template_render_errors_total`.
 The helpers excluded from the allowlist are excluded deliberately: `file`,
-`systemValue`, `secret`, `hostname` and the XML helpers give a stub filesystem,
-environment or network reach, and templates here are sandboxed by construction
-rather than by configuration ([SPEC §17](../SPEC.md#17-security)).
+`systemValue`, `secret` and `hostname` give a stub filesystem, environment or
+network reach, and templates here are sandboxed by construction rather than by
+configuration ([SPEC §17](../SPEC.md#17-security)). `xPath`, `soapXPath` and
+`formatXml` were listed beside them until v1.3.0 and never belonged there —
+reading the request's own body reaches nothing outside the request — and they
+are supported as of that release.
 
 ### #45 — `math` with `/` keeps the fraction
 
@@ -1174,6 +1178,41 @@ The body is `{{math 10 "/" 4}}`. WireMock rounds half-up to an integer when both
 operands are integral and renders `3`. Discarding the fraction of a division a
 template asked for is a surprising default, and the rounded value is one more
 `{{math}}` away for anyone who wants it.
+
+### #62 — A numeric `xPath` result carries no locale grouping
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" -d '{"request":{"urlPath":"/n"},
+    "response":{"body":"{{{xPath request.body \'count(//item) * 1000000\'}}}",
+                "transformers":["response-template"]}}'
+
+$ curl -s -X POST "$MOCK/n" -H 'Content-Type: application/xml' \
+    --data-binary '<r><item>a</item><item>b</item></r>'
+2000000
+```
+
+WireMock renders `2,000,000`. Not always, though, and that is the point. The same
+stub, the same request and the same pinned image render it differently depending
+on the locale the *container* started in:
+
+```console
+$ docker run … wiremock/wiremock:3.13.2                               # default
+2,000,000
+$ docker run … -e JAVA_OPTS="-Duser.language=de -Duser.country=DE" …  # de_DE
+2.000.000
+```
+
+That is Java's default `NumberFormat` following the JVM's locale, and it means
+there is no oracle answer to reproduce — only whichever locale the oracle in
+front of you happened to boot in. A mockulus that grouped digits would still
+render a *different* body from the WireMock sitting beside it whenever the two
+disagreed, so matching would buy nothing and cost a machine-dependent response.
+
+Digits and a `.` decimal separator, everywhere. `0.5` is `0.5` and not `0,5`.
+
+This only reaches expressions that return a number — `count(...)`, arithmetic,
+`string-length(...)`. Selecting nodes, which is what the helper is nearly always
+doing, renders identically to WireMock and is covered by the differential lane.
 
 ### #39 — A helper that finds nothing renders nothing
 

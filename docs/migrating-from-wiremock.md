@@ -649,15 +649,16 @@ An unknown Handlebars helper is code `1002`, and the message lists what is
 available:
 
 ```
-unknown helper "myHelper"; mockulus supports base64, concat, default, join, jsonPath,
-lookup, lower, lowercase, math, now, number, pickRandom, randomDecimal, randomInt,
-randomValue, range, replace, size, split, substring, trim, upper, uppercase, urlEncode
+unknown helper "myHelper"; mockulus supports base64, concat, default, formatXml,
+join, jsonPath, lookup, lower, lowercase, math, now, number, pickRandom,
+randomDecimal, randomInt, randomValue, range, replace, size, soapXPath, split,
+substring, trim, upper, uppercase, urlEncode, xPath
 ```
 
-`xPath`, `soapXPath`, `formatXml`, `jwt`, `secret`, `systemValue`, `hostname`
-and `file` are not in that list. The last four are excluded on purpose: a
-template must not be able to read the environment, the filesystem or the
-network.
+`jwt`, `secret`, `systemValue`, `hostname` and `file` are not in that list, and
+four of those five are excluded on purpose: a template must not be able to read
+the environment, the filesystem or the network. `xPath`, `soapXPath` and
+`formatXml` were listed here too until v1.3.0, which implemented them.
 
 ### Timing
 

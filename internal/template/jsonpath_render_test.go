@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/b3vet/mockulus/internal/handlebars"
 	"github.com/b3vet/mockulus/internal/jsonpath"
 )
 
@@ -21,7 +22,7 @@ import (
 func selectFrom(t *testing.T, body, source string) string {
 	t.Helper()
 
-	engine := NewEngine(1<<20, jsonpath.TemplateHelper)
+	engine := NewEngine(1<<20, map[string]handlebars.Helper{"jsonPath": jsonpath.TemplateHelper})
 	tpl, err := engine.Compile(source)
 	if err != nil {
 		t.Fatalf("compile %q: %v", source, err)

@@ -131,16 +131,16 @@ what makes the Evidence column worth reading.
 
 | | Count |
 |---|---:|
-| WireMock surface — supported | 79 |
+| WireMock surface — supported | 82 |
 | WireMock surface — supported with a documented deviation | 9 |
 | WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 6 |
-| Deliberate deviations from WireMock | 61 |
-| Catalogued behaviors in total | 242 |
+| Deliberate deviations from WireMock | 62 |
+| Catalogued behaviors in total | 246 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 601 |
-| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 399 |
-| … `wm: n/a` — expectations from the spec | 202 |
+| E2E corpus cases | 605 |
+| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 402 |
+| … `wm: n/a` — expectations from the spec | 203 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
 Milestone cursor `M9`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
@@ -281,20 +281,23 @@ Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`
 | `delayDistribution` | ✅ | 2 · verified | `B-RESP-DELAYDISTRIBUTION` | `uniform` (lower/upper) and `lognormal` (median/sigma) |
 | `chunkedDribbleDelay` | ✅ | 1 · n/a | `B-RESP-CHUNKEDDRIBBLEDELAY` | `numberOfChunks`, `totalDuration` |
 | `fault` | ✅ | 5 · n/a (5 Go-native) | `B-RESP-FAULT` | `CONNECTION_RESET_BY_PEER`, `EMPTY_RESPONSE`, `MALFORMED_RESPONSE_CHUNK`, `RANDOM_DATA_THEN_CLOSE` (§12.5) |
-| `transformers` | 🔶 | 34 · verified | `B-RESP-TRANSFORMERS` | Only `["response-template"]` recognized; any other transformer name → 422 |
+| `transformers` | 🔶 | 38 · verified | `B-RESP-TRANSFORMERS` | Only `["response-template"]` recognized; any other transformer name → 422 |
 | `transformerParameters` | ✅ | 4 · verified | `B-RESP-TRANSFORMERPARAMETERS` | Exposed to templates as `parameters` |
 | `proxyBaseUrl`, `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` | ❌ 422 | 1 · n/a | `B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR` | Roadmap (proxy mode) |
 | `fromConfiguredStub`, `additionalHeaders` (proxy-related) | ❌ 422 | 1 · n/a | `B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED` | — |
 
 ### Response-template helpers
 
-[SPEC §10.3](../SPEC.md#103-helper-allowlist-v1) · 10 behaviors
+[SPEC §10.3](../SPEC.md#103-helper-allowlist-v1) · 13 behaviors
 
 The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt`, `secret`, `systemValue`, `hostname`, `file` — is 422 code 1002 at registration, naming the helper. Environment, file and system access are excluded deliberately (SPEC §17).
 
 | Helper(s) | Evidence | Behavior | Notes |
 |---|---|---|---|
 | `jsonPath` | 8 · verified | `B-TPL-JSONPATH` | shares the §6.7 engine |
+| `xPath` | 1 · verified | `B-TPL-XPATH` | shares the §6.7 XML parser and XPath engine; a node-set renders its **first** node, an element serializes through `formatXml`, a value expression is legal here (unlike `matchesXPath`, §5.5 #59) |
+| `soapXPath` | 1 · verified | `B-TPL-SOAPXPATH` | the expression is evaluated as a location step below the SOAP `Envelope/Body`, so it may not begin with `//` or with a function call |
+| `formatXml` | 1 · verified | `B-TPL-FORMATXML` | pretty-prints at two spaces per level, drops the XML declaration, collapses empty elements |
 | `now` | 6 · verified | `B-TPL-NOW` | `offset`, `format` (WM tokens + `epoch`/`unix`), `timezone` |
 | `randomValue` | 4 · verified | `B-TPL-RANDOMVALUE` | types `ALPHANUMERIC`, `ALPHABETIC`, `NUMERIC`, `UUID`, `HEXADECIMAL`; `length`, `uppercase` |
 | `pickRandom` | 2 · n/a | `B-TPL-PICKRANDOM` | — |
@@ -307,7 +310,7 @@ The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt
 
 ## Deliberate deviations
 
-[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 61 deviations
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 62 deviations
 
 The complete list — every place a request that WireMock would accept is answered
 differently here, or refused. Each is deliberate and, where it makes sense, has a
@@ -557,6 +560,10 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 **61.** **CDATA and text compare equal in `equalToXml`** (WM: never equal, in either direction). `<t><![CDATA[v]]></t>` and `<t>v</t>` are the same text in the XML infoset, and only the parser distinguishes them; an author who asked for `v` and was sent `v` has what they asked for. This matches strictly **more** than WireMock, so no suite that passes there fails here.
 
 > `B-DEV-61` · 1 case · wm: n/a · CDATA and text compare equal in equalToXml, in both directions
+
+**62.** **A numeric `xPath` result renders without locale grouping** (WM: groups by the JVM's default locale). `{{xPath body 'count(//item) * 1000000'}}` renders `2,000,000` on a container started in `en` and `2.000.000` on the identical image started with `-Duser.language=de` — same stub, same request, same pinned version. The oracle's output here is a property of the container it booted in rather than of the wire, so there is nothing stable to reproduce; mockulus renders the digits and a `.` decimal point everywhere. Node selection, which is what the helper is nearly always used for, is unaffected.
+
+> `B-DEV-62` · 1 case · wm: n/a · a numeric xPath result renders without locale grouping separators
 
 ## Beyond the WireMock surface
 

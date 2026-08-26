@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-formatxml-001
+behaviors: [B-RESP-TRANSFORMERS, B-TPL-FORMATXML]
+wm: verified
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000011-0011-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-formatxml-001/fmt"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "{{{formatXml request.body}}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # Two spaces per level, one node per line, trailing newline.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-formatxml-001/fmt
+      headers: {Content-Type: application/xml}
+      body: '<r><a>1</a><b><c>2</c></b></r>'
+    expect:
+      status: 200
+      body: "<r>\n  <a>1</a>\n  <b>\n    <c>2</c>\n  </b>\n</r>\n"
+
+  # The declaration is dropped rather than rewritten or preserved.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-formatxml-001/fmt
+      headers: {Content-Type: application/xml}
+      body: "<?xml version='1.0'?><r><a>1</a></r>"
+    expect:
+      status: 200
+      body: "<r>\n  <a>1</a>\n</r>\n"
+
+  # Formatting an already-formatted document changes nothing. A printer that
+  # emitted layout without first discarding the source's own would double the
+  # indentation here, which is exactly what the underlying Go library does.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-formatxml-001/fmt
+      headers: {Content-Type: application/xml}
+      body: "<r>\n  <a>1</a>\n</r>"
+    expect:
+      status: 200
+      body: "<r>\n  <a>1</a>\n</r>\n"
+
+  # Empty, explicitly-empty and whitespace-only all collapse to a self-closing
+  # tag; a comment forces its parent to expand where a text child would not.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-formatxml-001/fmt
+      headers: {Content-Type: application/xml}
+      body: '<r><a/><b></b><c>   </c><!--k--><t><![CDATA[v]]></t></r>'
+    expect:
+      status: 200
+      body: "<r>\n  <a/>\n  <b/>\n  <c/>\n  <!--k-->\n  <t><![CDATA[v]]></t>\n</r>\n"
+
+  # Escaping in both positions, and a prefix that has to survive: a raw `>` in
+  # text is escaped, an apostrophe in an attribute is not, and the namespace
+  # declaration is rendered back as an ordinary attribute.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-formatxml-001/fmt
+      headers: {Content-Type: application/xml}
+      body: "<s:a xmlns:s='urn:x'><s:b t=\"it's\">1 > 0</s:b></s:a>"
+    expect:
+      status: 200
+      body: "<s:a xmlns:s=\"urn:x\">\n  <s:b t=\"it's\">1 &gt; 0</s:b>\n</s:a>\n"
+
+  # Mixed content puts each text run on its own line, trimmed.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-formatxml-001/fmt
+      headers: {Content-Type: application/xml}
+      body: '<r>text<a>1</a>tail</r>'
+    expect:
+      status: 200
+      body: "<r>\n  text\n  <a>1</a>\n  tail\n</r>\n"

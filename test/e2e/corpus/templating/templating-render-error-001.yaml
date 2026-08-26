@@ -36,9 +36,11 @@ steps:
 
   # Registration-time, half two: a helper outside the §10.3 allowlist. The
   # detail lists what is available, because "unknown helper" without the list
-  # leaves the author guessing at the spelling. `xPath` in particular is a
+  # leaves the author guessing at the spelling. `systemValue` in particular is a
   # helper WireMock does have, so this is the message that has to explain the
-  # gap rather than imply a typo.
+  # gap rather than imply a typo — and here the gap is permanent rather than a
+  # roadmap item, because reading the environment is what §17 puts outside the
+  # sandbox. This step used `xPath` until v1.3.0 implemented it.
   - admin:
       method: POST
       path: /__admin/mappings
@@ -46,7 +48,7 @@ steps:
         {"id": "10030013-0000-4000-8000-000000000002",
          "request": {"method": "GET", "urlPath": "/e2e/templating-render-error-001/helper"},
          "response": {"status": 200,
-                      "headers": {"X-Selected": "{{xPath request.body '/order/id/text()'}}"},
+                      "headers": {"X-Selected": "{{systemValue key='HOME'}}"},
                       "transformers": ["response-template"]}}
     expect:
       status: 422
@@ -54,7 +56,7 @@ steps:
         errors:
           - code: 1002
             source: {pointer: "/response/headers/X-Selected"}
-      body_regex: 'unknown helper.*xPath.*mockulus supports'
+      body_regex: 'unknown helper.*systemValue.*mockulus supports'
 
   - admin: {method: GET, path: /__admin/mappings/10030013-0000-4000-8000-000000000001}
     expect: {status: 404}

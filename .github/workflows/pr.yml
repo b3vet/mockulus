@@ -68,6 +68,13 @@ jobs:
         # could drift.
         run: make compat-docs-check
 
+      - name: the deviations page accounts for every deviation
+        # The page's own maintenance note promises a new deviation arrives with a
+        # section there or it does not arrive. That half had no gate, and the
+        # page's opening count drifted to four short of the real list while every
+        # generated document beside it stayed correct.
+        run: make deviation-docs-check
+
   unit:
     name: unit + race
     runs-on: ubuntu-latest

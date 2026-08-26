@@ -26,6 +26,14 @@ until the tag.
   ones do not; namespaces compare by URI, and the prefix is a local alias.
 - The `host`, `port` and `scheme` request matchers. They were refused by name in
   the code and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them.
+- The `xPath`, `soapXPath` and `formatXml` template helpers, reading the request
+  body through the same parser the matchers use — so the external-entity refusal
+  is one implementation rather than two, and a template cannot become a second
+  route to XXE. `soapXPath` evaluates its expression as a location step below the
+  SOAP `Envelope/Body`, which is why an expression may not begin with `//` or
+  with a function call. These three were listed in SPEC §10.3 as deliberately
+  excluded for sandbox reasons through v1.2.0; that was wrong, and reading the
+  request's own body reaches nothing outside the request.
 
 ### Changed
 
@@ -37,10 +45,18 @@ until the tag.
   directions. WireMock treats the section itself as significant. The infoset says
   they are the same text, and this matches strictly *more* than WireMock does, so
   no suite that passes there can fail here.
+- Deviation **#62**: a numeric `xPath` result renders without locale grouping.
+  WireMock formats through Java's default `NumberFormat`, so the identical image
+  renders `2,000,000` or `2.000.000` depending on the locale the container booted
+  in. There is no stable oracle answer to match, only the locale in front of you.
+- `docs/deviations.md` is now gated. Its own maintenance note promised a new
+  deviation arrives with a section there "or it does not arrive", and nothing
+  checked the claim — the page's opening count had drifted to 57 against a list
+  of 61, because it counted headings and several headings cover two deviations.
+  `make deviation-docs-check` fails on either half of that drift.
 
-Still to land before the tag: the `xPath`, `soapXPath` and `formatXml` template
-helpers that read the same document, and `multipartPatterns` (the deferred half
-of ROADMAP 1.5).
+Still to land before the tag: `multipartPatterns`, the deferred half of
+ROADMAP 1.5.
 
 ## [1.2.0] - 2026-08-14
 

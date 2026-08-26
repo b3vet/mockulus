@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/b3vet/mockulus/internal/handlebars"
 	"github.com/b3vet/mockulus/internal/jsonpath"
 	"github.com/b3vet/mockulus/internal/matchers"
 	"github.com/b3vet/mockulus/internal/regexx"
@@ -36,7 +37,7 @@ const mappingBudget = 2 * time.Second
 // same JSONPath engine and the same template engine the server builds. Stubbing
 // any of them out would move the interesting parsers outside the target.
 func fuzzOptions() Options {
-	engine := template.NewEngine(1<<16, jsonpath.TemplateHelper)
+	engine := template.NewEngine(1<<16, map[string]handlebars.Helper{"jsonPath": jsonpath.TemplateHelper})
 	return Options{
 		CompileRegex: func(pattern string) (matchers.PatternMatcher, error) {
 			return regexx.Compile(pattern, regexx.Options{

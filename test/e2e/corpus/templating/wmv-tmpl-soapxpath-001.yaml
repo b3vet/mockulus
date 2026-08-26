@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-soapxpath-001
+behaviors: [B-RESP-TRANSFORMERS, B-TPL-SOAPXPATH]
+wm: verified
+steps:
+  # soapXPath evaluates its expression as a location step *below* the SOAP
+  # Envelope/Body, by concatenation. The rows here are the ones that tell that
+  # apart from the natural-sounding alternative — "an expression relative to the
+  # Body's content element" — which fits a casual sample and gets `/id/text()`
+  # and `./id/text()` backwards. See PROBE_XML.md P10.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000012-0012-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-soapxpath-001/payload"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "abs={{{soapXPath request.body '/req/id/text()'}}} rel={{{soapXPath request.body 'req/id/text()'}}} star={{{soapXPath request.body '/*/id/text()'}}} deep={{{soapXPath request.body '/id/text()'}}} nested={{{soapXPath request.body '/n/id/text()'}}} dot={{{soapXPath request.body './id/text()'}}} none={{{soapXPath request.body '/req/zz/text()'}}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `deep` is the discriminator: `id` is a *grandchild* of Body, and a leading
+  # slash still finds it because the concatenation turns it into a descendant
+  # step. `dot` is its pair: a relative step really is relative to Body, whose
+  # only child is `req`, so it finds nothing.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-soapxpath-001/payload
+      headers: {Content-Type: application/xml}
+      body: '<S:Envelope xmlns:S="http://schemas.xmlsoap.org/soap/envelope/"><S:Body><req><id>7</id><n><id>9</id></n></req></S:Body></S:Envelope>'
+    expect:
+      status: 200
+      body: "abs=7 rel=7 star=7 deep=7 nested=9 dot= none="
+
+  # The prefix is not part of the contract: a different one binds the same
+  # namespace and resolves identically.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-soapxpath-001/payload
+      headers: {Content-Type: application/xml}
+      body: '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><req><id>7</id><n><id>9</id></n></req></soap:Body></soap:Envelope>'
+    expect:
+      status: 200
+      body: "abs=7 rel=7 star=7 deep=7 nested=9 dot= none="
+
+  # An envelope is required. A bare Body, and a payload with no SOAP wrapper at
+  # all, both yield nothing rather than falling back to the document root —
+  # the falsifier for a Body-locating path written too loosely.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-soapxpath-001/payload
+      headers: {Content-Type: application/xml}
+      body: '<Body><req><id>7</id><n><id>9</id></n></req></Body>'
+    expect:
+      status: 200
+      body: "abs= rel= star= deep= nested= dot= none="
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-soapxpath-001/payload
+      headers: {Content-Type: application/xml}
+      body: '<req><id>7</id><n><id>9</id></n></req>'
+    expect:
+      status: 200
+      body: "abs= rel= star= deep= nested= dot= none="
+
+  # An element selection serializes, exactly as it does through `xPath`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000012-0012-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-soapxpath-001/element"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "{{{soapXPath request.body '/req/id'}}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-soapxpath-001/element
+      headers: {Content-Type: application/xml}
+      body: '<S:Envelope xmlns:S="http://schemas.xmlsoap.org/soap/envelope/"><S:Body><req><id>7</id></req></S:Body></S:Envelope>'
+    expect:
+      status: 200
+      body: "<id>7</id>\n"

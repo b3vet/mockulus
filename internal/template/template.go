@@ -25,8 +25,8 @@ type Engine struct {
 }
 
 // NewEngine builds the engine with the allowlist of SPEC §10.3.
-func NewEngine(maxOutput int, jsonPath handlebars.Helper) *Engine {
-	return &Engine{registry: NewRegistry(jsonPath), maxOutput: maxOutput}
+func NewEngine(maxOutput int, external map[string]handlebars.Helper) *Engine {
+	return &Engine{registry: NewRegistry(external), maxOutput: maxOutput}
 }
 
 // HelperNames lists the registered helpers, which the 422 for an unknown one

@@ -403,6 +403,7 @@ Every deviation is deliberate, documented here, and (where sensible) has a confi
 59. **An XPath that evaluates to a value rather than selecting nodes is refused** (WM: registers, matches everything). WireMock evaluates `matchesXPath` as a node list, and an expression whose result is a boolean, a number or a string is not one — so `count(//item) = 2` matches a request with one item, and `false()` matches every request. The criterion reads as an assertion and is a no-op, which is the accept-and-ignore shape P3 forbids; the refusal names the shape to write instead. The result kind is a property of the expression and not of the document, so one probe document settles it at registration.
 60. **A malformed XPath is refused at registration** (WM: registers, never matches). `//[` answers 201 there and then silently matches nothing, so the stub is dead and the mapping says nothing about why. Same call as #59 and as #49, #50 and #58.
 61. **CDATA and text compare equal in `equalToXml`** (WM: never equal, in either direction). `<t><![CDATA[v]]></t>` and `<t>v</t>` are the same text in the XML infoset, and only the parser distinguishes them; an author who asked for `v` and was sent `v` has what they asked for. This matches strictly **more** than WireMock, so no suite that passes there fails here.
+62. **A numeric `xPath` result renders without locale grouping** (WM: groups by the JVM's default locale). `{{xPath body 'count(//item) * 1000000'}}` renders `2,000,000` on a container started in `en` and `2.000.000` on the identical image started with `-Duser.language=de` — same stub, same request, same pinned version. The oracle's output here is a property of the container it booted in rather than of the wire, so there is nothing stable to reproduce; mockulus renders the digits and a `.` decimal point everywhere. Node selection, which is what the helper is nearly always used for, is unaffected.
 
 ### 5.6 Differential compatibility verification (the compat tiebreaker)
 
@@ -752,6 +753,9 @@ Scale note: state is one doc per scenario name, so transitions on a single scena
 | Helper(s) | Notes |
 |---|---|
 | `jsonPath` | shares the §6.7 engine |
+| `xPath` | shares the §6.7 XML parser and XPath engine; a node-set renders its **first** node, an element serializes through `formatXml`, a value expression is legal here (unlike `matchesXPath`, §5.5 #59) |
+| `soapXPath` | the expression is evaluated as a location step below the SOAP `Envelope/Body`, so it may not begin with `//` or with a function call |
+| `formatXml` | pretty-prints at two spaces per level, drops the XML declaration, collapses empty elements |
 | `now` | `offset`, `format` (WM tokens + `epoch`/`unix`), `timezone` |
 | `randomValue` | types `ALPHANUMERIC`, `ALPHABETIC`, `NUMERIC`, `UUID`, `HEXADECIMAL`; `length`, `uppercase` |
 | `pickRandom` | |
@@ -762,7 +766,7 @@ Scale note: state is one doc per scenario name, so transitions on a single scena
 | `range` | |
 | `#if`, `#unless`, `#each`, `#with`, `lookup` | standard Handlebars block constructs |
 
-Anything else — notably `xPath`, `soapXPath`, `formatXml`, `jwt`, `secret`, `systemValue`, `hostname`, `file` — **422** listing the helper name (env/file/system access excluded deliberately; see §17).
+Anything else — notably `jwt`, `secret`, `systemValue`, `hostname`, `file` — **422** listing the helper name (env/file/system access excluded deliberately; see §17). The XML three were in that list through v1.2.0 and never belonged in it: reading the request's own body reaches nothing outside the request, which is the property that puts the other five outside the sandbox.
 
 The precise helper-output compatibility (format strings, locale) is pinned by differential corpus cases per helper.
 

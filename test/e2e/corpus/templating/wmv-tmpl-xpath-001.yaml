@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+id: wmv-tmpl-xpath-001
+behaviors: [B-RESP-TRANSFORMERS, B-TPL-XPATH]
+wm: verified
+steps:
+  # Every expectation below is a byte string recorded from the oracle
+  # (PROBE_XML.md P10). The four rows are chosen because each one separates the
+  # helper from a plausible wrong implementation: a text node from an element, a
+  # multi-node set from a list, an attribute from the element carrying it, and a
+  # value expression from the node-set-only rule that governs `matchesXPath`.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000010-0010-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-xpath-001/scalars"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "text={{{xPath request.body '//total/text()'}}} first={{{xPath request.body '//item/text()'}}} attr={{{xPath request.body '//item/@sku'}}} none={{{xPath request.body '//nope/text()'}}} count={{{xPath request.body 'count(//item)'}}} str={{{xPath request.body 'string(//total)'}}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `first` is the load-bearing one: the document has two items, and the helper
+  # renders only the first. An implementation that joined the node-set would
+  # render `ab` here and pass every other row in this case.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-xpath-001/scalars
+      headers: {Content-Type: application/xml}
+      body: '<r><total>10</total><item sku="A">a</item><item sku="B">b</item></r>'
+    expect:
+      status: 200
+      body: "text=10 first=a attr=A none= count=2 str=10"
+
+  # An element renders as serialized XML rather than as its text, and carries a
+  # trailing newline. Kept as its own stub so the expectation is the whole body
+  # and nothing can hide in the middle of a line.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000010-0010-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-xpath-001/element"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "{{{xPath request.body '//total'}}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-xpath-001/element
+      headers: {Content-Type: application/xml}
+      body: '<r><total>10</total><item sku="A">a</item></r>'
+    expect:
+      status: 200
+      body: "<total>10</total>\n"
+
+  # Selecting an element with children runs it through the same printer
+  # `formatXml` uses, which is why there is one formatter in the implementation
+  # and not two.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000010-0010-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/wmv-tmpl-xpath-001/subtree"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "{{{xPath request.body '/r'}}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/wmv-tmpl-xpath-001/subtree
+      headers: {Content-Type: application/xml}
+      body: '<r><total>10</total><item sku="A">a</item></r>'
+    expect:
+      status: 200
+      body: "<r>\n  <total>10</total>\n  <item sku=\"A\">a</item>\n</r>\n"
