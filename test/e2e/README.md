@@ -151,6 +151,51 @@ addressing the container by its own IP instead:
 MOCKULUS_E2E_CB_DIRECT=1 make e2e
 ```
 
+### Pointing the suite at a cluster you already run
+
+Direct mode still starts a container, provisions it and removes it — it only
+avoids the published ports. When you would rather run the cluster yourself,
+hand the harness a connection string and it starts, provisions and removes
+nothing:
+
+```sh
+export MOCKULUS_E2E_CB_CONNSTR=couchbase://192.168.215.2
+export MOCKULUS_E2E_CB_CONTAINER=my-couchbase      # optional; see below
+make e2e
+```
+
+| variable | default | |
+|---|---|---|
+| `MOCKULUS_E2E_CB_CONNSTR` | — | Turns the whole mode on. The lane adopts this cluster |
+| `MOCKULUS_E2E_CB_USERNAME` | `Administrator` | |
+| `MOCKULUS_E2E_CB_PASSWORD` | the harness's own | |
+| `MOCKULUS_E2E_CB_BUCKET` | `mockulus` | Must exist already |
+| `MOCKULUS_E2E_CB_CONTAINER` | — | The container name, so the degraded-mode cases can freeze it |
+| `MOCKULUS_E2E_CB_MGMT` | `<host>:8091` | Override for a cluster on non-standard ports |
+| `MOCKULUS_E2E_CB_QUERY` | `<host>:8093` | Same, for the query service |
+
+**Use the container's own address, not a remapped host port.** Couchbase
+advertises 11210 for KV itself, so a client handed `127.0.0.1:12210` still dials
+11210 and fails — the same reason the managed lane cannot remap its ports. Start
+your cluster wherever you like and point the connection string at its IP.
+
+**The bucket has to exist, and so do nothing else.** The harness will not create
+a bucket in a cluster it did not start; mockulus creates the scopes it needs at
+boot.
+
+**Ten cases take the store away** with `stop_store` — SIGSTOP over the
+container's processes — and that needs a container to address. Name it with
+`MOCKULUS_E2E_CB_CONTAINER` and they run. Leave it unset and they fail saying
+the store could not be removed, rather than passing because nothing was removed
+and the store therefore never misbehaved.
+
+**One thing is mutated.** At the start of every adopted run the harness drops
+the keyspaces it owns — the `t2-…` and `t3-…` scopes `ScopeFor` names — and
+waits for the deletions to settle. Without it the second run meets the first
+one's stubs and a case registering a fixed id is refused as a duplicate, three
+cases away from the cause. Nothing else in the bucket is touched, `_default`
+included, and the run logs which scopes it removed.
+
 It is opt-in because it is only true on some hosts. A container IP is routable
 from the host under OrbStack and on Linux, and is not under Docker Desktop's VM
 on macOS or Windows, where publishing is the only path that works. CI keeps the
