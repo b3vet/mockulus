@@ -67,7 +67,9 @@ $ docker logs mockulus
 ```
 
 The tag carries the `v` — `:v1.1.0`, not `:1.1.0` — because it is the git tag the release was cut
-from. `:latest` follows the most recent release. Static binaries for linux, macOS and Windows are
+from. That transcript is a recorded one and names the release it was taken from rather than the
+current one; `:latest` follows the most recent release, and the
+[releases page](https://github.com/b3vet/mockulus/releases) is what says which that is. Static binaries for linux, macOS and Windows are
 attached to each [GitHub release](https://github.com/b3vet/mockulus/releases) with a checksum file.
 
 To build the image instead, `make image` uses the same Dockerfile the release pipeline does and

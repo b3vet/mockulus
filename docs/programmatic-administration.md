@@ -39,7 +39,7 @@ await mockulus.mappings.create(
 Three things about it are worth knowing before you reach for it.
 
 **It types the supported subset and nothing more.** A stub the SDK can express
-is a stub the server registers. `equalToXml` is not a function you can call,
+is a stub the server registers. `customMatcher` is not a field you can set,
 because mockulus refuses it — so the 422 you would have got at registration is a
 type error before the call is written. The refusals about *placement* are typed
 too: there is no `schemaVersion` to attach to a matcher that has no schema, and
@@ -56,7 +56,7 @@ try {
   await mockulus.mappings.create(mapping);
 } catch (err) {
   if (isMockulusError(err)) {
-    console.error(err.pointers()); // ['/request/bodyPatterns/0/equalToXml', '/postServeActions']
+    console.error(err.pointers()); // ['/request/customMatcher', '/postServeActions']
   }
 }
 ```

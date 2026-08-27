@@ -174,10 +174,38 @@ make e2e
 | `MOCKULUS_E2E_CB_MGMT` | `<host>:8091` | Override for a cluster on non-standard ports |
 | `MOCKULUS_E2E_CB_QUERY` | `<host>:8093` | Same, for the query service |
 
-**Use the container's own address, not a remapped host port.** Couchbase
-advertises 11210 for KV itself, so a client handed `127.0.0.1:12210` still dials
-11210 and fails — the same reason the managed lane cannot remap its ports. Start
-your cluster wherever you like and point the connection string at its IP.
+**A remapped host port needs alternate addresses.** Couchbase hands clients a
+cluster map naming its *own* ports, so a client bootstrapped at
+`127.0.0.1:21210` is told to dial 11210 and fails — the same reason the managed
+lane cannot remap. Pointing the connection string at the container's IP avoids
+that, and on Linux it is the simplest thing to do.
+
+On macOS it is not available at all: Docker Desktop does not route container IPs
+from the host, so there is no address to point at and remapping is the only way
+to run a second cluster beside one already holding 8091. Couchbase supports it
+directly — declare the published ports as an external alternate address, once,
+after `cluster-init`:
+
+```bash
+docker run -d --name cb-e2e \
+  -p 127.0.0.1:18091:8091 -p 127.0.0.1:18092:8092 \
+  -p 127.0.0.1:18093:8093 -p 127.0.0.1:21210:11210 couchbase:community-7.6.2
+
+# … cluster-init and bucket-create as usual, then:
+curl -u Administrator:$PASSWORD -X PUT \
+  http://127.0.0.1:18091/node/controller/setupAlternateAddresses/external \
+  -d hostname=127.0.0.1 -d mgmt=18091 -d kv=21210 -d capi=18092 -d n1ql=18093
+
+export MOCKULUS_E2E_CB_CONNSTR=couchbase://127.0.0.1:21210
+export MOCKULUS_E2E_CB_MGMT=127.0.0.1:18091
+export MOCKULUS_E2E_CB_QUERY=127.0.0.1:18093
+export MOCKULUS_E2E_CB_CONTAINER=cb-e2e
+```
+
+The client detects the external network because the address it bootstrapped
+from is the one declared there, and the whole Couchbase lane — degraded-mode
+cases included — runs against it. This is how the lane was run while developing
+v1.3.0, on a machine whose 8091 belonged to something else.
 
 **The bucket has to exist, and so do nothing else.** The harness will not create
 a bucket in a cluster it did not start; mockulus creates the scopes it needs at
