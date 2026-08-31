@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-multipart-name-001
+behaviors: [B-DEV-63]
+# Deviation #63, and the riskiest call in v1.3.0. On WireMock `multipartPatterns`
+# accepts `name`, never consults it, and matches anyway — so every 404 below is a
+# 200 there. The case is therefore not diffable, and the direction matters: this
+# matches strictly *fewer* requests than the oracle, which is the direction
+# deviation #29 exists to avoid. It is here so that reverting is one deletion.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0640001-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-multipart-name-001/named",
+                     "multipartPatterns": [
+                       {"name": "meta", "bodyPatterns": [{"equalTo": "hello"}]}]},
+         "response": {"status": 200, "body": "named", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The case the author meant, and the one that behaves identically on both:
+  # the named part is there and satisfies the patterns.
+  - request: {port: mock, method: POST, path: /e2e/deviation-multipart-name-001/named,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"meta\"\r\n\r\nhello\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 200, body: "named"}
+
+  # The deviation. The body would satisfy the patterns, but it is carried by a
+  # part with a different name, so the criterion is not met. WireMock serves 200
+  # here because it never looked at `name` at all.
+  - request: {port: mock, method: POST, path: /e2e/deviation-multipart-name-001/named,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nhello\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+
+  # `name` is compared against the parsed Content-Disposition parameter, so an
+  # unquoted `name=meta` — equally legal on the wire — is found. A criterion
+  # written as `contains: name="meta"` misses this request, which is exactly why
+  # the field is honoured by parsing rather than rewritten into that criterion.
+  - request: {port: mock, method: POST, path: /e2e/deviation-multipart-name-001/named,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=meta\r\n\r\nhello\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 200, body: "named"}
+
+  # A name matching no part at all. This is the shape that makes the field worth
+  # honouring: on WireMock it matches every multipart request, which is the
+  # opposite of what it reads as.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0640001-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-multipart-name-001/nothing",
+                     "multipartPatterns": [{"name": "THIS-NAME-MATCHES-NOTHING"}]},
+         "response": {"status": 200, "body": "nothing", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/deviation-multipart-name-001/nothing,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"whatever\"\r\n\r\nhello\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+
+  # `name` and a header criterion that contradict each other. WireMock serves
+  # this, because only one of the two was ever read; here the two are both
+  # applied and cannot both hold, so nothing matches. A stub in this shape is
+  # almost certainly a mistake, and this is where its author finds out.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0640001-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-multipart-name-001/conflict",
+                     "multipartPatterns": [
+                       {"name": "meta",
+                        "headers": {"Content-Disposition": {"contains": "name=\"other\""}},
+                        "bodyPatterns": [{"equalTo": "bye"}]}]},
+         "response": {"status": 200, "body": "conflict", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/deviation-multipart-name-001/conflict,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nbye\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}

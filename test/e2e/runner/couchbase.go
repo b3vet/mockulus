@@ -67,6 +67,96 @@ var couchbasePorts = []string{"8091", "8092", "8093", "11210"}
 // ports are taken exports this.
 const directLaneEnv = "MOCKULUS_E2E_CB_DIRECT"
 
+// The bring-your-own-instance variables. Set MOCKULUS_E2E_CB_CONNSTR and the
+// harness starts nothing, provisions nothing and removes nothing: it points
+// mockulus at the cluster you already have and gets out of the way.
+//
+// This exists beside MOCKULUS_E2E_CB_DIRECT rather than replacing it because
+// the two answer different questions. Direct mode still wants the pinned image
+// and the harness's own provisioning, and only avoids the published ports. This
+// hands the whole lifecycle over — which is what you want when the cluster
+// should outlive the run, when it is a version you are deliberately testing
+// against, or when it is not a container at all.
+//
+// The credentials and bucket default to the ones the harness would have
+// created, so the common case is one variable.
+const (
+	byoConnStrEnv   = "MOCKULUS_E2E_CB_CONNSTR"
+	byoUserEnv      = "MOCKULUS_E2E_CB_USERNAME"
+	byoPasswordEnv  = "MOCKULUS_E2E_CB_PASSWORD"
+	byoBucketEnv    = "MOCKULUS_E2E_CB_BUCKET"
+	byoContainerEnv = "MOCKULUS_E2E_CB_CONTAINER"
+	byoMgmtEnv      = "MOCKULUS_E2E_CB_MGMT"
+	byoQueryEnv     = "MOCKULUS_E2E_CB_QUERY"
+)
+
+// byoConnStr returns the operator-supplied connection string, or empty.
+func byoConnStr() string { return strings.TrimSpace(os.Getenv(byoConnStrEnv)) }
+
+// envOr reads an environment variable, falling back to the harness's own value.
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// adoptCouchbase points the lane at a cluster the operator is running.
+//
+// Nothing is started, nothing is provisioned and nothing is torn down. The
+// bucket and scope have to exist already — the harness will not create them in
+// somebody else's cluster, because a harness that creates buckets where it was
+// only invited to read is a harness nobody should point at anything they care
+// about.
+//
+// Freezing is the one capability that cannot be inferred. The degraded-mode
+// cases take the store away with SIGSTOP over the container's processes, which
+// needs a container to address. Name it with MOCKULUS_E2E_CB_CONTAINER and
+// those cases run; leave it unset and they are refused with a reason rather
+// than failing as though the store had misbehaved.
+func adoptCouchbase() *Couchbase {
+	connStr := byoConnStr()
+	if connStr == "" {
+		return nil
+	}
+	// The management and query APIs are reached over HTTP, so the host is pulled
+	// out of the connection string. A scheme, a port or a multi-node list are all
+	// legal there and none of them belongs in an HTTP authority, so only the
+	// first node's host survives — and MOCKULUS_E2E_CB_MGMT overrides the whole
+	// authority for anything this cannot infer.
+	host := connStr
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	if i := strings.IndexAny(host, ",/?"); i >= 0 {
+		host = host[:i]
+	}
+	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.Contains(host[i:], "]") {
+		host = host[:i]
+	}
+
+	cb := &Couchbase{
+		ConnStr:   connStr,
+		Image:     "(not managed by the harness)",
+		host:      host,
+		user:      envOr(byoUserEnv, couchbaseUser),
+		password:  envOr(byoPasswordEnv, couchbasePassword),
+		bucket:    envOr(byoBucketEnv, couchbaseBucket),
+		container: strings.TrimSpace(os.Getenv(byoContainerEnv)),
+		adopted:   true,
+		client:    &http.Client{Timeout: 30 * time.Second},
+	}
+	msg := "couchbase lane adopted at " + connStr + " (" + byoConnStrEnv + " is set); " +
+		"the harness starts, provisions and removes nothing"
+	if cb.container == "" {
+		msg += ". No " + byoContainerEnv + ": the cases that take the store away cannot run"
+	} else {
+		msg += ". Freezing " + cb.container + " for the degraded-mode cases"
+	}
+	log(msg)
+	return cb
+}
+
 // directLane reports whether to address the container by IP.
 func directLane() bool {
 	v := strings.TrimSpace(os.Getenv(directLaneEnv))
@@ -114,6 +204,18 @@ type Couchbase struct {
 	container string
 	client    *http.Client
 
+	// The credentials and bucket mockulus is handed. They are the harness's own
+	// constants for a container it started, and whatever the operator supplied
+	// for one it adopted.
+	user     string
+	password string
+	bucket   string
+
+	// adopted marks a cluster the harness did not create. It governs one thing:
+	// nothing that mutates the cluster or its container lifecycle may run
+	// against it.
+	adopted bool
+
 	// paused tracks the frozen state so that asking for it twice is a no-op.
 	// Docker refuses to unpause a running container, and a case's own
 	// `start_store` and the runner's unconditional restore after it are the
@@ -128,6 +230,18 @@ type Couchbase struct {
 // The version comes from a file rather than a constant for the same reason the
 // WireMock pin does: bumping the server under the suite is one reviewed line.
 func StartCouchbase(ctx context.Context, versionFile string) (*Couchbase, error) {
+	// An adopted cluster is checked for before Docker is, because pointing the
+	// suite at a cluster somebody else runs is exactly the case where this
+	// machine may have no Docker to require.
+	if cb := adoptCouchbase(); cb != nil {
+		cb.clearOwnScopes(ctx)
+		if err := cb.waitBucketQueryable(ctx); err != nil {
+			return nil, fmt.Errorf("the adopted cluster at %s is not usable: %w\n"+
+				"the bucket %q and its scopes have to exist already — the harness does not "+
+				"create them in a cluster it did not start", cb.ConnStr, err, cb.bucket)
+		}
+		return cb, nil
+	}
 	if err := requireDocker(ctx); err != nil {
 		return nil, err
 	}
@@ -162,6 +276,9 @@ func StartCouchbase(ctx context.Context, versionFile string) (*Couchbase, error)
 		Image:     image,
 		host:      host,
 		container: name,
+		user:      couchbaseUser,
+		password:  couchbasePassword,
+		bucket:    couchbaseBucket,
 		client:    &http.Client{Timeout: 30 * time.Second},
 	}
 	if err := cb.provision(ctx); err != nil {
@@ -184,11 +301,122 @@ func StartCouchbase(ctx context.Context, versionFile string) (*Couchbase, error)
 func (c *Couchbase) StoreEnv(scope string) map[string]string {
 	return map[string]string{
 		"MOCKULUS_COUCHBASE_CONNSTR":  c.ConnStr,
-		"MOCKULUS_COUCHBASE_USERNAME": couchbaseUser,
-		"MOCKULUS_COUCHBASE_PASSWORD": couchbasePassword,
-		"MOCKULUS_COUCHBASE_BUCKET":   couchbaseBucket,
+		"MOCKULUS_COUCHBASE_USERNAME": c.user,
+		"MOCKULUS_COUCHBASE_PASSWORD": c.password,
+		"MOCKULUS_COUCHBASE_BUCKET":   c.bucket,
 		"MOCKULUS_COUCHBASE_SCOPE":    scope,
 	}
+}
+
+// clearOwnScopes drops the keyspaces this harness manages, and only those.
+//
+// A container the harness started is new every run, so its bucket is empty by
+// construction. An adopted cluster is not: it keeps whatever the last run left,
+// and a case registering a stub under a fixed id then meets its own leftover
+// and is refused as a duplicate. That is a real failure with a misleading
+// cause — the case reads as a broken assertion when the truth is that the run
+// before it never cleaned up.
+//
+// Only scopes named the way ScopeFor names them are removed: `t2-…`, `t3-…`.
+// Nothing else in the bucket is touched, `_default` included, so a bucket shared
+// with something else keeps whatever that something else put there. mockulus
+// recreates the scope it needs at boot.
+//
+// This is the one mutation an adopted cluster gets, and it is the price of the
+// bucket being usable twice. It is logged, so a run that removed something says
+// which.
+func (c *Couchbase) clearOwnScopes(ctx context.Context) {
+	resp, err := c.get(ctx, c.mgmtURL("/pools/default/buckets/"+c.bucket+"/scopes"))
+	if err != nil || resp.status != http.StatusOK {
+		// Not fatal: an operator may have handed over a bucket whose scopes this
+		// account cannot list, and the run should try rather than refuse. A
+		// leftover then shows up as the duplicate it is.
+		return
+	}
+	var doc struct {
+		Scopes []struct {
+			Name string `json:"name"`
+		} `json:"scopes"`
+	}
+	if json.Unmarshal(resp.body, &doc) != nil {
+		return
+	}
+
+	var dropped []string
+	for _, sc := range doc.Scopes {
+		if !ownedScope(sc.Name) {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+			c.mgmtURL("/pools/default/buckets/"+c.bucket+"/scopes/"+sc.Name), nil)
+		if err != nil {
+			continue
+		}
+		req.SetBasicAuth(c.user, c.password)
+		if answer, err := c.do(req); err == nil && answer.status == http.StatusOK {
+			dropped = append(dropped, sc.Name)
+		}
+	}
+	if len(dropped) == 0 {
+		return
+	}
+
+	// Couchbase acknowledges a scope deletion before it has finished one, and a
+	// mockulus that boots into a half-removed keyspace does not fail cleanly —
+	// it fails as "never became ready" and as scenario reads the store cannot
+	// answer, three cases away from the cause. Waiting for the listing to agree
+	// is what turns a flaky adopted run into a repeatable one.
+	_ = poll(ctx, 60*time.Second, "the cleared keyspaces never went away", func() error {
+		resp, err := c.get(ctx, c.mgmtURL("/pools/default/buckets/"+c.bucket+"/scopes"))
+		if err != nil {
+			return err
+		}
+		var still struct {
+			Scopes []struct {
+				Name string `json:"name"`
+			} `json:"scopes"`
+		}
+		if err := json.Unmarshal(resp.body, &still); err != nil {
+			return err
+		}
+		for _, sc := range still.Scopes {
+			if ownedScope(sc.Name) {
+				return fmt.Errorf("%s is still there", sc.Name)
+			}
+		}
+		return nil
+	})
+
+	log("cleared " + strconv.Itoa(len(dropped)) + " keyspace(s) this harness owns from the " +
+		"adopted bucket, left by an earlier run: " + strings.Join(dropped, ", "))
+}
+
+// ownedScope reports whether a scope name is one ScopeFor would have produced,
+// which is what makes it this harness's to remove.
+func ownedScope(name string) bool {
+	if len(name) < 4 || name[0] != 't' {
+		return false
+	}
+	i := 1
+	for i < len(name) && name[i] >= '0' && name[i] <= '9' {
+		i++
+	}
+	return i > 1 && i < len(name) && name[i] == '-'
+}
+
+// mgmtURL and queryURL are where the harness reaches the cluster's own APIs.
+//
+// A container the harness started is always on the standard ports, because it
+// started it. An adopted cluster may be anywhere — a developer running one
+// beside an existing install has to move it off 8091 to start it at all — so
+// both are overridable, and both default to the standard ports on whatever host
+// the connection string named.
+func (c *Couchbase) mgmtURL(path string) string {
+	return "http://" + envOr(byoMgmtEnv, c.host+":8091") + path
+}
+
+func (c *Couchbase) queryURL(path string) string {
+	return "http://" + envOr(byoQueryEnv, c.host+":8093") + path
 }
 
 // Pause takes the store away, and Resume gives it back. Together they are the
@@ -213,6 +441,17 @@ func (c *Couchbase) freeze(ctx context.Context, want bool) error {
 	if c.paused == want {
 		return nil
 	}
+	// An adopted cluster with no container named is one the harness has no way
+	// to take away. Refusing here — rather than pausing something, or pretending
+	// the pause happened — is what keeps a degraded-mode case honest: it fails
+	// saying the store could not be removed, instead of passing because nothing
+	// was removed and the store therefore never misbehaved.
+	if c.container == "" {
+		return fmt.Errorf("this run adopted a cluster at %s and was not told which "+
+			"container it is, so the store cannot be taken away. Set %s to its "+
+			"container name, or unset %s and let the harness run its own",
+			c.ConnStr, byoContainerEnv, byoConnStrEnv)
+	}
 
 	verb := "unpause"
 	if want {
@@ -228,6 +467,14 @@ func (c *Couchbase) freeze(ctx context.Context, want bool) error {
 
 // Stop removes the container.
 func (c *Couchbase) Stop() error {
+	// A cluster the harness adopted outlives the run. Removing somebody else's
+	// container because a test finished is the single most destructive thing
+	// this file could do, so it is guarded by the flag rather than by the
+	// container name alone — an adopted run may well have named one, for the
+	// freezing above.
+	if c.adopted {
+		return nil
+	}
 	if c.container == "" {
 		return nil
 	}
@@ -261,7 +508,7 @@ func (c *Couchbase) provision(ctx context.Context) error {
 // earliest point cluster-init can succeed.
 func (c *Couchbase) waitManagement(ctx context.Context) error {
 	return poll(ctx, 90*time.Second, "the couchbase management service never answered", func() error {
-		resp, err := c.get(ctx, "http://"+c.host+":8091/pools")
+		resp, err := c.get(ctx, c.mgmtURL("/pools"))
 		if err != nil {
 			return err
 		}
@@ -315,7 +562,7 @@ func (c *Couchbase) createBucket(ctx context.Context) error {
 // first instance to start.
 func (c *Couchbase) waitBucketQueryable(ctx context.Context) error {
 	if err := poll(ctx, 120*time.Second, "the bucket's nodes never became healthy", func() error {
-		resp, err := c.get(ctx, "http://"+c.host+":8091/pools/default/buckets/"+couchbaseBucket)
+		resp, err := c.get(ctx, c.mgmtURL("/pools/default/buckets/"+c.bucket))
 		if err != nil {
 			return err
 		}
@@ -391,19 +638,19 @@ func (c *Couchbase) get(ctx context.Context, url string) (httpAnswer, error) {
 	if err != nil {
 		return httpAnswer{}, err
 	}
-	req.SetBasicAuth(couchbaseUser, couchbasePassword)
+	req.SetBasicAuth(c.user, c.password)
 	return c.do(req)
 }
 
 func (c *Couchbase) query(ctx context.Context, statement string) (httpAnswer, error) {
 	form := strings.NewReader("statement=" + url.QueryEscape(statement))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"http://"+c.host+":8093/query/service", form)
+		c.queryURL("/query/service"), form)
 	if err != nil {
 		return httpAnswer{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(couchbaseUser, couchbasePassword)
+	req.SetBasicAuth(c.user, c.password)
 	return c.do(req)
 }
 

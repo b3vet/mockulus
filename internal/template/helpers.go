@@ -44,16 +44,30 @@ const (
 	hexDigits  = "0123456789abcdef"
 )
 
-// NewRegistry builds the helper allowlist of SPEC §10.3.
+// ExternalHelpers are the §10.3 helpers whose meaning is defined outside this
+// package, keyed by helper name.
 //
-// jsonPath is supplied by the caller rather than built here, because it shares
-// the matcher engine's JSONPath implementation — there is one definition of
-// what a path expression means across the product.
-func NewRegistry(jsonPath handlebars.Helper) *handlebars.Registry {
+// They are supplied by the caller rather than built here because each shares an
+// implementation with the matcher engine — there is one definition of what a
+// JSONPath expression means across the product, and one of what an XPath means.
+// For the XML three that sharing is also a security property rather than only a
+// tidiness one: the matchers' parser declares external entities away (§17), and
+// a second parser reached through a template would be a second place for that
+// to stop being true.
+//
+// The names are listed here rather than taken from the map's keys so that the
+// allowlist stays readable in one place; anything else the caller passes is
+// ignored rather than quietly registered.
+var externalHelperNames = []string{"jsonPath", "xPath", "soapXPath", "formatXml"}
+
+// NewRegistry builds the helper allowlist of SPEC §10.3.
+func NewRegistry(external map[string]handlebars.Helper) *handlebars.Registry {
 	r := handlebars.NewRegistry()
 
-	if jsonPath != nil {
-		r.Register("jsonPath", jsonPath)
+	for _, name := range externalHelperNames {
+		if h := external[name]; h != nil {
+			r.Register(name, h)
+		}
 	}
 
 	r.Register("now", nowHelper)

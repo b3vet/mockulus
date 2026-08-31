@@ -217,13 +217,47 @@ behaviors:
     status: "ok"
   - id: "B-REQ-MULTIPARTPATTERNS"
     spec_row: "spec:5.2:stub-request|multipartPatterns"
-    spec_hash: "83c027a77c30b231"
+    spec_hash: "0d7ba76cabded0e0"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
-    impl_milestone: "M1"
+    impl_milestone: "M9"
     summary: "multipartPatterns"
-    evidence: "422 code 1000 pointing at /request/multipartPatterns"
-    evidence_tokens: ["1000", "multipartPatterns"]
+    evidence: "elements are ANDed, matchingType quantifies over parts, and a body with no parts never matches"
+    evidence_tokens: ["multipartPatterns", "matchingType"]
+    status: "ok"
+  # The three connection-level criteria. They were refused by name in
+  # internal/stub and had no spec row at all until v1.3.0 — invisible in the
+  # spec and in the roadmap alike, which is how they went three releases
+  # without being costed.
+  - id: "B-REQ-HOST"
+    spec_row: "spec:5.2:stub-request|host"
+    spec_hash: "ea4fecda9609e408"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "host"
+    evidence: "the host criterion matches the Host header without its port and takes the ordinary matcher vocabulary"
+    evidence_tokens: ["host", "Host"]
+    status: "ok"
+  - id: "B-REQ-PORT"
+    spec_row: "spec:5.2:stub-request|port"
+    spec_hash: "89a27dbcdd9bf32b"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "port"
+    evidence: "the port criterion matches the port named in the Host header, and the empty string when none was named"
+    evidence_tokens: ["port", "Host"]
+    status: "ok"
+  - id: "B-REQ-SCHEME"
+    spec_row: "spec:5.2:stub-request|scheme"
+    spec_hash: "ca97051c3a0d8cd0"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "scheme"
+    evidence: "the scheme criterion reports https only when this process terminated TLS, and ignores forwarding headers"
+    evidence_tokens: ["scheme", "http"]
     status: "ok"
   - id: "B-REQ-CUSTOMMATCHER"
     spec_row: "spec:5.2:stub-request|customMatcher"
@@ -329,15 +363,29 @@ behaviors:
     evidence: "the subject is validated against the schema, under the draft schemaVersion names or the document's own $schema"
     evidence_tokens: ["matchesJsonSchema", "schemaVersion"]
     status: "ok"
-  - id: "B-MATCH-EQUALTOXML-MATCHESXPATH"
-    spec_row: "spec:5.2:content-matchers|equalToXml, matchesXPath"
-    spec_hash: "1248b108447c64fe"
+  # Split in v1.3.0: the two matchers became supported and each carries its own
+  # semantics now, so one row could no longer describe both. The ids are new
+  # rather than inherited, because what they assert is the opposite of what the
+  # old one did.
+  - id: "B-MATCH-EQUALTOXML"
+    spec_row: "spec:5.2:content-matchers|equalToXml"
+    spec_hash: "1cd2b4ca2935e7e7"
     spec: "#52-stub-mapping-json--field-support-matrix"
     kind: "matcher"
-    impl_milestone: "M1"
-    summary: "equalToXml, matchesXPath"
-    evidence: "422 code 1000 for equalToXml and matchesXPath"
-    evidence_tokens: ["1000", "matchesXPath"]
+    impl_milestone: "M9"
+    summary: "equalToXml"
+    evidence: "structural comparison: attribute order and whitespace insignificant, namespaces by URI, children paired by name and within a name group by document order, comments ignored and processing instructions significant"
+    evidence_tokens: ["equalToXml", "xml"]
+    status: "ok"
+  - id: "B-MATCH-MATCHESXPATH"
+    spec_row: "spec:5.2:content-matchers|matchesXPath"
+    spec_hash: "466a1960504bb846"
+    spec: "#52-stub-mapping-json--field-support-matrix"
+    kind: "matcher"
+    impl_milestone: "M9"
+    summary: "matchesXPath"
+    evidence: "the bare form holds for a non-empty node-set and the object form is any-of over the selection, with xPathNamespaces binding prefixes"
+    evidence_tokens: ["matchesXPath", "expression"]
     status: "ok"
   - id: "B-MATCH-ABSENT"
     spec_row: "spec:5.2:content-matchers|absent"

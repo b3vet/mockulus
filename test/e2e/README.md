@@ -151,6 +151,79 @@ addressing the container by its own IP instead:
 MOCKULUS_E2E_CB_DIRECT=1 make e2e
 ```
 
+### Pointing the suite at a cluster you already run
+
+Direct mode still starts a container, provisions it and removes it — it only
+avoids the published ports. When you would rather run the cluster yourself,
+hand the harness a connection string and it starts, provisions and removes
+nothing:
+
+```sh
+export MOCKULUS_E2E_CB_CONNSTR=couchbase://192.168.215.2
+export MOCKULUS_E2E_CB_CONTAINER=my-couchbase      # optional; see below
+make e2e
+```
+
+| variable | default | |
+|---|---|---|
+| `MOCKULUS_E2E_CB_CONNSTR` | — | Turns the whole mode on. The lane adopts this cluster |
+| `MOCKULUS_E2E_CB_USERNAME` | `Administrator` | |
+| `MOCKULUS_E2E_CB_PASSWORD` | the harness's own | |
+| `MOCKULUS_E2E_CB_BUCKET` | `mockulus` | Must exist already |
+| `MOCKULUS_E2E_CB_CONTAINER` | — | The container name, so the degraded-mode cases can freeze it |
+| `MOCKULUS_E2E_CB_MGMT` | `<host>:8091` | Override for a cluster on non-standard ports |
+| `MOCKULUS_E2E_CB_QUERY` | `<host>:8093` | Same, for the query service |
+
+**A remapped host port needs alternate addresses.** Couchbase hands clients a
+cluster map naming its *own* ports, so a client bootstrapped at
+`127.0.0.1:21210` is told to dial 11210 and fails — the same reason the managed
+lane cannot remap. Pointing the connection string at the container's IP avoids
+that, and on Linux it is the simplest thing to do.
+
+On macOS it is not available at all: Docker Desktop does not route container IPs
+from the host, so there is no address to point at and remapping is the only way
+to run a second cluster beside one already holding 8091. Couchbase supports it
+directly — declare the published ports as an external alternate address, once,
+after `cluster-init`:
+
+```bash
+docker run -d --name cb-e2e \
+  -p 127.0.0.1:18091:8091 -p 127.0.0.1:18092:8092 \
+  -p 127.0.0.1:18093:8093 -p 127.0.0.1:21210:11210 couchbase:community-7.6.2
+
+# … cluster-init and bucket-create as usual, then:
+curl -u Administrator:$PASSWORD -X PUT \
+  http://127.0.0.1:18091/node/controller/setupAlternateAddresses/external \
+  -d hostname=127.0.0.1 -d mgmt=18091 -d kv=21210 -d capi=18092 -d n1ql=18093
+
+export MOCKULUS_E2E_CB_CONNSTR=couchbase://127.0.0.1:21210
+export MOCKULUS_E2E_CB_MGMT=127.0.0.1:18091
+export MOCKULUS_E2E_CB_QUERY=127.0.0.1:18093
+export MOCKULUS_E2E_CB_CONTAINER=cb-e2e
+```
+
+The client detects the external network because the address it bootstrapped
+from is the one declared there, and the whole Couchbase lane — degraded-mode
+cases included — runs against it. This is how the lane was run while developing
+v1.3.0, on a machine whose 8091 belonged to something else.
+
+**The bucket has to exist, and so do nothing else.** The harness will not create
+a bucket in a cluster it did not start; mockulus creates the scopes it needs at
+boot.
+
+**Ten cases take the store away** with `stop_store` — SIGSTOP over the
+container's processes — and that needs a container to address. Name it with
+`MOCKULUS_E2E_CB_CONTAINER` and they run. Leave it unset and they fail saying
+the store could not be removed, rather than passing because nothing was removed
+and the store therefore never misbehaved.
+
+**One thing is mutated.** At the start of every adopted run the harness drops
+the keyspaces it owns — the `t2-…` and `t3-…` scopes `ScopeFor` names — and
+waits for the deletions to settle. Without it the second run meets the first
+one's stubs and a case registering a fixed id is refused as a duplicate, three
+cases away from the cause. Nothing else in the bucket is touched, `_default`
+included, and the run logs which scopes it removed.
+
 It is opt-in because it is only true on some hosts. A container IP is routable
 from the host under OrbStack and on Linux, and is not under Docker Desktop's VM
 on macOS or Windows, where publishing is the only path that works. CI keeps the

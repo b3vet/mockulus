@@ -23,17 +23,23 @@ import (
 // §17 expressed as a list of names: `file`, `systemValue`, `secret` and
 // `hostname` are absent because nothing in a mock server should read the
 // filesystem, the environment or the host it runs on, and "absent" is a property
-// of this slice and nothing else. A helper added to the registry by accident —
+// of this slice and nothing else. The XML three are *present* as of v1.3.0 and
+// were previously listed beside those four; they never belonged in that company,
+// because reading the request's own body reaches nothing outside the request. A helper added to the registry by accident —
 // or a debugging one left registered — is invisible to every other test in the
 // package and to the corpus, which only ever calls helpers it knows about.
 func TestTheRegistryExposesExactlyTheAllowlistOfTheSpec(t *testing.T) {
-	engine := NewEngine(1<<20, func(_ []any, _ map[string]any) (any, error) { return nil, nil })
+	stub := func(_ []any, _ map[string]any) (any, error) { return nil, nil }
+	engine := NewEngine(1<<20, map[string]handlebars.Helper{
+		"jsonPath": stub, "xPath": stub, "soapXPath": stub, "formatXml": stub,
+	})
 
 	want := []string{
-		"base64", "concat", "default", "join", "jsonPath", "lookup", "lower",
-		"lowercase", "math", "now", "number", "pickRandom", "randomDecimal",
-		"randomInt", "randomValue", "range", "replace", "size", "split",
-		"substring", "trim", "upper", "uppercase", "urlEncode",
+		"base64", "concat", "default", "formatXml", "join", "jsonPath", "lookup",
+		"lower", "lowercase", "math", "now", "number", "pickRandom",
+		"randomDecimal", "randomInt", "randomValue", "range", "replace", "size",
+		"soapXPath", "split", "substring", "trim", "upper", "uppercase",
+		"urlEncode", "xPath",
 	}
 
 	got := engine.HelperNames()

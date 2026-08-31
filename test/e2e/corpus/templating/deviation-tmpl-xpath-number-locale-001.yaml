@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+id: deviation-tmpl-xpath-number-locale-001
+behaviors: [B-RESP-TRANSFORMERS, B-DEV-62]
+# Deviation #62. WireMock renders a numeric xPath result through Java's default
+# NumberFormat, so the same stub and the same request produce `2,000,000` on a
+# container that booted in `en` and `2.000.000` on the identical image started
+# with -Duser.language=de. There is no oracle answer to diff against — only the
+# locale the oracle happened to start in — which is the reason for the deviation
+# and the reason this case is not differential.
+wm: n/a
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "a1000013-0013-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/deviation-tmpl-xpath-number-locale-001/n"},
+         "response": {"status": 200,
+                      "headers": {"Content-Type": "text/plain"},
+                      "body": "big={{{xPath request.body 'count(//item) * 1000000'}}} frac={{{xPath request.body 'count(//item) div 4'}}} neg={{{xPath request.body '0 - count(//item)'}}} bool={{{xPath request.body 'count(//item) > 1'}}}",
+                      "transformers": ["response-template"]}}
+    expect: {status: 201}
+
+  # `big` carries no grouping separator in any locale, `frac` uses a `.` in
+  # every locale, and both are the whole point: a number that renders one way
+  # here renders the same way on every machine this ever runs on.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/deviation-tmpl-xpath-number-locale-001/n
+      headers: {Content-Type: application/xml}
+      body: '<r><item>a</item><item>b</item></r>'
+    expect:
+      status: 200
+      body: "big=2000000 frac=0.5 neg=-2 bool=true"

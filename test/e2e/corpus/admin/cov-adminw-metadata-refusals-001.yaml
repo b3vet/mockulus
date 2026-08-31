@@ -57,40 +57,29 @@ steps:
             title: "Malformed request"
       body_regex: 'request body is empty'
 
-  # A matcher mockulus has not implemented yet is refused by name with the
-  # deferred-feature code, not with the generic malformed one. The distinction
-  # is what a team acts on: 1000 with the roadmap link means "wait for it", 10
-  # means "you made a typo", and answering the first as the second sends people
-  # hunting for a mistake that is not in their document.
-  - admin:
-      method: POST
-      path: /__admin/mappings/remove-by-metadata
-      body: '{"equalToXml": "<suite>cov-adminw-metadata-refusals-001</suite>"}'
-    expect:
-      status: 422
-      body_json_subset:
-        errors:
-          - code: 1000
-            source: {pointer: "/equalToXml"}
-            title: "Unsupported feature"
-      body_regex: 'ROADMAP'
+  # This step used to assert the other half of that distinction — a *deferred*
+  # matcher earning 1000 with the roadmap link, against `equalToXml`. v1.3.0
+  # implemented the last two deferred matchers, so there is no longer any matcher
+  # that earns 1000, and the assertion has nowhere to stand. It is not weakened
+  # here, it is retired: the 1000-versus-10 distinction is still pinned, in
+  # errors-unsupported-request-001, against the stub *fields* that are still
+  # deferred. Restore a metadata case here the day a matcher is deferred again.
 
   # Each key is classified on its own rather than the whole document taking the
-  # verdict of the first one examined: a deferred matcher and an unknown one in
-  # the same body produce one 1000 and one 10. A search whose author has both
-  # problems needs both answers, or fixing the typo just uncovers the other.
+  # verdict of the first one examined, so a search carrying two mistakes gets two
+  # answers. Fixing one must not be what uncovers the other.
   - admin:
       method: POST
       path: /__admin/mappings/find-by-metadata
-      body: '{"equalToXml": "<suite/>", "closeEnoughTo": "gold"}'
+      body: '{"closeEnoughTo": "gold", "soundsLike": "silver"}'
     expect:
       status: 422
       body_json_subset:
         errors:
           - code: 10
             source: {pointer: "/closeEnoughTo"}
-          - code: 1000
-            source: {pointer: "/equalToXml"}
+          - code: 10
+            source: {pointer: "/soundsLike"}
       body_regex: 'unknown matcher closeEnoughTo'
 
   # The refusals removed nothing. remove-by-metadata is the call a CI runner

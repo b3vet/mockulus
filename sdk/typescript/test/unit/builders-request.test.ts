@@ -14,6 +14,7 @@ import {
   get,
   head,
   matching,
+  matchingJsonPath,
   options,
   patch,
   post,
@@ -205,6 +206,51 @@ describe('the mapping builder', () => {
         stubFor(post(anyUrl()).withRequestBody(binaryEqualTo(new Uint8Array([1, 2, 3])))).request
           ?.bodyPatterns,
       ).toEqual([{ binaryEqualTo: 'AQID' }]);
+    });
+  });
+
+  describe('the multipart patterns', () => {
+    it('accumulate, and default nothing the server defaults itself', () => {
+      expect(
+        stubFor(
+          post(anyUrl())
+            .withMultipartRequestBody({ name: 'meta', bodyPatterns: [equalTo('hello')] })
+            .withMultipartRequestBody({ matchingType: 'ALL', bodyPatterns: [containing('x')] }),
+        ).request?.multipartPatterns,
+      ).toEqual([
+        { name: 'meta', bodyPatterns: [{ equalTo: 'hello' }] },
+        { matchingType: 'ALL', bodyPatterns: [{ contains: 'x' }] },
+      ]);
+    });
+
+    it('carry header criteria for the part rather than the request', () => {
+      expect(
+        stubFor(
+          post(anyUrl()).withMultipartRequestBody({
+            headers: { 'Content-Type': equalTo('application/json') },
+            bodyPatterns: [matchingJsonPath('$.id')],
+          }),
+        ).request,
+      ).toEqual({
+        method: 'POST',
+        url: undefined,
+        multipartPatterns: [
+          {
+            headers: { 'Content-Type': { equalTo: 'application/json' } },
+            bodyPatterns: [{ matchesJsonPath: '$.id' }],
+          },
+        ],
+      });
+    });
+
+    it('take the byte-oriented matcher inside a part, as bodyPatterns does', () => {
+      expect(
+        stubFor(
+          post(anyUrl()).withMultipartRequestBody({
+            bodyPatterns: [binaryEqualTo(new Uint8Array([1, 2, 3]))],
+          }),
+        ).request?.multipartPatterns,
+      ).toEqual([{ bodyPatterns: [{ binaryEqualTo: 'AQID' }] }]);
     });
   });
 

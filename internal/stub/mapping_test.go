@@ -189,13 +189,11 @@ func TestDeferredFeaturesAreRejectedWithPointers(t *testing.T) {
 		pointer string
 	}{
 		{`{"postServeActions":[{"name":"webhook"}],"request":{"urlPath":"/x"}}`, "/postServeActions"},
-		{`{"request":{"urlPath":"/x","multipartPatterns":[{}]}}`, "/request/multipartPatterns"},
+		{`{"request":{"urlPath":"/x"},"insertionIndex":3}`, "/insertionIndex"},
 		{`{"request":{"urlPath":"/x","customMatcher":{"name":"x"}}}`, "/request/customMatcher"},
 		{`{"request":{"urlPath":"/x"},"response":{"proxyBaseUrl":"http://x"}}`, "/response/proxyBaseUrl"},
-		{`{"request":{"urlPath":"/x","bodyPatterns":[{"matchesXPath":"//a"}]}}`,
-			"/request/bodyPatterns/0/matchesXPath"},
-		{`{"request":{"urlPath":"/x","bodyPatterns":[{"equalToXml":"<a/>"}]}}`,
-			"/request/bodyPatterns/0/equalToXml"},
+		{`{"request":{"urlPath":"/x"},"response":{"fromConfiguredStub":true}}`,
+			"/response/fromConfiguredStub"},
 	}
 	for _, c := range cases {
 		problems := compileErrs(t, c.doc)
@@ -247,8 +245,8 @@ func TestUnimplementedWireMockFieldsStayDeferred(t *testing.T) {
 	for _, c := range []struct{ doc, pointer string }{
 		{`{"request":{"urlPath":"/x"},"serveEventListeners":[]}`, "/serveEventListeners"},
 		{`{"request":{"urlPath":"/x"},"insertionIndex":3}`, "/insertionIndex"},
-		{`{"request":{"urlPath":"/x","host":{"equalTo":"h"}}}`, "/request/host"},
-		{`{"request":{"urlPath":"/x","scheme":"https"}}`, "/request/scheme"},
+		{`{"request":{"urlPath":"/x"},"postServeActions":[]}`, "/postServeActions"},
+		{`{"request":{"urlPath":"/x","customMatcher":{"name":"x"}}}`, "/request/customMatcher"},
 		{`{"request":{"urlPath":"/x"},"response":{"removeProxyRequestHeaders":["X"]}}`,
 			"/response/removeProxyRequestHeaders"},
 	} {
@@ -264,7 +262,7 @@ func TestUnimplementedWireMockFieldsStayDeferred(t *testing.T) {
 func TestEveryProblemIsReportedAtOnce(t *testing.T) {
 	problems := compileErrs(t, `{
 		"postServeActions": [{"name":"a"}],
-		"request": {"urlPath":"/x","multipartPatterns":[{}],"bodyPatterns":[{"matchesXPath":"//a"}]},
+		"request": {"urlPath":"/x","serveEventListeners":[],"customMatcher":{"name":"x"}},
 		"response": {"proxyBaseUrl":"http://x","status":999}
 	}`)
 	if len(problems) < 5 {

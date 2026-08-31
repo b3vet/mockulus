@@ -1563,7 +1563,7 @@ components:
         pointer:
           type: string
           description: >-
-            A JSON pointer into the request document, as `/request/bodyPatterns/0/matchesXPath`.
+            A JSON pointer into the request document, as `/request/bodyPatterns/0/equalToXml`.
             Two refusals do not carry a pointer into a body at all: an invalid `since` reports the
             bare parameter name `since`, and a document that failed to parse as JSON reports the
             empty pointer, which names the document itself.
@@ -1609,9 +1609,9 @@ components:
         - errors:
             - code: 1000
               source:
-                pointer: /request/bodyPatterns/0/matchesXPath
+                pointer: /request/customMatcher
               title: Unsupported feature
-              detail: matchesXPath (XPath matching) is not supported in mockulus v1 — see ROADMAP.md
+              detail: customMatcher is not supported in mockulus v1 — see ROADMAP.md
 
     ContentMatcher:
       type: object
@@ -1652,6 +1652,39 @@ components:
             Folds case for `equalTo`. Folding is by Unicode simple case folding, where Java folds
             per UTF-16 code unit; the two disagree in both directions and neither is more correct
             (deviation #43).
+        equalToXml:
+          type: string
+          description: >-
+            Structural XML equality against this document. Attribute order, self-closing-vs-empty
+            elements, indentation and whitespace-only text are insignificant, and text is compared
+            trimmed; comments and the XML declaration are ignored, while a processing instruction
+            inside the document is not. Namespaces compare by URI, so a prefix is a local alias.
+
+
+            **Children are paired by element name, and within a name group by document order.**
+            `<x/><y/>` therefore equals `<y/><x/>`, while `<x>1</x><x>2</x>` does not equal
+            `<x>2</x><x>1</x>` — neither "ordered" nor "unordered", which are the two rules an
+            implementer would guess. A malformed operand is refused at registration.
+
+
+            CDATA and text compare equal, which WireMock does not do in either direction
+            (deviation #61). That matches strictly more than WireMock, so nothing that passes there
+            fails here.
+        matchesXPath:
+          oneOf:
+            - type: string
+            - $ref: '#/components/schemas/XPathCriterion'
+          description: >-
+            Select nodes from the subject. The bare string form holds when the expression selects a
+            non-empty node-set; the object form applies an inner matcher and is **any-of** over the
+            selection, holding when at least one selected node satisfies it.
+
+
+            An expression that evaluates to a value rather than selecting nodes — `false()`,
+            `count(//item) = 2` — is **refused at registration** (deviation #59). WireMock registers
+            it and then matches every request, so a criterion that reads as an assertion is a no-op
+            there. A malformed expression is refused too (deviation #60) rather than registering and
+            never matching.
         binaryEqualTo:
           type: string
           contentEncoding: base64
@@ -1952,6 +1985,26 @@ components:
         - $ref: '#/components/schemas/ContentMatcher'
         - $ref: '#/components/schemas/MultiValueCriterion'
 
+    XPathCriterion:
+      title: XPath criterion
+      description: >-
+        The object form of `matchesXPath`: an expression, an inner matcher applied any-of over the
+        nodes it selects, and optional namespace bindings.
+      type: object
+      required: [expression]
+      properties:
+        expression:
+          type: string
+          description: The XPath expression. It has to select nodes rather than evaluate to a value.
+        xPathNamespaces:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Prefixes used in the expression, bound to URIs. The key is `xPathNamespaces` rather than
+            `namespaces`, which is the one an implementer would reach for and WireMock does not
+            have — probed rather than guessed.
+
     JsonPathCriterion:
       title: JSONPath criterion
       description: >-
@@ -2136,6 +2189,52 @@ components:
             Criteria over the request body. **All** of them must match. They are evaluated cheapest
             first — equality before regex before anything that has to parse the body — which is an
             ordering the server chooses and no stub needs to think about.
+          items:
+            $ref: '#/components/schemas/ContentMatcher'
+        multipartPatterns:
+          type: array
+          description: >-
+            Criteria over the parts of a multipart body. **All** elements must be satisfied; within
+            a single element `matchingType` decides how many *parts* have to satisfy it. A body that
+            is not multipart is a non-match rather than an error, and a multipart body carrying no
+            parts never matches — including against an element specifying no criteria at all. An
+            empty array is not a criterion and constrains nothing.
+          items:
+            $ref: '#/components/schemas/MultipartPattern'
+      additionalProperties: false
+
+    MultipartPattern:
+      type: object
+      title: Multipart part pattern
+      description: >-
+        One element of `multipartPatterns`. Every field is optional, and an element carrying none of
+        them matches any request that has at least one part.
+      properties:
+        name:
+          type: string
+          description: >-
+            Selects the part whose `Content-Disposition` `name` parameter equals this. The parameter
+            is parsed rather than matched as text, so `name="meta"` and `name=meta` are both found.
+            **WireMock ignores this field entirely** — there, a pattern naming a part that is not
+            present still matches — so honouring it matches strictly fewer requests, which is
+            deviation #63 and the riskiest difference in this release.
+        matchingType:
+          type: string
+          enum: [ANY, ALL]
+          default: ANY
+          description: >-
+            How many parts must satisfy this element: `ANY` needs one, `ALL` needs every part. These
+            two spellings are the only accepted values, case-sensitively.
+        headers:
+          type: object
+          description: A matcher per header of the part itself, not of the request.
+          additionalProperties:
+            $ref: '#/components/schemas/ContentMatcher'
+        bodyPatterns:
+          type: array
+          description: >-
+            Criteria over the part's body, taking the same vocabulary as the request's own
+            `bodyPatterns`.
           items:
             $ref: '#/components/schemas/ContentMatcher'
       additionalProperties: false

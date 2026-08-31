@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/antchfx/xpath"
 )
 
 // Compilation turns a matcher document into an evaluable matcher, or into the
@@ -31,6 +33,9 @@ const (
 	ProblemJSONPath
 	// ProblemSchema is a JSON Schema that does not compile.
 	ProblemSchema
+	// ProblemXPath is an XPath expression that does not parse, or one that
+	// cannot discriminate (deviations #59 and #60).
+	ProblemXPath
 )
 
 // Problem is one reason a matcher document was rejected. The caller maps it
@@ -63,6 +68,10 @@ type Options struct {
 	CompileRegex RegexCompiler
 	// CompileJSONPath builds path evaluators for `matchesJsonPath`.
 	CompileJSONPath JSONPathCompiler
+	// CompileXPath builds expressions for `matchesXPath`. It is injected rather
+	// than called directly so the engine choice — and the two refusals it makes
+	// at registration, deviations #59 and #60 — live in one place.
+	CompileXPath XPathCompiler
 	// CompileSchema builds validators for `matchesJsonSchema`.
 	CompileSchema SchemaCompiler
 	// AllowContentPatterns admits the byte-oriented matchers, which are valid
@@ -123,16 +132,17 @@ var contentPatterns = map[string]bool{
 	"binaryEqualTo": true,
 }
 
+// XPathCompiler builds a compiled XPath expression, or reports why it cannot
+// be one that discriminates.
+type XPathCompiler func(expr string) (*xpath.Expr, error)
+
 // JSONPathCompiler builds a compiled path evaluator.
 type JSONPathCompiler func(expr string) (JSONPathEvaluator, error)
 
 // deferredMatchers are WireMock matchers mockulus does not implement yet. They
 // are named individually so the 422 tells a team exactly which roadmap item
 // they are waiting on, rather than a generic refusal.
-var deferredMatchers = map[string]string{
-	"equalToXml":   "equalToXml (XML matching)",
-	"matchesXPath": "matchesXPath (XPath matching)",
-}
+var deferredMatchers = map[string]string{}
 
 // multiValueKeys quantify over a key's whole value list rather than describing
 // one value, which is why they are not ordinary matchers in the switch below.
@@ -559,6 +569,22 @@ func compileOne(key string, value json.RawMessage, doc map[string]json.RawMessag
 		}
 		return &MatchesJSONPath{Path: path, Inner: innerMatcher, Negate: negate}, nil
 
+	case "equalToXml":
+		var expected string
+		if err := json.Unmarshal(value, &expected); err != nil {
+			return fail("equalToXml takes a string")
+		}
+		// Parsed at registration, so a malformed expected document is a 422 now
+		// rather than a stub that can never match. WireMock refuses it here too.
+		doc, ok := ParseXML(expected)
+		if !ok {
+			return fail("equalToXml operand is not well-formed XML")
+		}
+		return &EqualToXML{Expected: doc, Source: expected}, nil
+
+	case "matchesXPath":
+		return compileXPathCriterion(value, at, opts)
+
 	case "hasExactly", "includes":
 		var items []json.RawMessage
 		if err := json.Unmarshal(value, &items); err != nil {
@@ -764,4 +790,71 @@ func stringField(doc map[string]json.RawMessage, key string) string {
 func hasKey(doc map[string]json.RawMessage, key string) bool {
 	_, ok := doc[key]
 	return ok
+}
+
+// compileXPathCriterion builds `matchesXPath` in either of its forms.
+//
+// The bare form is a string. The object form carries `expression` and an inner
+// matcher, plus an optional `xPathNamespaces` map binding prefixes used in the
+// expression to URIs — that key's name was probed rather than guessed, because
+// `namespaces` is the one an implementer would reach for and WireMock does not
+// have it.
+func compileXPathCriterion(value json.RawMessage, at string, opts Options) (Matcher, []Problem) {
+	fail := func(detail string) (Matcher, []Problem) {
+		return nil, []Problem{{Pointer: at, Detail: detail}}
+	}
+	compile := opts.CompileXPath
+	if compile == nil {
+		compile = CompileXPath
+	}
+
+	var expr string
+	if err := json.Unmarshal(value, &expr); err == nil {
+		compiled, cerr := compile(expr)
+		if cerr != nil {
+			return nil, []Problem{{Kind: ProblemXPath, Pointer: at, Detail: cerr.Error()}}
+		}
+		return &MatchesXPath{Expr: compiled, Source: expr}, nil
+	}
+
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(value, &doc); err != nil {
+		return fail("matchesXPath takes an expression or an object carrying one")
+	}
+	rawExpr, ok := doc["expression"]
+	if !ok {
+		return fail("the object form of matchesXPath needs an expression")
+	}
+	if err := json.Unmarshal(rawExpr, &expr); err != nil {
+		return fail("matchesXPath expression must be a string")
+	}
+
+	// The namespace bindings are consumed here rather than compiled as a
+	// matcher, so they must not reach the inner document as an unknown key.
+	inner := make(map[string]json.RawMessage, len(doc))
+	for k, v := range doc {
+		if k == "expression" || k == "xPathNamespaces" {
+			continue
+		}
+		inner[k] = v
+	}
+
+	compiled, cerr := compile(expr)
+	if cerr != nil {
+		return nil, []Problem{{Kind: ProblemXPath, Pointer: at, Detail: cerr.Error()}}
+	}
+	m := &MatchesXPath{Expr: compiled, Source: expr}
+
+	if len(inner) > 0 {
+		encoded, err := json.Marshal(inner)
+		if err != nil {
+			return fail("matchesXPath inner matcher could not be read")
+		}
+		child, probs := Compile(encoded, at, opts.nested())
+		if len(probs) > 0 {
+			return nil, probs
+		}
+		m.Inner = child
+	}
+	return m, nil
 }

@@ -12,7 +12,9 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 
 ## Bucket 1 — v1.x candidates (compat gaps with known demand)
 
-### 1.1 XML & XPath matching (`equalToXml`, `matchesXPath`)
+### 1.1 XML & XPath matching (`equalToXml`, `matchesXPath`) — shipped in v1.3.0
+- **Status**: implemented, matchers and helpers both. Two things in the sketch below turned out differently and are worth reading before touching it. There is **no precomputed canonical form**: children are paired by element name, which makes differently-named siblings order-insensitive and same-named ones order-sensitive, and no single canonical serialisation expresses that. And the **XMLUnit placeholders are not a stretch goal but a non-goal** — probing showed WireMock does not interpret them at all (`PROBE_XML.md` P6), so implementing them would have invented behaviour rather than matched it. `formatXml` needed a printer written from recorded oracle bytes because `xmlquery`'s own indenting output differs from WireMock in five ways. Deviations #59, #60, #61 and #62 came out of it.
+- **Scope correction (2026-08-14).** This entry has always described the *matchers* and stopped there, which understates the work by a third and would ship a release branded "XML support" in which `{{xPath …}}` is still refused. Three template helpers — `xPath`, `soapXPath` and `formatXml` — are refused by §10.3's allowlist today and read the same document with the same parser. They belong in this entry and land with it. **XML *responses* are not a gap and never were**: a stub serves any bytes under any `Content-Type`, verified directly. What is missing is selecting a stub *by* the XML a caller sent, and reading values out of it in a template.
 - **What**: structural XML equality (whitespace/attribute-order insensitive) and XPath 1.0 matching, incl. namespaces and WM's `xPath` sub-matcher form; XMLUnit-style ignore placeholders as a stretch.
 - **Why deferred**: bounded but non-trivial (canonicalization corner cases); v1 focused on JSON-first traffic.
 - **Sketch**: pure-Go via `antchfx/xmlquery` + `antchfx/xpath`; canonical form computed at compile time for the expected document; same compile-at-registration discipline (P1/P2 hold — XML parse of request body is lazy and memoized on `ParsedRequest` like JSON). New matchers slot into `internal/matchers` with zero engine changes.
@@ -33,11 +35,20 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 - **Sketch**: `santhosh-tekuri/jsonschema` (drafts 4–2020-12), schema compiled at registration.
 - **Depends on**: nothing. **Size**: S.
 
-### 1.5 Multipart matching + extended multi-value operators
+### 1.5 Multipart matching + extended multi-value operators — shipped in v1.3.0
+- **Status**: both halves implemented, the multi-value operators in v1.2.0 and `multipartPatterns` in v1.3.0. The parse is memoized on the **body subject** rather than on `ParsedRequest` as the sketch says, which is where the JSON and XML documents are already memoized — one place that a stub matched on URL alone never touches. The semantics that cost the time were not the parsing: elements of the array are ANDed while `matchingType` quantifies over the parts inside one element, and a body with no parts never matches even an element carrying no criteria (`PROBE_MULTIPART.md` P7). Deviation #63 honours `name`, which WireMock ignores, and is the release's riskiest call.
+- **Multipart was scheduled for v1.3.0** alongside XML (decision 2026-08-14), which closes the request-matching surface in one release. The multi-value half shipped in v1.2.0.
 - **Split in v1.2.0.** The multi-value operators are being taken on their own: they are a new mode on an existing `KeyMatcher` with no new body parsing, while `multipartPatterns` needs a lazy MIME parse memoized on `ParsedRequest` and a corpus surface larger than the rest of that release together. Multipart stays here for v1.3.0. **The operator names below are unverified** — SPEC §5.2 records them as `hasExactly`/`includes` and this entry has long said `havingExactly`; both cannot be right, and neither has been probed against the oracle. Establishing which is the first probe of the v1.2.0 work, for the same reason the date/time entry above had to be corrected: this file remembers, and only the oracle knows.
 - **What**: `multipartPatterns`; `havingExactly`/`includes` multi-value query/header operators.
 - **Sketch**: `mime/multipart` lazy parse memoized on `ParsedRequest`; multi-value ops as new `KeyMatcher` modes.
 - **Depends on**: nothing. **Size**: S/M.
+
+### 1.6 `host`, `port` and `scheme` request matchers — shipped in v1.3.0
+- **Status**: implemented. `scheme` reports what *this process* terminated, so behind an ingress that terminates TLS a request arrives as plain http and is reported as such; forwarding headers are deliberately not consulted, because a matcher steered by a request header decides nothing. SPEC §5.2 says so on the row, which is the honest version of the open question this entry raised.
+- **What**: WireMock's three request matchers over the connection rather than the message. They select on the `Host` header, the port the request arrived on, and http vs https, which is what lets one deployment front several virtual hosts and answer differently per origin.
+- **Why it was not here**: an oversight rather than a decision. They are refused by name in `internal/stub` (`deferredFields`) and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them, so nobody could weigh them against anything. Added 2026-08-14 when the remaining gap was enumerated from the spec and the refusal table rather than from this file — which is the second time this document has been the least reliable record of what is missing.
+- **Sketch**: three `KeyMatcher`-shaped criteria over values the request already carries; no new parsing, no hot-path cost beyond a comparison. `scheme` needs the TLS terminator's view rather than the listener's where a proxy fronts the pod (§12.1), which is the only part worth probing.
+- **Depends on**: nothing. **Size**: S.
 
 ---
 

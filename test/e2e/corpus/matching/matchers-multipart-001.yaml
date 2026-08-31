@@ -1,0 +1,176 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-multipart-001
+behaviors: [B-REQ-MULTIPARTPATTERNS]
+wm: verified
+wm_ignore: ["$unmatched-body", "$.errors"]
+# Every row is recorded from pinned WireMock 3.13.2 in PROBE_MULTIPART.md P1-P7.
+# The two quantifiers are what the case exists for: `matchingType` ranges over
+# the *parts* inside one element, and the elements of the array are ANDed. An
+# implementation that collapses those into one rule passes any case built from a
+# single element, which is why several of the steps below use two.
+steps:
+  # One element, ANY (the default when the field is absent), selecting its part
+  # by Content-Disposition — which is the only thing that selects on WireMock.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/any",
+                     "multipartPatterns": [
+                       {"headers": {"Content-Disposition": {"contains": "name=\"meta\""}},
+                        "bodyPatterns": [{"equalTo": "hello"}]}]},
+         "response": {"status": 200, "body": "any", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # A satisfying part beside an unsatisfying one is enough for ANY.
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/any,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"meta\"\r\n\r\nhello\r\n--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"junk\"\r\n\r\nzz\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 200, body: "any"}
+
+  # The same body content under a different part name does not match: the header
+  # criterion is doing the selecting, and this is the pair that shows it.
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/any,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nhello\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+
+  # A body that is not multipart at all is a non-match, not an error.
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/any,
+              headers: {Content-Type: text/plain}, body: "hello"}
+    expect: {status: 404}
+
+  # A multipart body carrying no parts never matches.
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/any,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+
+  # ALL: every part must satisfy the element.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/all",
+                     "multipartPatterns": [
+                       {"matchingType": "ALL", "bodyPatterns": [{"contains": "x"}]}]},
+         "response": {"status": 200, "body": "all", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/all,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx1\r\n--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\nx2\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 200, body: "all"}
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/all,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx1\r\n--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\nzz\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+
+  # Two elements are a conjunction. Both of the requests below satisfy one
+  # element and not the other, and neither matches — which is the assertion that
+  # separates AND from OR, and it needs both directions to be worth anything.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/both",
+                     "multipartPatterns": [
+                       {"headers": {"Content-Disposition": {"contains": "name=\"meta\""}},
+                        "bodyPatterns": [{"equalTo": "hello"}]},
+                       {"headers": {"Content-Disposition": {"contains": "name=\"other\""}},
+                        "bodyPatterns": [{"equalTo": "bye"}]}]},
+         "response": {"status": 200, "body": "both", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/both,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"meta\"\r\n\r\nhello\r\n--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nbye\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 200, body: "both"}
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/both,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"meta\"\r\n\r\nhello\r\n--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nNOPE\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/both,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"meta\"\r\n\r\nNOPE\r\n--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nbye\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+
+  # A part's own headers are visible, and its body takes the full matcher
+  # vocabulary rather than a reduced one.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/rich",
+                     "multipartPatterns": [
+                       {"headers": {"Content-Type": {"equalTo": "application/json"}},
+                        "bodyPatterns": [{"matchesJsonPath": "$.id"}]}]},
+         "response": {"status": 200, "body": "rich", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/rich,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"doc\"\r\nContent-Type: application/json\r\n\r\n{\"id\":1}\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 200, body: "rich"}
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/rich,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"doc\"\r\nContent-Type: text/plain\r\n\r\n{\"id\":1}\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 404}
+
+  # An empty array is not a criterion: it constrains nothing, and a text/plain
+  # body matches. One empty element is a different thing entirely — it still
+  # requires the request to carry parts.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000005",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/empty-array",
+                     "multipartPatterns": []},
+         "response": {"status": 200, "body": "empty-array", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/empty-array,
+              headers: {Content-Type: text/plain}, body: "anything"}
+    expect: {status: 200, body: "empty-array"}
+
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000006",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/empty-element",
+                     "multipartPatterns": [{}]},
+         "response": {"status": 200, "body": "empty-element", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/empty-element,
+              headers: {Content-Type: text/plain}, body: "anything"}
+    expect: {status: 404}
+  - request: {port: mock, method: POST, path: /e2e/matchers-multipart-001/empty-element,
+              headers: {Content-Type: "multipart/form-data; boundary=xxBOUNDARYxx"}, body: "--xxBOUNDARYxx\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nv\r\n--xxBOUNDARYxx--\r\n"}
+    expect: {status: 200, body: "empty-element"}
+
+  # matchingType takes exactly ANY or ALL, case-sensitively. The status and the
+  # pointer agree with WireMock; the detail is mockulus's own, which is why
+  # `$.errors` sits in wm_ignore above.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000007",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/bad",
+                     "multipartPatterns": [{"matchingType": "NONSENSE"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/multipartPatterns/0/matchingType"}
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "b0630001-0000-4000-8000-000000000008",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-multipart-001/lower",
+                     "multipartPatterns": [{"matchingType": "any"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/multipartPatterns/0/matchingType"}

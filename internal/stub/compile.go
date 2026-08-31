@@ -60,6 +60,13 @@ type CompiledStub struct {
 	// the pattern at all.
 	LiteralPrefix string
 
+	// Host, Port and Scheme are the connection-level criteria (SPEC §5.2). Nil
+	// is absent, which is the overwhelming majority of stubs — they cost a nil
+	// check each and nothing else.
+	Host   matchers.Matcher
+	Port   matchers.Matcher
+	Scheme matchers.Matcher
+
 	Headers    []KeyCriterion
 	Query      []KeyCriterion
 	Cookies    []KeyCriterion
@@ -203,7 +210,8 @@ func (cs *CompiledStub) MatchesMethod(method string) bool {
 func (cs *CompiledStub) HasCriteriaBeyondURL() bool {
 	return len(cs.Headers) > 0 || len(cs.Query) > 0 || len(cs.Cookies) > 0 ||
 		len(cs.Form) > 0 || len(cs.PathParams) > 0 || len(cs.BodyMatchers) > 0 ||
-		cs.BasicAuth != ""
+		cs.BasicAuth != "" ||
+		cs.Host != nil || cs.Port != nil || cs.Scheme != nil
 }
 
 // BasicAuthPrefix is the scheme token and the single space RFC 7235 puts

@@ -638,9 +638,10 @@ mockulus_snapshot_stubs 2
 ```
 
 That transcript is from a `file`-store instance pointed at a WireMock project
-containing a stub with `equalToXml` — an unsupported matcher (see
-[ROADMAP.md](../ROADMAP.md) §1.1). Two other stubs in the same directory loaded
-and serve normally.
+containing a stub with `customMatcher` — which names a Java class to load and is
+an explicit non-goal rather than a roadmap item (see
+[ROADMAP.md](../ROADMAP.md)). Two other stubs in the same directory loaded and
+serve normally.
 
 Note the counter semantics: the quarantine counter is incremented **per bad
 document per snapshot build**, so a document that stays broken makes it climb

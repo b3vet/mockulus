@@ -131,19 +131,19 @@ what makes the Evidence column worth reading.
 
 | | Count |
 |---|---:|
-| WireMock surface — supported | 74 |
+| WireMock surface — supported | 83 |
 | WireMock surface — supported with a documented deviation | 9 |
-| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 7 |
-| Deliberate deviations from WireMock | 58 |
-| Catalogued behaviors in total | 235 |
+| WireMock surface — not supported (422 or 404, with a ROADMAP pointer) | 5 |
+| Deliberate deviations from WireMock | 63 |
+| Catalogued behaviors in total | 247 |
 | … of those, with no distinct observable of their own (reviewed exemptions) | 3 |
 | Behaviors stated in prose rather than a table | 12 |
-| E2E corpus cases | 597 |
-| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 397 |
-| … `wm: n/a` — expectations from the spec | 200 |
+| E2E corpus cases | 607 |
+| … `wm: verified` — expectations re-derived from `wiremock/wiremock:3.13.2` | 403 |
+| … `wm: n/a` — expectations from the spec | 204 |
 | Go-native cases (raw socket, process lifecycle) | 29 |
 
-Milestone cursor `M8`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
+Milestone cursor `M9`; oracle pinned at `wiremock/wiremock:3.13.2`. SPEC §5.6 sets ≥300 differentially
 verified cases as a v1.0 release criterion.
 
 Every catalogued behavior is bound by at least one case. The E2E gate fails when that stops being true (SPEC §19.2).
@@ -152,15 +152,13 @@ Every catalogued behavior is bound by at least one case. The E2E gate fails when
 
 ### What is refused
 
-7 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
+5 rows of the surface below are not implemented, and every one of them is refused rather than ignored. A mapping carrying one of the stub fields never registers, so a suite that depends on it fails when it loads its mappings — not later, and not quietly; an admin path that is not implemented is 404 with code 1001 rather than a plausible-looking empty answer. [ROADMAP.md](../ROADMAP.md) tracks each with a design sketch and a size.
 
 | Feature | Answer | Behavior | Note |
 |---|---|---|---|
 | `/__admin/recordings/**`, `/__admin/proxy/**`, `/__admin/certificates/**`, `/__admin/mappings/unmatched`* | ❌ | `B-ADMIN-RECORDINGS-PROXY-CERTIFICATES-MAPPINGS-UNMATCHED` | 404 + error body `{"errors":[{code:1001,...}]}` linking ROADMAP.md |
 | `postServeActions` | ❌ 422 | `B-STUB-POSTSERVEACTIONS` | Webhooks deferred |
-| `multipartPatterns` | ❌ 422 | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
 | `customMatcher` | ❌ 422 | `B-REQ-CUSTOMMATCHER` | Roadmap |
-| `equalToXml`, `matchesXPath` | ❌ 422 | `B-MATCH-EQUALTOXML-MATCHESXPATH` | Roadmap |
 | `proxyBaseUrl`, `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` | ❌ 422 | `B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR` | Roadmap (proxy mode) |
 | `fromConfiguredStub`, `additionalHeaders` (proxy-related) | ❌ 422 | `B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED` | — |
 
@@ -224,7 +222,7 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 
 ### Stub mapping — `request`
 
-[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 15 behaviors
+[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 18 behaviors
 
 | Field | v1 | Evidence | Behavior | Notes |
 |---|---|---|---|---|
@@ -239,14 +237,17 @@ Every `/__admin` path mockulus answers. Anything not listed — and every path u
 | `cookies` | ✅ | 5 · verified | `B-REQ-COOKIES` | — |
 | `formParameters` | ✅ | 3 · verified | `B-REQ-FORMPARAMETERS` | `application/x-www-form-urlencoded` bodies; parsed lazily |
 | `basicAuthCredentials` | ✅ | 1 · verified | `B-REQ-BASICAUTHCREDENTIALS` | Sugar over `Authorization` |
+| `host` | ✅ | 1 · n/a | `B-REQ-HOST` | The host the request was addressed to, from the `Host` header and without the port — an IPv6 literal keeps its brackets. Takes the ordinary matcher vocabulary, so `matches` over a wildcard domain works. Read from the header rather than the listener, because one deployment fronting several virtual hosts is the case it exists for |
+| `port` | ✅ | 1 · n/a | `B-REQ-PORT` | The port named in the `Host` header, or **the empty string** when it named none — not the scheme's default, because the request did not carry one and inventing `80` would be answering a question nobody asked. A stub wanting "no port was named" matches `""` |
+| `scheme` | ✅ | 1 · n/a | `B-REQ-SCHEME` | `https` when *this process* terminated TLS, `http` otherwise. Behind an ingress that terminates TLS the request arrives here as plain http and is reported as such; forwarding headers are deliberately not consulted, because a matcher steered by a request header decides nothing. §12.1 puts TLS on the mock listener only, so a deployment terminating TLS earlier should match on a header its own ingress sets |
 | `bodyPatterns` | ✅ | 52 · verified | `B-REQ-BODYPATTERNS` | All listed patterns must match (AND). Matchers below |
-| `multipartPatterns` | ❌ 422 | 1 · n/a | `B-REQ-MULTIPARTPATTERNS` | Roadmap |
+| `multipartPatterns` | ✅ | 2 · verified | `B-REQ-MULTIPARTPATTERNS` | An array of part patterns, **ANDed**: every element must be satisfied. Each element takes `name`, `matchingType`, `headers` and `bodyPatterns`, all optional. `matchingType` quantifies over the *parts* within one element — `ANY` (the default) needs one satisfying part, `ALL` needs every part to satisfy — and must be spelled exactly `ANY` or `ALL`. `headers` apply to the part's own headers and `bodyPatterns` to the part's body, both with the ordinary matcher vocabulary. A body that is not multipart is a non-match, not an error; a multipart body carrying **no parts** never matches, even against an element specifying no criteria at all. An empty array is not a criterion and constrains nothing. `name` selects the part whose `Content-Disposition` name parameter it equals — WireMock ignores the field entirely (deviation #63) |
 | `customMatcher` | ❌ 422 | 1 · n/a | `B-REQ-CUSTOMMATCHER` | Roadmap |
 | `hasExactly`, `includes` (multi-value operators) | ✅ | 4 · verified | `B-REQ-MULTI-VALUE-OPERATORS` | Only as the **sole** key of a criterion directly under `queryParameters` or `headers` — refused inside a combinator, in `bodyPatterns`, on `cookies`, and beside any sibling key, all of which WireMock refuses too. Operands are matcher documents, not bare strings; any single-value matcher is allowed. `includes(M)` holds when every operand is satisfied by **some** value; `hasExactly(M)` adds `len(values) == len(M)`. **Values are not consumed** — `hasExactly [matches "a.*", matches "a.*"]` matches `?tag=a1&tag=b1`, because the count is right and both operands are satisfied by `a1`, while `b1` satisfies neither and is tolerated. That is WireMock's rule, reproduced; a bijection is the intuitive reading and the wrong one. An absent key satisfies neither operator. `includes: []` is vacuous and holds for any present key; `hasExactly: []` is refused (deviation #58) |
 
 ### Content matchers
 
-[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 11 behaviors
+[SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix) · 12 behaviors
 
 Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`, `pathParameters` and `formParameters`, and by verification criteria and `find-by-metadata`.
 
@@ -260,7 +261,8 @@ Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`
 | `equalToJson` (+`ignoreArrayOrder`, `ignoreExtraElements`) | ✅ | 40 · verified | `B-MATCH-EQUALTOJSON-IGNOREARRAYORDER-IGNOREEXTRAELEMENTS` | Structural JSON equality; numbers compared by value, so `1` equals `1.0`. `ignoreExtraElements` forgives elements the expected document never accounted for in **arrays as well as objects**: positionally those are the ones past the end, so expected `[1,2]` accepts `[1,2,3]` and still refuses `[3,1,2]`, and an actual array *shorter* than the expected one remains a mismatch. `ignoreArrayOrder` gives up the positions and keeps the count; together they are a subset test — each expected element pairs with a distinct actual element, the unclaimed ones are ignored, and duplicates still have to go round (deviation #25). json-unit placeholders are interpreted as WM does: `ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, and `regex` (full match); in an array a placeholder occupies a slot rather than excusing one. An **unrecognised** placeholder is rejected at registration (deviation #5) |
 | `matchesJsonPath`, `doesNotMatchJsonPath` | ✅ | 47 · verified | `B-MATCH-MATCHESJSONPATH-DOESNOTMATCHJSONPATH` | Bare expression form (presence/non-empty) and nested-matcher form `{"matchesJsonPath":{"expression":"$.x","equalTo":"y"}}`. `doesNotMatchJsonPath` negates the whole criterion in either form, so a path that selects nothing satisfies it. JSONPath dialect: §6.7 |
 | `matchesJsonSchema` | 🔶 | 16 · verified | `B-MATCH-MATCHESJSONSCHEMA` | Validates the subject against an embedded JSON Schema, inline or as an escaped string. Draft from `schemaVersion` — exactly `V4`, `V6`, `V7`, `V201909`, `V202012`, defaulting to `V202012` — and a document's own `$schema` overrides that field in both directions. **`format` is asserted only under V4/V6/V7**; 2019-09 and 2020-12 treat it as an annotation, which is the spec's own vocabulary boundary and means the default asserts nothing. `$ref` resolves **within the document only** (`$defs`, `definitions`, JSON pointers, `$anchor`, `$id`); WireMock does not fetch a remote one either, it just fails silently. A subject that is not a JSON document is a non-match. Deviations #55–#57 |
-| `equalToXml`, `matchesXPath` | ❌ 422 | 1 · n/a | `B-MATCH-EQUALTOXML-MATCHESXPATH` | Roadmap |
+| `equalToXml` | ✅ | 2 · verified | `B-MATCH-EQUALTOXML` | Structural, not textual. Attribute order, self-closing-vs-empty, whitespace-only text and indentation are all insignificant; text is compared trimmed. Comments and the XML declaration are ignored; a processing instruction inside the document is **not**. Namespaces compare by URI, so the prefix is a local alias. **Children are paired by element name, and within a name group by document order** — so `<x/><y/>` equals `<y/><x/>` while `<x>1</x><x>2</x>` does not equal `<x>2</x><x>1</x>`. A malformed operand is refused at registration. CDATA and text compare **equal** (deviation #61) |
+| `matchesXPath` | ✅ | 2 · verified | `B-MATCH-MATCHESXPATH` | Bare form holds when the expression selects a non-empty node-set. Object form carries `expression` plus an inner matcher and is **any-of** over the selection — it holds when at least one selected node satisfies the inner matcher, the same rule §5.3 applies to a repeated key — with `xPathNamespaces` binding prefixes used in the expression to URIs. An expression that evaluates to a value rather than a node-set is refused (deviation #59), as is one that does not parse (deviation #60) |
 | `absent` | ✅ | 32 · verified | `B-MATCH-ABSENT` | Key-level matcher |
 | `and`, `or`, `not` | ✅ | 19 · verified | `B-MATCH-AND-OR-NOT` | Combinators over the above |
 
@@ -278,20 +280,23 @@ Used in `bodyPatterns`, as the values of `headers`, `queryParameters`, `cookies`
 | `delayDistribution` | ✅ | 2 · verified | `B-RESP-DELAYDISTRIBUTION` | `uniform` (lower/upper) and `lognormal` (median/sigma) |
 | `chunkedDribbleDelay` | ✅ | 1 · n/a | `B-RESP-CHUNKEDDRIBBLEDELAY` | `numberOfChunks`, `totalDuration` |
 | `fault` | ✅ | 5 · n/a (5 Go-native) | `B-RESP-FAULT` | `CONNECTION_RESET_BY_PEER`, `EMPTY_RESPONSE`, `MALFORMED_RESPONSE_CHUNK`, `RANDOM_DATA_THEN_CLOSE` (§12.5) |
-| `transformers` | 🔶 | 34 · verified | `B-RESP-TRANSFORMERS` | Only `["response-template"]` recognized; any other transformer name → 422 |
+| `transformers` | 🔶 | 38 · verified | `B-RESP-TRANSFORMERS` | Only `["response-template"]` recognized; any other transformer name → 422 |
 | `transformerParameters` | ✅ | 4 · verified | `B-RESP-TRANSFORMERPARAMETERS` | Exposed to templates as `parameters` |
 | `proxyBaseUrl`, `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` | ❌ 422 | 1 · n/a | `B-RESP-PROXYBASEURL-ADDITIONALPROXYREQUESTHEADERS-PROXYURLPREFIXTOR` | Roadmap (proxy mode) |
 | `fromConfiguredStub`, `additionalHeaders` (proxy-related) | ❌ 422 | 1 · n/a | `B-RESP-FROMCONFIGUREDSTUB-ADDITIONALHEADERS-PROXY-RELATED` | — |
 
 ### Response-template helpers
 
-[SPEC §10.3](../SPEC.md#103-helper-allowlist-v1) · 10 behaviors
+[SPEC §10.3](../SPEC.md#103-helper-allowlist-v1) · 13 behaviors
 
 The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt`, `secret`, `systemValue`, `hostname`, `file` — is 422 code 1002 at registration, naming the helper. Environment, file and system access are excluded deliberately (SPEC §17).
 
 | Helper(s) | Evidence | Behavior | Notes |
 |---|---|---|---|
 | `jsonPath` | 8 · verified | `B-TPL-JSONPATH` | shares the §6.7 engine |
+| `xPath` | 1 · verified | `B-TPL-XPATH` | shares the §6.7 XML parser and XPath engine; a node-set renders its **first** node, an element serializes through `formatXml`, a value expression is legal here (unlike `matchesXPath`, §5.5 #59) |
+| `soapXPath` | 1 · verified | `B-TPL-SOAPXPATH` | the expression is evaluated as a location step below the SOAP `Envelope/Body`, so it may not begin with `//` or with a function call |
+| `formatXml` | 1 · verified | `B-TPL-FORMATXML` | pretty-prints at two spaces per level, drops the XML declaration, collapses empty elements |
 | `now` | 6 · verified | `B-TPL-NOW` | `offset`, `format` (WM tokens + `epoch`/`unix`), `timezone` |
 | `randomValue` | 4 · verified | `B-TPL-RANDOMVALUE` | types `ALPHANUMERIC`, `ALPHABETIC`, `NUMERIC`, `UUID`, `HEXADECIMAL`; `length`, `uppercase` |
 | `pickRandom` | 2 · n/a | `B-TPL-PICKRANDOM` | — |
@@ -304,7 +309,7 @@ The allowlist. Any other helper name — `xPath`, `soapXPath`, `formatXml`, `jwt
 
 ## Deliberate deviations
 
-[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 58 deviations
+[SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1) · 63 deviations
 
 The complete list — every place a request that WireMock would accept is answered
 differently here, or refused. Each is deliberate and, where it makes sense, has a
@@ -365,7 +370,7 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 **14.** Unsupported features → 422/404 with error catalog codes (WM would accept some and behave differently — this is the fail-loud contract, D2).
 
-> `B-DEV-DEVIATION-14` · 7 cases · wm: n/a · an unsupported feature is rejected rather than silently ignored
+> `B-DEV-DEVIATION-14` · 6 cases · wm: n/a · an unsupported feature is rejected rather than silently ignored
 
 **15.** Fault injection is byte-faithful on HTTP/1.1 only; over HTTP/2 faults degrade to a stream reset. h2c is therefore **off by default** (§12.1).
 
@@ -543,6 +548,26 @@ pointing an existing suite at mockulus: it is where an afternoon goes.
 
 > `B-DEV-58` · 1 case · wm: n/a · hasExactly [] is refused at registration because no request can satisfy it, while includes [] registers and holds for any present key
 
+**59.** **An XPath that evaluates to a value rather than selecting nodes is refused** (WM: registers, matches everything). WireMock evaluates `matchesXPath` as a node list, and an expression whose result is a boolean, a number or a string is not one — so `count(//item) = 2` matches a request with one item, and `false()` matches every request. The criterion reads as an assertion and is a no-op, which is the accept-and-ignore shape P3 forbids; the refusal names the shape to write instead. The result kind is a property of the expression and not of the document, so one probe document settles it at registration.
+
+> `B-DEV-59` · 1 case · wm: n/a · an XPath that evaluates to a value rather than selecting nodes is refused at registration
+
+**60.** **A malformed XPath is refused at registration** (WM: registers, never matches). `//[` answers 201 there and then silently matches nothing, so the stub is dead and the mapping says nothing about why. Same call as #59 and as #49, #50 and #58.
+
+> `B-DEV-60` · 1 case · wm: n/a · a malformed XPath is refused at registration rather than registering and never matching
+
+**61.** **CDATA and text compare equal in `equalToXml`** (WM: never equal, in either direction). `<t><![CDATA[v]]></t>` and `<t>v</t>` are the same text in the XML infoset, and only the parser distinguishes them; an author who asked for `v` and was sent `v` has what they asked for. This matches strictly **more** than WireMock, so no suite that passes there fails here.
+
+> `B-DEV-61` · 1 case · wm: n/a · CDATA and text compare equal in equalToXml, in both directions
+
+**62.** **A numeric `xPath` result renders without locale grouping** (WM: groups by the JVM's default locale). `{{xPath body 'count(//item) * 1000000'}}` renders `2,000,000` on a container started in `en` and `2.000.000` on the identical image started with `-Duser.language=de` — same stub, same request, same pinned version. The oracle's output here is a property of the container it booted in rather than of the wire, so there is nothing stable to reproduce; mockulus renders the digits and a `.` decimal point everywhere. Node selection, which is what the helper is nearly always used for, is unaffected.
+
+> `B-DEV-62` · 1 case · wm: n/a · a numeric xPath result renders without locale grouping separators
+
+**63.** **`multipartPatterns`'s `name` selects the part** (WM: the field is inert). On WireMock `name` is accepted, optional and never consulted: a pattern naming `meta` matches a part called `other`, a pattern naming `THIS-MATCHES-NOTHING` matches anything, and a `name` that directly contradicts the `Content-Disposition` criterion beside it changes nothing. Part selection is done through `headers` against `Content-Disposition` and through nothing else. Here the field means what it reads as: the part's parsed `Content-Disposition` name parameter must equal it — parsed rather than matched as a substring, so `name="meta"` and `name=meta` both work where a `contains` criterion distinguishes them. **This matches strictly fewer requests than WireMock**, which is the direction #29 exists to avoid, and it is the release's riskiest call: a stub that named one part while relying on any part matching stops matching here. The judgement is that such a stub is relying on a bug, and that a 404 at registration-time testing beats one at three in the morning. Reverting is one line and this entry is where to start.
+
+> `B-DEV-63` · 1 case · wm: n/a · a multipart pattern naming a part that is not there does not match
+
 ## Beyond the WireMock surface
 
 A single-node oracle has nothing to diff these against: an operational contract
@@ -573,7 +598,7 @@ Every rejection carries one of these in a WireMock-shaped error envelope, with a
 |---|---|---|---|---|
 | 10 | 422 | 29 · verified | `B-ERR-10` | Malformed JSON / schema violation (WM parity code, verified) |
 | 109 | 422 | 6 · verified | `B-ERR-109` | Stub id already exists on create (WM parity code) |
-| 1000 | 422 | 8 · n/a | `B-ERR-1000` | Unsupported stub feature (pointer names the field) |
+| 1000 | 422 | 7 · n/a | `B-ERR-1000` | Unsupported stub feature (pointer names the field) |
 | 1001 | 404 | 1 · n/a | `B-ERR-1001` | Unsupported admin endpoint (body links ROADMAP) |
 | 1002 | 422 | 4 · n/a | `B-ERR-1002` | Unknown template helper / template parse error |
 | 1003 | 422 | 5 · n/a | `B-ERR-1003` | Regex does not compile (both engines) |

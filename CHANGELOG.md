@@ -8,6 +8,90 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
+## [Unreleased]
+
+### 1.3.0
+
+The release that closes the request-matching gap: after it the only WireMock
+request matcher mockulus refuses is `customMatcher`, which names a Java class to
+load and is a stated non-goal rather than a deferred feature.
+
+### Added
+
+- `equalToXml` and `matchesXPath`. **XML responses were never a gap** — a stub
+  has always served any bytes under any `Content-Type`; what was missing is
+  selecting a stub *by* the XML a caller sent. Children are paired by element
+  name, so differently-named siblings compare order-insensitively and same-named
+  ones do not; namespaces compare by URI, and the prefix is a local alias. Typed
+  in the SDK as `equalToXml()` and `matchingXPath()`.
+- The `xPath`, `soapXPath` and `formatXml` template helpers, reading the request
+  body through the same parser the matchers use. `soapXPath` evaluates its
+  expression as a location step below the SOAP `Envelope/Body`, which is why an
+  expression may not begin with `//` or with a function call. These three were
+  listed in SPEC §10.3 as deliberately excluded for sandbox reasons through
+  v1.2.0; that was wrong, and reading the request's own body reaches nothing
+  outside the request.
+- `multipartPatterns`, closing the deferred half of ROADMAP 1.5. Elements of the
+  array are ANDed, while `matchingType` quantifies over the *parts* inside one
+  element — so two elements each saying `ANY` require two satisfied parts, which
+  is the reading most people get backwards. A body that is not multipart is a
+  non-match rather than an error, a multipart body carrying no parts never
+  matches, and an empty array constrains nothing. Typed in the SDK as
+  `withMultipartRequestBody`.
+- The `host`, `port` and `scheme` request matchers. They were refused by name in
+  the code and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them, so
+  nobody had decided against them — they were simply missing. `scheme` reports
+  what *this process* terminated, so behind an ingress that terminates TLS a
+  request arrives as plain http and is reported as such.
+
+### Security
+
+- **XML parsing resolves no external entities.** A `DOCTYPE` declaring a
+  `SYSTEM` or `PUBLIC` entity parses, and the entity expands to nothing, so a
+  document referencing a local file is answered without that file being read.
+  Internal entities still expand, which is the control that proves the parser is
+  running at all rather than refusing everything.
+- The three XML template helpers share that one parser rather than constructing
+  their own. A second parser reached through a template would have been a second
+  place for the entity rule to stop holding, and the corpus case covering the
+  matchers would have kept passing while it did.
+
+### Changed
+
+- Deviation **#59** and **#60**: an XPath that evaluates to a value rather than
+  selecting nodes (`count(//item) = 2`), and one that does not parse at all, are
+  both refused at registration. WireMock registers either and then never matches,
+  which is the failure that costs an afternoon because the stub looks installed.
+- Deviation **#61**: CDATA and plain text compare equal in `equalToXml`, in both
+  directions. WireMock treats the section itself as significant. The infoset says
+  they are the same text, and this matches strictly *more* than WireMock does, so
+  no suite that passes there can fail here.
+- Deviation **#62**: a numeric `xPath` result renders without locale grouping.
+  WireMock formats through Java's default `NumberFormat`, so the identical image
+  renders `2,000,000` or `2.000.000` depending on the locale the container booted
+  in. There is no stable oracle answer to match, only the locale in front of you.
+- Deviation **#63**: `multipartPatterns`'s `name` selects the part. WireMock
+  accepts the field and never reads it — a pattern naming a part that is not
+  present matches anyway, and so does one whose `name` contradicts the
+  `Content-Disposition` criterion beside it. **This is the one change in this
+  release that can turn a passing WireMock suite red**, because it matches
+  strictly fewer requests; the deviations page states the risk and names the one
+  condition to delete. Everything else about the criterion is differentially
+  verified.
+
+### Repository
+
+- `docs/deviations.md` is now gated. Its own maintenance note promised a new
+  deviation arrives with a section there "or it does not arrive", and nothing
+  checked the claim — the page's opening count had drifted to 57 against a list
+  of 61, because it counted headings and several headings cover two deviations.
+  `make deviation-docs-check` fails on either half of that drift.
+- The E2E suite can adopt a Couchbase somebody else is running, through
+  `MOCKULUS_E2E_CB_CONNSTR` and friends, instead of requiring the ports 8091–8093
+  and 11210 for a container of its own. The degraded-mode cases need
+  `MOCKULUS_E2E_CB_CONTAINER` as well, since they work by freezing the container.
+  `test/e2e/README.md` has the details.
+
 ## [1.2.0] - 2026-08-14
 
 A small release: one compatibility gap closes, one extension arrives, one

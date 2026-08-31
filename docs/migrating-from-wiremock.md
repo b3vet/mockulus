@@ -104,15 +104,15 @@ that answers `422` with:
     },
     {
       "code": 1000,
-      "source": { "pointer": "/mappings/2/request/bodyPatterns/0/equalToXml" },
+      "source": { "pointer": "/mappings/2/request/customMatcher" },
       "title": "Unsupported feature",
-      "detail": "equalToXml (XML matching) is not supported in mockulus v1 — see ROADMAP.md"
+      "detail": "customMatcher is not supported in mockulus v1 — see ROADMAP.md"
     },
     {
       "code": 1000,
-      "source": { "pointer": "/mappings/5/request/multipartPatterns" },
+      "source": { "pointer": "/mappings/5/response/proxyBaseUrl" },
       "title": "Unsupported feature",
-      "detail": "multipartPatterns is not supported in mockulus v1 — see ROADMAP.md"
+      "detail": "proxyBaseUrl (proxy mode) is not supported in mockulus v1 — see ROADMAP.md"
     }
   ]
 }
@@ -624,7 +624,7 @@ import panel: *Check without writing*.
 
 ## Step 6 — The deviations most likely to change your suite
 
-Mockulus answers differently from WireMock in 58 catalogued places, all of them
+Mockulus answers differently from WireMock in 61 catalogued places, all of them
 listed with their rationale in [Deviations from WireMock](deviations.md). Most
 will never touch you. These are the ones that do.
 
@@ -649,15 +649,16 @@ An unknown Handlebars helper is code `1002`, and the message lists what is
 available:
 
 ```
-unknown helper "myHelper"; mockulus supports base64, concat, default, join, jsonPath,
-lookup, lower, lowercase, math, now, number, pickRandom, randomDecimal, randomInt,
-randomValue, range, replace, size, split, substring, trim, upper, uppercase, urlEncode
+unknown helper "myHelper"; mockulus supports base64, concat, default, formatXml,
+join, jsonPath, lookup, lower, lowercase, math, now, number, pickRandom,
+randomDecimal, randomInt, randomValue, range, replace, size, soapXPath, split,
+substring, trim, upper, uppercase, urlEncode, xPath
 ```
 
-`xPath`, `soapXPath`, `formatXml`, `jwt`, `secret`, `systemValue`, `hostname`
-and `file` are not in that list. The last four are excluded on purpose: a
-template must not be able to read the environment, the filesystem or the
-network.
+`jwt`, `secret`, `systemValue`, `hostname` and `file` are not in that list, and
+four of those five are excluded on purpose: a template must not be able to read
+the environment, the filesystem or the network. `xPath`, `soapXPath` and
+`formatXml` were listed here too until v1.3.0, which implemented them.
 
 ### Timing
 

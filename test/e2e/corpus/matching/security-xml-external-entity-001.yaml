@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+id: security-xml-external-entity-001
+behaviors: [B-MATCH-EQUALTOXML, B-MATCH-MATCHESXPATH]
+wm: verified
+wm_ignore: ["$unmatched-body"]
+# XXE, and it has a case of its own rather than a line in another one.
+#
+# XML differs from JSON in kind here, not degree: a document can name a file and
+# a parser that obliges turns a mock server into a file-disclosure primitive
+# reachable by anyone who can send it a request. The stub below asks whether the
+# entity's content looks like /etc/passwd, so a resolving parser answers 200 and
+# a safe one answers 404 — the assertion is the difference between the two.
+#
+# WireMock's parser refuses external entities too, established by reading the
+# resolved value back through a template rather than inferring it from a match,
+# which a match alone could not have told us. So this is parity, and the case is
+# `wm: verified` rather than a claim about our own preferences.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0620001-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/security-xml-external-entity-001/xxe",
+                     "bodyPatterns": [{"matchesXPath": {"expression": "//data/text()",
+                                                        "matches": ".*root.*"}}]},
+         "response": {"status": 200, "body": "LEAKED", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  # The attack. A 200 here would mean the parser read the file and the matcher
+  # saw its contents.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/security-xml-external-entity-001/xxe
+      headers: {Content-Type: application/xml}
+      body: "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><r><data>&xxe;</data></r>"
+    expect: {status: 404}
+
+  # A network entity is the same attack with a different target, and the answer
+  # has to be as quick: a parser that dials out turns one request into an
+  # outbound connection from inside the cluster.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/security-xml-external-entity-001/xxe
+      headers: {Content-Type: application/xml}
+      body: "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/\">]><r><data>&xxe;</data></r>"
+    expect: {status: 404}
+
+  # The control, and it is what makes the two 404s above mean something: the
+  # criterion does match when the document really carries the text, so the
+  # refusals are the entity not resolving rather than the matcher not working.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/security-xml-external-entity-001/xxe
+      headers: {Content-Type: application/xml}
+      body: "<r><data>root:x:0:0</data></r>"
+    expect: {status: 200, body: "LEAKED"}
+
+  # An *internal* entity does expand — that is ordinary XML and WireMock does it
+  # too. The distinction is external versus internal, not entities as such.
+  - request:
+      port: mock
+      method: POST
+      path: /e2e/security-xml-external-entity-001/xxe
+      headers: {Content-Type: application/xml}
+      body: "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY ok \"root:x:0:0\">]><r><data>&ok;</data></r>"
+    expect: {status: 200, body: "LEAKED"}

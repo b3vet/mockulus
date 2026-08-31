@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/b3vet/mockulus/internal/handlebars"
 )
 
 // SPEC §10.1 draws a line through helper failures and §10.4 says where each side
@@ -260,9 +262,11 @@ func TestJSONPathIsAbsentUntilTheMatcherEngineSuppliesIt(t *testing.T) {
 	}
 
 	called := false
-	with := NewEngine(1<<20, func(args []any, _ map[string]any) (any, error) {
-		called = true
-		return "from-the-matcher-engine", nil
+	with := NewEngine(1<<20, map[string]handlebars.Helper{
+		"jsonPath": func(args []any, _ map[string]any) (any, error) {
+			called = true
+			return "from-the-matcher-engine", nil
+		},
 	})
 	tpl, err := with.Compile(`{{jsonPath request.body '$.id'}}`)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/b3vet/mockulus/internal/handlebars"
+	"github.com/b3vet/mockulus/internal/httpx"
 )
 
 // Engine compiles and renders response templates.
@@ -24,8 +25,8 @@ type Engine struct {
 }
 
 // NewEngine builds the engine with the allowlist of SPEC §10.3.
-func NewEngine(maxOutput int, jsonPath handlebars.Helper) *Engine {
-	return &Engine{registry: NewRegistry(jsonPath), maxOutput: maxOutput}
+func NewEngine(maxOutput int, external map[string]handlebars.Helper) *Engine {
+	return &Engine{registry: NewRegistry(external), maxOutput: maxOutput}
 }
 
 // HelperNames lists the registered helpers, which the 422 for an unknown one
@@ -111,9 +112,9 @@ func BuildContext(r *http.Request, body []byte, pathVars map[string]string,
 		"path":         pathValue{text: path, model: pathModel},
 		"pathSegments": segments,
 		"method":       r.Method,
-		"host":         hostOnly(r.Host),
-		"port":         portOnly(r.Host),
-		"scheme":       schemeOf(r),
+		"host":         httpx.Host(r),
+		"port":         httpx.Port(r),
+		"scheme":       httpx.Scheme(r),
 		"baseUrl":      baseURL(r),
 		"clientIp":     clientIP(r),
 		"headers":      headerModel(r.Header),
@@ -307,28 +308,7 @@ func unescape(s string) string {
 	return s
 }
 
-func hostOnly(host string) string {
-	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.Contains(host[i:], "]") {
-		return host[:i]
-	}
-	return host
-}
-
-func portOnly(host string) string {
-	if i := strings.LastIndexByte(host, ':'); i >= 0 && !strings.Contains(host[i:], "]") {
-		return host[i+1:]
-	}
-	return ""
-}
-
-func schemeOf(r *http.Request) string {
-	if r.TLS != nil {
-		return "https"
-	}
-	return "http"
-}
-
-func baseURL(r *http.Request) string { return schemeOf(r) + "://" + r.Host }
+func baseURL(r *http.Request) string { return httpx.Scheme(r) + "://" + r.Host }
 
 // clientIP reports the peer address, without consulting forwarding headers: a
 // template that trusted them would be reporting whatever the caller claimed.

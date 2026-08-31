@@ -22,7 +22,7 @@ steps:
          "postServeActions": [{"name": "webhook"}],
          "request": {"method": "GET",
                      "urlPattern": "/e2e/errors-collect-all-001/(",
-                     "multipartPatterns": [{"name": "part1"}]},
+                     "customMatcher": {"name": "com.example.Matcher"}},
          "response": {"status": 200, "proxyBaseUrl": "http://upstream.invalid"}}
     expect:
       # 422 is the most severe status among the entries, so a mixed list still
@@ -38,7 +38,7 @@ steps:
             title: "Malformed request"
             source: {pointer: "/priority"}
           - code: 1000
-            source: {pointer: "/request/multipartPatterns"}
+            source: {pointer: "/request/customMatcher"}
           - code: 1003
             title: "Invalid regular expression"
             source: {pointer: "/request/urlPattern"}

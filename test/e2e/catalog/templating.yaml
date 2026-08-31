@@ -5,6 +5,36 @@
 # for new spec rows with: make e2e-catalog-generate
 
 behaviors:
+  - id: "B-TPL-XPATH"
+    spec_row: "spec:10.3:template-helpers|xPath"
+    spec_hash: "8784975b41500537"
+    spec: "#103-helper-allowlist-v1"
+    kind: "template"
+    impl_milestone: "M9"
+    summary: "xPath"
+    evidence: "a node-set renders its first node, an element serializes, an attribute renders its value"
+    evidence_tokens: ["xPath"]
+    status: "ok"
+  - id: "B-TPL-SOAPXPATH"
+    spec_row: "spec:10.3:template-helpers|soapXPath"
+    spec_hash: "7bc28b793e08c6c4"
+    spec: "#103-helper-allowlist-v1"
+    kind: "template"
+    impl_milestone: "M9"
+    summary: "soapXPath"
+    evidence: "the expression resolves below the SOAP Envelope/Body and nowhere else"
+    evidence_tokens: ["soapXPath"]
+    status: "ok"
+  - id: "B-TPL-FORMATXML"
+    spec_row: "spec:10.3:template-helpers|formatXml"
+    spec_hash: "1572fc0392206761"
+    spec: "#103-helper-allowlist-v1"
+    kind: "template"
+    impl_milestone: "M9"
+    summary: "formatXml"
+    evidence: "the document is re-indented at two spaces per level and the declaration is dropped"
+    evidence_tokens: ["formatXml"]
+    status: "ok"
   - id: "B-TPL-JSONPATH"
     spec_row: "spec:10.3:template-helpers|jsonPath"
     spec_hash: "45b87937674c8980"

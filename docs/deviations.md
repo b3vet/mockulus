@@ -1,8 +1,9 @@
 # Deviations from WireMock
 
-Mockulus answers differently from WireMock in 57 places. This page is all of
+Mockulus answers differently from WireMock in 63 places. This page is all of
 them, grouped by what you are doing when you hit one, with what to expect and
-what to do about it.
+what to do about it. A few sections cover two closely related numbers together,
+so there are fewer headings than deviations.
 
 A deviation is a decision, not a defect. Each one was taken because the
 alternative cost something specific, and in almost every case the cost is one of
@@ -549,6 +550,69 @@ $ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$ADMIN/__admin/mappings" \
 201
 ```
 
+### #59, #60 — An XPath that cannot discriminate
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/d59","bodyPatterns":[{"matchesXPath":"count(//item) = 2"}]},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/bodyPatterns/0/matchesXPath"},"title":"Malformed request","detail":"\"count(//item) = 2\" evaluates to a value rather than selecting nodes, so it can never fail to match; write it as a node selection such as \"//item[2]\""}]}
+
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/d60","bodyPatterns":[{"matchesXPath":"//["}]},"response":{"status":200}}'
+{"errors":[{"code":10,"source":{"pointer":"/request/bodyPatterns/0/matchesXPath"},"title":"Malformed request","detail":"\"//[\" is not a valid XPath expression: expression must evaluate to a node-set"}]}
+```
+
+WireMock registers both, and then neither does what it looks like.
+
+`matchesXPath` is evaluated there as a node list. An expression whose result is a
+boolean, a number or a string is not one, and the outcome is that **it matches
+every request**: `count(//item) = 2` holds against a document with one item,
+and `false()` holds against everything. Probed directly — `true()`, `false()`,
+`count(//item) = 999` and `string(//missing)` all answer 200 on the pinned
+version. A criterion that reads as an assertion is a no-op.
+
+A malformed expression is the same shape with a different cause: `//[` answers
+`201` there and then silently selects nothing, so the stub is dead on arrival
+and the stored mapping says nothing about why.
+
+Both are refused here, which is P3 and the call §5.5 already makes at #49, #50
+and #58 — a criterion that provably cannot discriminate is a stub that cannot
+be served, and finding out at registration beats finding out from a suite that
+never goes green. The result kind is a property of the expression rather than of
+the document, so a single probe document settles it without waiting for traffic.
+
+**This is the direction that can block a migration.** A mappings set carrying
+either shape imports on WireMock and is refused here. That is deliberate: the
+alternative is accepting a criterion we know does nothing, and the refusal names
+the node selection to write instead.
+
+### #61 — CDATA is text
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" \
+    -d '{"request":{"urlPath":"/cd","bodyPatterns":[{"equalToXml":"<r><t>v</t></r>"}]},"response":{"status":200}}'
+
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$MOCK/cd" \
+    -H 'Content-Type: application/xml' --data-binary '<r><t><![CDATA[v]]></t></r>'
+200
+```
+
+WireMock answers `404`, and in both directions: a CDATA section never equals the
+same text written plainly, and plain text never equals the same content in a
+CDATA section. Verified with controls — CDATA matches CDATA, and a different
+CDATA value is caught — so it is the section rather than the value that decides
+it there.
+
+The XML infoset says the two are the same text. `<![CDATA[v]]>` is an escaping
+convenience for content that would otherwise need entities, and a producer that
+switches to it has not changed what it sent. A stub author who wrote `<t>v</t>`
+and received `<t><![CDATA[v]]></t>` got the value they asked for.
+
+So the comparison folds CDATA in with text, and this deviation exists because
+that is a difference somebody could otherwise spend an afternoon on. It matches
+strictly **more** than WireMock: every document that satisfies an `equalToXml`
+there satisfies it here, so no suite that passes on WireMock can fail on this.
+
 ### #58 — `hasExactly: []`, which could never match
 
 ```console
@@ -765,6 +829,65 @@ ordinary meaning.
 No stub WireMock accepts is refused on this account, so this deviation costs
 nothing to migrate. The only difference is that a request answered with a server
 error there is answered here.
+
+### #63 — `multipartPatterns`'s `name` selects the part
+
+This is the riskiest entry on the page, and the only one in v1.3.0 that can turn
+a passing WireMock suite red. Read it before adopting `multipartPatterns`.
+
+On WireMock the `name` field is accepted, optional, and **never consulted**:
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" -d '{"request":{"urlPath":"/upload",
+    "multipartPatterns":[{"name":"meta","bodyPatterns":[{"equalTo":"hello"}]}]},
+    "response":{"status":200}}'
+
+$ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$MOCK/upload" -F 'other=hello'
+404
+```
+
+WireMock answers `200` there. The part is called `other`, the pattern asks for
+`meta`, and it matches anyway — part selection is done through `headers` against
+`Content-Disposition` and through nothing else. The sharpest form is a pattern
+whose `name` **contradicts** the header criterion beside it:
+
+```json
+{"name": "meta",
+ "headers": {"Content-Disposition": {"contains": "name=\"other\""}},
+ "bodyPatterns": [{"equalTo": "bye"}]}
+```
+
+Two fields disagreeing about which part is wanted, and WireMock serves the stub,
+because only one of them was ever read.
+
+Here `name` means what it reads as: the part's `Content-Disposition` `name`
+parameter must equal it. The parameter is **parsed** rather than matched as
+text, so both spellings a client may send are found —
+
+```
+Content-Disposition: form-data; name="meta"
+Content-Disposition: form-data; name=meta
+```
+
+— where the equivalent `{"contains": "name=\"meta\""}` criterion matches the
+first and misses the second.
+
+**The risk, stated plainly.** This matches *strictly fewer* requests than
+WireMock. Everywhere else on this page that mockulus differs on matching, it
+either refuses at registration or matches more; this one changes a `200` into a
+`404` at serve time, which is the direction [#29](#29--repeated-headers-and-query-parameters-are-plain-any-of)
+exists to avoid. A stub that names one part while relying on any part matching
+works there and fails here.
+
+The judgement is that such a stub is relying on a bug rather than on a feature,
+and that a mismatch found while writing tests beats one found at three in the
+morning. It is a judgement and not a fact, the code is one condition, and this
+paragraph is where to start if it turns out to be the wrong call.
+
+Nothing else about the criterion deviates. Elements are ANDed, `matchingType`
+quantifies over the parts inside one element, a non-multipart body is a
+non-match rather than an error, a body with no parts never matches, and an empty
+array constrains nothing — all verified differentially.
 
 ### #29 — Repeated headers and query parameters are plain any-of
 
@@ -1081,7 +1204,7 @@ at registration —
 ```console
 $ curl -s -X POST "$ADMIN/__admin/mappings" \
     -d '{"request":{"url":"/h"},"response":{"body":"{{jwt \"x\"}}","transformers":["response-template"]}}'
-{"errors":[{"code":1002,"source":{"pointer":"/response/body"},"title":"Template error","detail":"unknown helper \"jwt\"; mockulus supports base64, concat, default, join, jsonPath, lookup, lower, lowercase, math, now, number, pickRandom, randomDecimal, randomInt, randomValue, range, replace, size, split, substring, trim, upper, uppercase, urlEncode"}]}
+{"errors":[{"code":1002,"source":{"pointer":"/response/body"},"title":"Template error","detail":"unknown helper \"jwt\"; mockulus supports base64, concat, default, formatXml, join, jsonPath, lookup, lower, lowercase, math, now, number, pickRandom, randomDecimal, randomInt, randomValue, range, replace, size, soapXPath, split, substring, trim, upper, uppercase, urlEncode, xPath"}]}
 ```
 
 — while an error that can only happen against a real request renders into the
@@ -1096,9 +1219,12 @@ Template render error: jsonPath: the document is not valid JSON
 
 Serve-time render errors are counted by `mockulus_template_render_errors_total`.
 The helpers excluded from the allowlist are excluded deliberately: `file`,
-`systemValue`, `secret`, `hostname` and the XML helpers give a stub filesystem,
-environment or network reach, and templates here are sandboxed by construction
-rather than by configuration ([SPEC §17](../SPEC.md#17-security)).
+`systemValue`, `secret` and `hostname` give a stub filesystem, environment or
+network reach, and templates here are sandboxed by construction rather than by
+configuration ([SPEC §17](../SPEC.md#17-security)). `xPath`, `soapXPath` and
+`formatXml` were listed beside them until v1.3.0 and never belonged there —
+reading the request's own body reaches nothing outside the request — and they
+are supported as of that release.
 
 ### #45 — `math` with `/` keeps the fraction
 
@@ -1111,6 +1237,41 @@ The body is `{{math 10 "/" 4}}`. WireMock rounds half-up to an integer when both
 operands are integral and renders `3`. Discarding the fraction of a division a
 template asked for is a surprising default, and the rounded value is one more
 `{{math}}` away for anyone who wants it.
+
+### #62 — A numeric `xPath` result carries no locale grouping
+
+```console
+$ curl -s -X POST "$ADMIN/__admin/mappings" -d '{"request":{"urlPath":"/n"},
+    "response":{"body":"{{{xPath request.body \'count(//item) * 1000000\'}}}",
+                "transformers":["response-template"]}}'
+
+$ curl -s -X POST "$MOCK/n" -H 'Content-Type: application/xml' \
+    --data-binary '<r><item>a</item><item>b</item></r>'
+2000000
+```
+
+WireMock renders `2,000,000`. Not always, though, and that is the point. The same
+stub, the same request and the same pinned image render it differently depending
+on the locale the *container* started in:
+
+```console
+$ docker run … wiremock/wiremock:3.13.2                               # default
+2,000,000
+$ docker run … -e JAVA_OPTS="-Duser.language=de -Duser.country=DE" …  # de_DE
+2.000.000
+```
+
+That is Java's default `NumberFormat` following the JVM's locale, and it means
+there is no oracle answer to reproduce — only whichever locale the oracle in
+front of you happened to boot in. A mockulus that grouped digits would still
+render a *different* body from the WireMock sitting beside it whenever the two
+disagreed, so matching would buy nothing and cost a machine-dependent response.
+
+Digits and a `.` decimal separator, everywhere. `0.5` is `0.5` and not `0,5`.
+
+This only reaches expressions that return a number — `count(...)`, arithmetic,
+`string-length(...)`. Selecting nodes, which is what the helper is nearly always
+doing, renders identically to WireMock and is covered by the differential lane.
 
 ### #39 — A helper that finds nothing renders nothing
 

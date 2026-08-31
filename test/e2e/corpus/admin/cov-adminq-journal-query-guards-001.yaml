@@ -98,13 +98,13 @@ steps:
       path: /__admin/near-misses/request-pattern
       body: |
         {"urlPath":"/e2e/cov-adminq-journal-query-guards-001/orders",
-         "bodyPatterns":[{"matchesXPath":"/order/sku"}]}
+         "customMatcher": {"name": "com.example.Matcher"}}
     expect:
       status: 422
       body_json_subset:
         errors:
           - code: 1000
-            source: {pointer: /request/bodyPatterns/0/matchesXPath}
+            source: {pointer: /request/customMatcher}
 
   # With both inputs wrong the pattern wins, because it is checked first. That
   # ordering is worth pinning: the pattern is the thing the caller wrote, and
@@ -115,13 +115,13 @@ steps:
       path: "/__admin/near-misses/request-pattern?since=yesterday"
       body: |
         {"urlPath":"/e2e/cov-adminq-journal-query-guards-001/orders",
-         "bodyPatterns":[{"matchesXPath":"/order/sku"}]}
+         "customMatcher": {"name": "com.example.Matcher"}}
     expect:
       status: 422
       body_json_subset:
         errors:
           - code: 1000
-            source: {pointer: /request/bodyPatterns/0/matchesXPath}
+            source: {pointer: /request/customMatcher}
 
   # The request endpoint takes a logged-request description rather than a
   # pattern, so a body that is not JSON at all fails there with a message about

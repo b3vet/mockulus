@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/b3vet/mockulus/internal/httpx"
 	"github.com/b3vet/mockulus/internal/matchers"
 )
 
@@ -34,6 +35,21 @@ type ParsedRequest struct {
 
 	header http.Header
 	body   []byte
+
+	// The connection-level facts, derived once in bind through internal/httpx so
+	// a `host` criterion and a `{{request.host}}` template can never disagree
+	// about the same request. Plain strings rather than lazily parsed: each is a
+	// slice of a header the request already carries, and the derivation is a
+	// single index scan.
+	host   string
+	port   string
+	scheme string
+
+	// Subjects for the three, kept on the request so a criterion over one costs
+	// no allocation — the same device the body and key subjects use.
+	hostSubject   matchers.KeyValues
+	portSubject   matchers.KeyValues
+	schemeSubject matchers.KeyValues
 
 	query       url.Values
 	queryParsed bool
@@ -133,6 +149,7 @@ func (r *ParsedRequest) bind(req *http.Request, body []byte) {
 	r.FullURL = target
 	r.header = req.Header
 	r.body = body
+	r.host, r.port, r.scheme = httpx.Host(req), httpx.Port(req), httpx.Scheme(req)
 	// A body is read as text through the charset its own Content-Type declares,
 	// and the subject cannot see the headers to find it. The lookup is charged
 	// only where there is a body whose reading it could change (P2).
@@ -178,6 +195,11 @@ func (r *ParsedRequest) Reset() {
 	r.cookies, r.cookiesParsed = nil, false
 	r.form, r.formParsed = nil, false
 
+	r.host, r.port, r.scheme = "", "", ""
+	r.hostSubject.Set(false, nil)
+	r.portSubject.Set(false, nil)
+	r.schemeSubject.Set(false, nil)
+
 	r.bodySubject.Reset()
 	r.keyScratch.Set(false, nil)
 
@@ -221,6 +243,34 @@ func (r *ParsedRequest) HeaderValues(name string) []string { return r.header.Val
 
 // BodySubject returns the subject for body criteria.
 func (r *ParsedRequest) BodySubject() matchers.Subject { return &r.bodySubject }
+
+// HostSubject returns the subject for the `host` criterion.
+//
+// The three connection-level facts are presented as ordinary subjects so their
+// criteria are matched by the same vocabulary as everything else — `equalTo`,
+// `matches`, `contains` and the combinators all work without knowing what they
+// are looking at.
+//
+// Each is always present: a request arrived over some scheme, and the Host
+// header is mandatory in HTTP/1.1. `port` is present-but-empty when the header
+// named no port, which is a different thing from absent and is what lets a stub
+// match "no port was named".
+func (r *ParsedRequest) HostSubject() matchers.Subject {
+	r.hostSubject.Set(true, []string{r.host})
+	return &r.hostSubject
+}
+
+// PortSubject returns the subject for the `port` criterion.
+func (r *ParsedRequest) PortSubject() matchers.Subject {
+	r.portSubject.Set(true, []string{r.port})
+	return &r.portSubject
+}
+
+// SchemeSubject returns the subject for the `scheme` criterion.
+func (r *ParsedRequest) SchemeSubject() matchers.Subject {
+	r.schemeSubject.Set(true, []string{r.scheme})
+	return &r.schemeSubject
+}
 
 // HeaderSubject returns the subject for a header, matched case-insensitively
 // as WireMock does. Go canonicalises header names on both store and lookup, so

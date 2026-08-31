@@ -67,7 +67,9 @@ $ docker logs mockulus
 ```
 
 The tag carries the `v` — `:v1.1.0`, not `:1.1.0` — because it is the git tag the release was cut
-from. `:latest` follows the most recent release. Static binaries for linux, macOS and Windows are
+from. That transcript is a recorded one and names the release it was taken from rather than the
+current one; `:latest` follows the most recent release, and the
+[releases page](https://github.com/b3vet/mockulus/releases) is what says which that is. Static binaries for linux, macOS and Windows are
 attached to each [GitHub release](https://github.com/b3vet/mockulus/releases) with a checksum file.
 
 To build the image instead, `make image` uses the same Dockerfile the release pipeline does and
@@ -322,10 +324,11 @@ $ curl -s http://localhost:8080/__admin/recordings/status
 
 ### What is not here
 
-Absent entirely, and rejected on sight: XML and XPath matching (`equalToXml`,
-`matchesXPath`), multipart matching (`multipartPatterns`), proxying (`proxyBaseUrl`), record and
-playback, webhooks (`postServeActions`), custom matchers, gRPC, browser proxying, and Java-class
-extensions. The full field-by-field matrix is
+Absent entirely, and rejected on sight: proxying (`proxyBaseUrl`), record and playback, webhooks
+(`postServeActions`), custom matchers, gRPC, browser proxying, and Java-class extensions. XML and
+XPath matching (`equalToXml`, `matchesXPath`), the `xPath`/`soapXPath`/`formatXml` template helpers
+and multipart matching (`multipartPatterns`) were on this list through v1.2.0 and arrived in
+v1.3.0. The full field-by-field matrix is
 [SPEC §5.2](../SPEC.md#52-stub-mapping-json--field-support-matrix); the endpoint matrix is
 [§5.1](../SPEC.md#51-admin-api-endpoint-matrix).
 
@@ -349,7 +352,7 @@ Two defaults will surprise a WireMock user before anything else does, and both a
 
 - **Near-miss diagnostics on unmatched requests are off**, as described above.
 
-Beyond the outright absences there are 58 catalogued, deliberate behavioural differences from the
+Beyond the outright absences there are 61 catalogued, deliberate behavioural differences from the
 pinned WireMock 3.13.2 — each one named, justified, and in most cases carrying a knob to restore
 WireMock's behaviour. They are written up in [Deviations from WireMock](deviations.md), and stated
 normatively in [SPEC §5.5](../SPEC.md#55-deviations-from-wiremock-complete-list-v1). Read one of them

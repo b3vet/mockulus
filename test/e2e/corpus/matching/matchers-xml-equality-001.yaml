@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+id: matchers-xml-equality-001
+behaviors: [B-MATCH-EQUALTOXML]
+wm: verified
+wm_ignore: ["$unmatched-body", "$.errors"]
+# Every row is a rule probed against pinned WireMock 3.13.2 on 2026-08-14 and
+# recorded in PROBE_XML.md. The ordering rule is the one worth the case: children
+# are paired by element name, so differently-named siblings are order-insensitive
+# and same-named ones are not. Neither "ordered" nor "unordered" is right, and an
+# implementation that picks either passes half of what follows.
+steps:
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0610001-0000-4000-8000-000000000001",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xml-equality-001/doc",
+                     "bodyPatterns": [{"equalToXml": "<r><x>1</x><y>2</y></r>"}]},
+         "response": {"status": 200, "body": "xml", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/doc,
+              headers: {Content-Type: application/xml}, body: "<r><x>1</x><y>2</y></r>"}
+    expect: {status: 200, body: "xml"}
+
+  # Differently-named siblings: order does not matter.
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/doc,
+              headers: {Content-Type: application/xml}, body: "<r><y>2</y><x>1</x></r>"}
+    expect: {status: 200, body: "xml"}
+
+  # Indentation and a comment are ignorable; the declaration is too.
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/doc,
+              headers: {Content-Type: application/xml},
+              body: "<?xml version=\"1.0\"?><r>\n  <!-- c -->\n  <x>1</x>\n  <y>2</y>\n</r>"}
+    expect: {status: 200, body: "xml"}
+
+  # A changed value is caught.
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/doc,
+              headers: {Content-Type: application/xml}, body: "<r><x>9</x><y>2</y></r>"}
+    expect: {status: 404}
+
+  # Same-named siblings: order DOES matter. This is the half a set comparison
+  # would get wrong, and the previous case is the half a sequence comparison
+  # would get wrong — together they pin the pairing rule.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0610001-0000-4000-8000-000000000002",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xml-equality-001/rep",
+                     "bodyPatterns": [{"equalToXml": "<r><x>1</x><x>2</x></r>"}]},
+         "response": {"status": 200, "body": "rep", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/rep,
+              headers: {Content-Type: application/xml}, body: "<r><x>1</x><x>2</x></r>"}
+    expect: {status: 200, body: "rep"}
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/rep,
+              headers: {Content-Type: application/xml}, body: "<r><x>2</x><x>1</x></r>"}
+    expect: {status: 404}
+
+  # Namespaces compare by URI: the prefix is a local alias.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0610001-0000-4000-8000-000000000003",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xml-equality-001/ns",
+                     "bodyPatterns": [{"equalToXml": "<p:a xmlns:p=\"urn:x\"><p:b/></p:a>"}]},
+         "response": {"status": 200, "body": "ns", "headers": {"Content-Type": "text/plain"}}}
+    expect: {status: 201}
+
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/ns,
+              headers: {Content-Type: application/xml}, body: "<z:a xmlns:z=\"urn:x\"><z:b/></z:a>"}
+    expect: {status: 200, body: "ns"}
+  - request: {port: mock, method: POST, path: /e2e/matchers-xml-equality-001/ns,
+              headers: {Content-Type: application/xml}, body: "<p:a xmlns:p=\"urn:other\"><p:b/></p:a>"}
+    expect: {status: 404}
+
+  # A malformed operand is refused at registration, as it is on WireMock — the
+  # status and the refusal agree, the error body does not, which is why `$.errors`
+  # is excluded from the diff above. WireMock points at `/request/bodyPatterns/0`,
+  # the whole pattern object; mockulus points at the `equalToXml` key inside it,
+  # because `source.pointer` names the offending field (§5.5 #14) and a pattern
+  # object may carry several. The deeper pointer is a superset of the information
+  # in the shallower one, so nothing a WireMock client could read is lost. The
+  # pointer is asserted here so that convention stays pinned even though the
+  # oracle cannot vouch for it.
+  - admin:
+      method: POST
+      path: /__admin/mappings
+      body: |
+        {"id": "c0610001-0000-4000-8000-000000000004",
+         "request": {"method": "POST", "urlPath": "/e2e/matchers-xml-equality-001/bad",
+                     "bodyPatterns": [{"equalToXml": "<a><unclosed>"}]},
+         "response": {"status": 200}}
+    expect:
+      status: 422
+      body_json_subset:
+        errors:
+          - code: 10
+            source: {pointer: "/request/bodyPatterns/0/equalToXml"}

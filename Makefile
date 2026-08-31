@@ -170,6 +170,13 @@ compat-docs: ## Regenerate docs/compatibility.md from the behavior catalog and c
 compat-docs-check: ## Verify docs/compatibility.md matches the catalog and corpus
 	$(GO) run ./scripts/compatmatrix -check
 
+# The deviations page promises that a new deviation arrives with a section there
+# or it does not arrive. Nothing enforced the "section there" half, and the page
+# drifted: its opening count said 57 while the list had reached 61.
+.PHONY: deviation-docs-check
+deviation-docs-check: ## Verify docs/deviations.md covers every SPEC §5.5 deviation
+	$(GO) run ./scripts/deviationdocs
+
 .PHONY: spdx
 spdx: ## Verify every mockulus-authored source file carries an SPDX header
 	@./scripts/check-spdx.sh
