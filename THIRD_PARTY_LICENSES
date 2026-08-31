@@ -35,6 +35,16 @@ below this paragraph, and it is added when the bundle's own module graph can be
 read out of the build rather than guessed at from a manifest.
 
 --------------------------------------------------------------------------------
+github.com/antchfx/xmlquery
+License: MIT
+Source:  https://github.com/antchfx/xmlquery/blob/v1.5.1/LICENSE
+
+--------------------------------------------------------------------------------
+github.com/antchfx/xpath
+License: MIT
+Source:  https://github.com/antchfx/xpath/blob/v1.3.6/LICENSE
+
+--------------------------------------------------------------------------------
 github.com/beorn7/perks/quantile
 License: MIT
 Source:  https://github.com/beorn7/perks/blob/v1.0.1/LICENSE
@@ -88,6 +98,11 @@ Source:  https://github.com/go-logr/logr/blob/v1.4.3/LICENSE
 github.com/go-logr/stdr
 License: Apache-2.0
 Source:  https://github.com/go-logr/stdr/blob/v1.2.2/LICENSE
+
+--------------------------------------------------------------------------------
+github.com/golang/groupcache/lru
+License: Apache-2.0
+Source:  https://github.com/golang/groupcache/blob/41bb18bfe9da/LICENSE
 
 --------------------------------------------------------------------------------
 github.com/golang/snappy
