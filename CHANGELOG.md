@@ -8,9 +8,7 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
-## [Unreleased]
-
-### 1.3.0
+## [1.3.0] - 2026-08-31
 
 The release that closes the request-matching gap: after it the only WireMock
 request matcher mockulus refuses is `customMatcher`, which names a Java class to
