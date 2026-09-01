@@ -28,11 +28,23 @@ import (
 // An IPv6 literal carries colons inside brackets, so the port is only the part
 // after a colon that is not inside them.
 func Host(r *http.Request) string {
-	h := r.Host
+	host, _ := SplitHostPort(r.Host)
+	return host
+}
+
+// SplitHostPort separates a Host header into its host and port halves in one
+// scan, returning an empty port when the header named none.
+//
+// The rule is not net.SplitHostPort's: that one errors on a header with no port
+// at all, which is the ordinary case, and a criterion must not depend on
+// whether the client bothered to spell out `:80`. An IPv6 literal keeps its
+// brackets, and the colon inside one is not a port separator — which is what
+// the bracket test is for.
+func SplitHostPort(h string) (host, port string) {
 	if i := strings.LastIndexByte(h, ':'); i >= 0 && !strings.Contains(h[i:], "]") {
-		return h[:i]
+		return h[:i], h[i+1:]
 	}
-	return h
+	return h, ""
 }
 
 // Port is the port from the Host header, or empty when the header carries none.
@@ -42,11 +54,8 @@ func Host(r *http.Request) string {
 // that wants "no port was named" can match the empty string; one that wants the
 // default has to say so.
 func Port(r *http.Request) string {
-	h := r.Host
-	if i := strings.LastIndexByte(h, ':'); i >= 0 && !strings.Contains(h[i:], "]") {
-		return h[i+1:]
-	}
-	return ""
+	_, port := SplitHostPort(r.Host)
+	return port
 }
 
 // Scheme is "https" when the request arrived over TLS and "http" otherwise.
@@ -61,8 +70,13 @@ func Port(r *http.Request) string {
 // SPEC §12.1 puts TLS on the mock listener only, so a deployment that terminates
 // TLS in mockulus itself gets the answer it expects; one that terminates it
 // earlier should match on a header its own ingress sets.
-func Scheme(r *http.Request) string {
-	if r.TLS != nil {
+func Scheme(r *http.Request) string { return SchemeOf(r.TLS != nil) }
+
+// SchemeOf is Scheme for a caller that has already reduced the request to
+// whether this process terminated TLS, so a pooled request need not hold the
+// whole *http.Request to answer it later.
+func SchemeOf(tls bool) string {
+	if tls {
 		return "https"
 	}
 	return "http"

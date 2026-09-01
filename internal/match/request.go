@@ -36,14 +36,26 @@ type ParsedRequest struct {
 	header http.Header
 	body   []byte
 
-	// The connection-level facts, derived once in bind through internal/httpx so
-	// a `host` criterion and a `{{request.host}}` template can never disagree
-	// about the same request. Plain strings rather than lazily parsed: each is a
-	// slice of a header the request already carries, and the derivation is a
-	// single index scan.
-	host   string
-	port   string
-	scheme string
+	// The connection-level facts, derived through internal/httpx so a `host`
+	// criterion and a `{{request.host}}` template can never disagree about the
+	// same request.
+	//
+	// Derived on first use rather than in bind. An earlier revision computed all
+	// three eagerly, reasoning that each is a slice of a header the request
+	// already carries and the derivation is one index scan. That reasoning is
+	// wrong twice over: it is two scans rather than one, since `Host` and `Port`
+	// each walk the header separately, and it is charged to every request while
+	// almost no stub carries any of the three criteria. Measured against v1.3.0,
+	// acquiring and releasing a request — which does no matching at all — cost
+	// noticeably more than the release before it. The body has always done this
+	// correctly, resolving its charset and its parsed forms only when something
+	// asks (SPEC §6.4, P2); this now matches.
+	rawHost string
+	isTLS   bool
+
+	host        string
+	port        string
+	originSplit bool
 
 	// Subjects for the three, kept on the request so a criterion over one costs
 	// no allocation — the same device the body and key subjects use.
@@ -149,7 +161,7 @@ func (r *ParsedRequest) bind(req *http.Request, body []byte) {
 	r.FullURL = target
 	r.header = req.Header
 	r.body = body
-	r.host, r.port, r.scheme = httpx.Host(req), httpx.Port(req), httpx.Scheme(req)
+	r.rawHost, r.isTLS = req.Host, req.TLS != nil
 	// A body is read as text through the charset its own Content-Type declares,
 	// and the subject cannot see the headers to find it. The lookup is charged
 	// only where there is a body whose reading it could change (P2).
@@ -195,7 +207,8 @@ func (r *ParsedRequest) Reset() {
 	r.cookies, r.cookiesParsed = nil, false
 	r.form, r.formParsed = nil, false
 
-	r.host, r.port, r.scheme = "", "", ""
+	r.rawHost, r.isTLS = "", false
+	r.host, r.port, r.originSplit = "", "", false
 	r.hostSubject.Set(false, nil)
 	r.portSubject.Set(false, nil)
 	r.schemeSubject.Set(false, nil)
@@ -255,20 +268,37 @@ func (r *ParsedRequest) BodySubject() matchers.Subject { return &r.bodySubject }
 // header is mandatory in HTTP/1.1. `port` is present-but-empty when the header
 // named no port, which is a different thing from absent and is what lets a stub
 // match "no port was named".
+
+// splitOrigin derives the host and the port from the Host header, once.
+//
+// One scan for both, where the two httpx helpers each make their own: a
+// criterion on `host` almost always sits beside one on `port` when it appears
+// at all, and neither is common enough to be worth two passes.
+func (r *ParsedRequest) splitOrigin() {
+	if r.originSplit {
+		return
+	}
+	r.host, r.port = httpx.SplitHostPort(r.rawHost)
+	r.originSplit = true
+}
+
+// HostSubject returns the subject for the `host` criterion.
 func (r *ParsedRequest) HostSubject() matchers.Subject {
+	r.splitOrigin()
 	r.hostSubject.Set(true, []string{r.host})
 	return &r.hostSubject
 }
 
 // PortSubject returns the subject for the `port` criterion.
 func (r *ParsedRequest) PortSubject() matchers.Subject {
+	r.splitOrigin()
 	r.portSubject.Set(true, []string{r.port})
 	return &r.portSubject
 }
 
 // SchemeSubject returns the subject for the `scheme` criterion.
 func (r *ParsedRequest) SchemeSubject() matchers.Subject {
-	r.schemeSubject.Set(true, []string{r.scheme})
+	r.schemeSubject.Set(true, []string{httpx.SchemeOf(r.isTLS)})
 	return &r.schemeSubject
 }
 
