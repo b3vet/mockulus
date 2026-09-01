@@ -1,141 +1,300 @@
 # Mockulus — Roadmap & Deferred Features
 
-Companion to [SPEC.md](SPEC.md). Everything here was **deliberately excluded from v1** (decision D5, 2026-07-22) to ship the performance core first. Each entry records what it is, why it was deferred, a design sketch consistent with the v1 architecture, what it depends on, and a size estimate (S ≈ days, M ≈ 1–2 weeks, L ≈ 3+ weeks).
+Companion to [SPEC.md](SPEC.md). Everything here was **deliberately excluded from v1** (decision
+D5, 2026-07-22) to ship the performance core first. Each entry records what it is, why it was
+deferred, and roughly what it would cost — so a decision to pick one up starts from what was
+already thought about rather than from scratch.
 
-**Entries that have since shipped are marked, not deleted.** Their numbers are referenced from commit messages, deviation entries and issue threads, so removing one would break a link somebody followed here; a shipped entry says so and points at where the behavior is now specified. As of **v1.1.0** that covers 1.2, 1.3, 1.4, 3.1 and 3.2.
+A feature still listed as deferred **fails loudly**: a stub using it is rejected with 422 and a
+pointer to this document, never silently ignored, so an adopting team learns at registration rather
+than from a mock that quietly matched the wrong thing.
 
-A feature still listed as deferred **fails loudly**: a stub using it is rejected with 422 + a pointer to this document (never silently ignored) — so adopting teams always know exactly where they stand.
-
-Buckets are an ordering proposal, not a commitment; reprioritize on demand signal (the 422 error codes are counted by `mockulus_admin_requests_total`, so demand is measurable).
-
----
-
-## Bucket 1 — v1.x candidates (compat gaps with known demand)
-
-### 1.1 XML & XPath matching (`equalToXml`, `matchesXPath`) — shipped in v1.3.0
-- **Status**: implemented, matchers and helpers both. Two things in the sketch below turned out differently and are worth reading before touching it. There is **no precomputed canonical form**: children are paired by element name, which makes differently-named siblings order-insensitive and same-named ones order-sensitive, and no single canonical serialisation expresses that. And the **XMLUnit placeholders are not a stretch goal but a non-goal** — probing showed WireMock does not interpret them at all (`PROBE_XML.md` P6), so implementing them would have invented behaviour rather than matched it. `formatXml` needed a printer written from recorded oracle bytes because `xmlquery`'s own indenting output differs from WireMock in five ways. Deviations #59, #60, #61 and #62 came out of it.
-- **Scope correction (2026-08-14).** This entry has always described the *matchers* and stopped there, which understates the work by a third and would ship a release branded "XML support" in which `{{xPath …}}` is still refused. Three template helpers — `xPath`, `soapXPath` and `formatXml` — are refused by §10.3's allowlist today and read the same document with the same parser. They belong in this entry and land with it. **XML *responses* are not a gap and never were**: a stub serves any bytes under any `Content-Type`, verified directly. What is missing is selecting a stub *by* the XML a caller sent, and reading values out of it in a template.
-- **What**: structural XML equality (whitespace/attribute-order insensitive) and XPath 1.0 matching, incl. namespaces and WM's `xPath` sub-matcher form; XMLUnit-style ignore placeholders as a stretch.
-- **Why deferred**: bounded but non-trivial (canonicalization corner cases); v1 focused on JSON-first traffic.
-- **Sketch**: pure-Go via `antchfx/xmlquery` + `antchfx/xpath`; canonical form computed at compile time for the expected document; same compile-at-registration discipline (P1/P2 hold — XML parse of request body is lazy and memoized on `ParsedRequest` like JSON). New matchers slot into `internal/matchers` with zero engine changes.
-- **Depends on**: differential corpus expansion for XML cases. **Size**: M.
-
-### 1.2 Date/time matchers (`before`, `after`, `equalToDateTime`) — shipped in v1.1.0
-- **Status**: implemented. The comparison rule is the part worth reading before writing one: **the expected value's type selects the mode** — an expected carrying a zone compares instants, one without compares wall-clock fields and discards the request's offset rather than converting it. Specified in SPEC §5.2 (the `before`/`after`/`equalToDateTime` row) with deviations #49–#53; pinned by the `wmv-datetime-*` and `deviation-datetime-*` corpus cases, and built by `before()`/`after()`/`equalToDateTime()` in the TypeScript SDK.
-- **What**: WM 3 temporal matchers with their real modifier set — `truncateExpected`, `truncateActual`, `applyTruncationLast`, `actualFormat`. There is no offset *parameter*: an offset is written into the expected value itself (`now +3 days`). Earlier revisions of this entry named `truncateExpectedTo`, `truncateActualTo` and `expectedOffset`, none of which WireMock 3.13.2 has — corrected once the oracle was probed rather than remembered.
-- **Sketch**: compile the expected instant (or its now-relative form) at registration; parse the actual per WM's accepted formats. The comparison mode is selected by the *expected* value's type — zoned compares instants, zoneless compares wall-clock fields — so that dispatch is the core of it. Pure matcher addition.
-- **Depends on**: nothing. **Size**: S.
-
-### 1.3 `equalToJson` placeholders (json-unit) — shipped in v1
-- **Status**: implemented during M1, not deferred after all. This entry predates the Appendix C probe that showed WM interprets the placeholders **by default**, so parity required v1 to as well. The supported set (`ignore`, `ignore-element`, `any-string`, `any-number`, `any-boolean`, `regex`) and its semantics are recorded in SPEC §5.2 (`equalToJson` row) and deviations #5 (an *unrecognised* placeholder is refused at registration — the inverse of the compare-literally behavior this entry used to describe) and #25; pinned by the `matchers-json-*` corpus cases. Entry retained under its number so existing references stay valid.
-
-### 1.4 `matchesJsonSchema` — shipped in v1.1.0
-- **Status**: implemented. Drafts V4 through 2020-12, defaulting to 2020-12, with the draft decided by `schemaVersion` or by the document's own `$schema`. **`format` is asserted only under V4/V6/V7** — the later drafts moved it into a vocabulary that is off by default, so the default asserts nothing about it, which is WireMock's behavior reproduced rather than chosen. Specified in SPEC §5.2 with deviations #55–#57 and error code 1006; pinned by the `wmv-jsonschema-*` and `deviation-jsonschema-*` corpus cases.
-- **What**: validate request body against an embedded JSON Schema (WM 3.3+).
-- **Sketch**: `santhosh-tekuri/jsonschema` (drafts 4–2020-12), schema compiled at registration.
-- **Depends on**: nothing. **Size**: S.
-
-### 1.5 Multipart matching + extended multi-value operators — shipped in v1.3.0
-- **Status**: both halves implemented, the multi-value operators in v1.2.0 and `multipartPatterns` in v1.3.0. The parse is memoized on the **body subject** rather than on `ParsedRequest` as the sketch says, which is where the JSON and XML documents are already memoized — one place that a stub matched on URL alone never touches. The semantics that cost the time were not the parsing: elements of the array are ANDed while `matchingType` quantifies over the parts inside one element, and a body with no parts never matches even an element carrying no criteria (`PROBE_MULTIPART.md` P7). Deviation #63 honours `name`, which WireMock ignores, and is the release's riskiest call.
-- **Multipart was scheduled for v1.3.0** alongside XML (decision 2026-08-14), which closes the request-matching surface in one release. The multi-value half shipped in v1.2.0.
-- **Split in v1.2.0.** The multi-value operators are being taken on their own: they are a new mode on an existing `KeyMatcher` with no new body parsing, while `multipartPatterns` needs a lazy MIME parse memoized on `ParsedRequest` and a corpus surface larger than the rest of that release together. Multipart stays here for v1.3.0. **The operator names below are unverified** — SPEC §5.2 records them as `hasExactly`/`includes` and this entry has long said `havingExactly`; both cannot be right, and neither has been probed against the oracle. Establishing which is the first probe of the v1.2.0 work, for the same reason the date/time entry above had to be corrected: this file remembers, and only the oracle knows.
-- **What**: `multipartPatterns`; `havingExactly`/`includes` multi-value query/header operators.
-- **Sketch**: `mime/multipart` lazy parse memoized on `ParsedRequest`; multi-value ops as new `KeyMatcher` modes.
-- **Depends on**: nothing. **Size**: S/M.
-
-### 1.6 `host`, `port` and `scheme` request matchers — shipped in v1.3.0
-- **Status**: implemented. `scheme` reports what *this process* terminated, so behind an ingress that terminates TLS a request arrives as plain http and is reported as such; forwarding headers are deliberately not consulted, because a matcher steered by a request header decides nothing. SPEC §5.2 says so on the row, which is the honest version of the open question this entry raised.
-- **What**: WireMock's three request matchers over the connection rather than the message. They select on the `Host` header, the port the request arrived on, and http vs https, which is what lets one deployment front several virtual hosts and answer differently per origin.
-- **Why it was not here**: an oversight rather than a decision. They are refused by name in `internal/stub` (`deferredFields`) and marked ❌ in SPEC §5.2, but no roadmap entry ever costed them, so nobody could weigh them against anything. Added 2026-08-14 when the remaining gap was enumerated from the spec and the refusal table rather than from this file — which is the second time this document has been the least reliable record of what is missing.
-- **Sketch**: three `KeyMatcher`-shaped criteria over values the request already carries; no new parsing, no hot-path cost beyond a comparison. `scheme` needs the TLS terminator's view rather than the listener's where a proxy fronts the pod (§12.1), which is the only part worth probing.
-- **Depends on**: nothing. **Size**: S.
+**Entries that have shipped are marked, not deleted, and their numbers never move.** The numbers are
+cited from `SPEC.md`, `AGENTS.md`, the CHANGELOG and from comments in shipped code — `internal/match/poller.go`
+names 2.4 — which makes them an interface rather than a table of contents. Treat a number as an
+opaque identifier: it says when an entry was written and nothing about what kind of work it is.
+Entries added in the 2026-09-01 re-frame are numbered 4.x for the same reason, continuing the
+sequence rather than renumbering anything.
 
 ---
 
-## Bucket 2 — v2 features (new subsystems)
+## Where this stands — 2026-09-01, after v1.3.1
 
-### 2.1 Proxy mode (`proxyBaseUrl`)
-- **What**: stubs that forward the request to a real backend (partial mocking / gradual migration), with `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove`, low-priority catch-all passthrough.
-- **Why deferred**: introduces an outbound HTTP client subsystem (pooling, timeouts, streaming, hop-by-hop header hygiene, retry/no-retry policy, TLS options) — a different risk class than serving from memory.
-- **Sketch**: `internal/proxy` with a shared tuned `http.Transport`; response definition compiles to a `ProxyAction`; streaming both directions (no buffering — exempt from `max_body_bytes` on the response side); per-stub timeout override; circuit-breaker metric. Journal (when enabled) records proxied exchanges — which is the foundation for recording (2.2).
-- **Depends on**: nothing hard; journal integration for capture. **Size**: M.
+**The compatibility work is done.** Every v1.x gap with known demand shipped across v1.1.0 through
+v1.3.0. Excluding record & playback, which is deferred by decision below, and `customMatcher`, which
+is a non-goal, the entire remaining WireMock surface is **proxy mode (2.1)** and **webhooks (2.3)**.
 
-### 2.2 Record & playback (`/__admin/recordings/*`)
-- **What**: capture proxied traffic and generate stub mappings (snapshot + record modes, request-body criteria extraction, dedupe).
-- **Why deferred**: largest deferred surface; sits entirely on top of proxy + journal + stub generation heuristics.
-- **Sketch**: recorder consumes the journal stream of proxied exchanges; generation rules (URL → equalTo, JSON bodies → equalToJson with sensible flags, id extraction) ported from WM behavior via differential corpus; output goes through the standard admin create path (so validation/422 catalog applies).
-- **Depends on**: 2.1, journal. **Size**: L.
+**The differentiator is scale, and it is the one claim not verified.** SPEC §16.1 publishes ten SLOs
+as release criteria for v1.0. One of them has ever produced a trustworthy number. That is the
+subject of theme A, and it is deliberately first.
 
-### 2.3 Webhooks / `postServeActions`
-- **What**: fire templated async HTTP calls after a stub is served (callback/async-flow simulation), with fixed/random delays.
-- **Why deferred**: outbound execution subsystem with its own failure semantics (retries, timeouts, at-most-once vs at-least-once) — must not endanger hot-path SLOs.
-- **Sketch**: bounded work queue + worker pool (drop+metric on overflow, mirroring journal policy); templates reuse §10 engine with the serve-event model; per-deployment egress allowlist config as a safety rail.
-- **Depends on**: templating (done in v1). **Size**: M.
+This document was re-framed on 2026-09-01. It used to sort entries by implementation size — "v1.x
+candidates", "v2 features", "platform" — which stopped being useful once the first of those emptied,
+and which never surfaced the scale work because it was scattered across all three. It now sorts by
+what the work is *for*.
+
+---
+
+## Theme A — Making the scale claim true
+
+Nothing else in this document matters as much. A mock server whose selling point is that it survives
+load, and which cannot demonstrate that it survives load, is asking to be taken on faith.
+
+One piece of this landed in v1.3.1: SPEC §16.2's benchmark tracking, which had been specified since
+v1.0 and implemented by nothing. It is now the `bench` job and `make bench-compare`, and on its first
+run it caught the regression that prompted it. What remains is the load half.
+
+### 4.1 A reference rig, or an honest §16.1
+
+- **The problem, stated plainly.** SPEC §16.1 lists S1–S10 as "release criteria for v1.0, measured on
+  the reference rig". `test/load/BASELINE.md` records that the reference rig is "not recorded, and not
+  currently recordable". S1 has one number, taken on a developer laptop at M0 and explicitly marked as
+  a floor rather than a ceiling. S2 through S10 have none. Three releases have been cut against
+  criteria nobody measured.
+- **Why it stayed that way**: the nightly perf job falls through to a shared two-core GitHub runner
+  because `PERF_RUNNER` is unset, and there k6 and mockulus compete for the same cores — S1 has read
+  `p(99)=75 ms` against a 2 ms target. That failure is a statement about the runner. The job has been
+  red for so long that it reports nothing, which is how a genuine UI regression hid in the same
+  nightly for days in August.
+- **What**: either a rig that can produce the numbers, or a §16.1 that claims only what has been
+  measured. Both are acceptable; the current state — publishing ten unverified criteria — is not.
+- **Sketch**: the cheap version is one always-on machine (a small cloud VM or a spare box) registered
+  as a self-hosted runner and named in `PERF_RUNNER`, with k6 driven from a second machine or a
+  second nodepool, since `BASELINE.md` records the same build reading 1.07 ms and 5.03 ms depending
+  only on what else the host was doing. The honest-retreat version is smaller: re-mark S2–S10 as
+  targets rather than criteria, record what a single-host run does measure, and say in §16.1 that
+  the rest is unverified. **Neither is difficult. The decision is what has been missing.**
+- **Note on macOS**: a compose rig on a Mac tops out near 19.6k RPS whatever the server does, because
+  published ports cross the VM boundary through a userspace proxy. It is a correctness rig, not a
+  measurement one, and `BASELINE.md` forbids copying a number out of it.
+- **Depends on**: a decision, then a machine. **Size**: S for the retreat, M for the rig.
+
+---
+
+## Theme B — Fidelity under load
+
+This theme is new, and it is where mockulus can do things WireMock structurally cannot. A mock that
+stands in for a dependency during a load test is part of the experiment: if it answers unrealistically,
+the experiment measures a system that does not exist.
+
+### 4.2 Response-time profiles
+
+- **What**: a stub, or a whole deployment, that answers with a *distribution* rather than a constant —
+  "behave like a dependency whose p50 is 20 ms, p99 is 400 ms, with a 0.5% tail at 2 s". Configured per
+  route or globally, mockulus-namespaced.
+- **Why it matters more than it looks**: a mock answering in 30 µs makes a load test lie. The system
+  under test never experiences the connection-pool pressure, the queueing, or the timeout paths that
+  the real dependency would cause, so the run measures a best case that will never occur in
+  production. WireMock has `fixedDelay` and a uniform/lognormal `delayDistribution`, which is closer
+  than nothing but is per-stub and shaped by parameters rather than by the percentiles anyone actually
+  has from their own monitoring.
+- **Sketch**: a delay sampler on the response pipeline, seeded per deployment for reproducibility, fed
+  either by named percentiles or by a recorded histogram uploaded through the files API. The hot-path
+  rule is that a deployment not using it pays a nil check. Sleeping must not consume a thread —
+  timer-based release, not a blocked goroutine, or S1's throughput target dies the moment anyone
+  turns it on.
+- **Relation to 3.7**: 3.7 called this "chaos". That framing is wrong and is why it sat unstarted:
+  this is not fault injection, it is fidelity. The failure-injection half of 3.7 stays there.
+- **Depends on**: nothing hard. **Size**: M.
+
+### 4.3 Bottleneck attribution — "was the mock the constraint?"
+
+- **What**: an answer, in the mock's own numbers, to the question every load test eventually raises —
+  did the stand-in dependency distort the result? Concretely: served-request service time as a
+  histogram separate from queue/wait time, saturation signals (accept queue depth, in-flight
+  requests against capacity), and a plain verdict surfaced in `/__admin/mockulus/**` for the window a
+  test ran over.
+- **Why**: this is the question your own perf runs ask, and today it can only be answered by
+  correlating mockulus's Prometheus series against a k6 report by hand and hoping the clocks agree.
+  When a run comes back slow, "was it us or the mock?" is the first thing asked and the most expensive
+  thing to answer. WireMock cannot answer it at all.
+- **Sketch**: the metrics are largely present (§14.1); what is missing is the separation of service
+  time from wait time, and something that reads the two together over a window and says whether the
+  mock was near saturation while the test ran. Deliberately a report rather than an alert — it
+  informs a human reading a test result.
+- **Trigger for costing it properly**: this wants 4.1 first. A verdict about saturation is only worth
+  as much as the capacity number it is measured against.
+- **Depends on**: 4.1 for the capacity baseline. **Size**: M.
+
+### 4.4 Overload behaviour
+
+- **What**: defined behaviour past capacity — shed with 503 and a metric, or queue with a bounded
+  wait, chosen by configuration rather than by whatever the runtime happens to do.
+- **Why**: the SLOs describe behaviour *at* a load. None of them describes what happens at twice it,
+  which is the condition a load test is specifically trying to reach. Undefined overload behaviour
+  makes the far end of every ramp uninterpretable: a latency cliff could be the mock queueing, and
+  nothing distinguishes that from the system under test degrading.
+- **Sketch**: the journal already has the shape to copy — a bounded queue that drops and counts
+  rather than blocking, because P1 says never block the hot path. The same policy applied to the
+  accept path, with the choice exposed as configuration and the drop counted.
+- **Depends on**: 4.1, to know where capacity is. **Size**: M.
+
+### 3.7 Chaos & fault injection
+
+- **What**: per-route error-rate injection and bandwidth throttling, applied globally or per selector,
+  for resilience game-days.
+- **Changed 2026-09-01**: the latency-shaping half of this entry moved to 4.2, where it is framed as
+  fidelity rather than chaos. What stays here is genuine fault injection.
+- **Sketch**: response-pipeline middlewares configured through a mockulus-namespaced settings
+  extension, kept out of the WM-compat surface per D2.
+- **Size**: M, reduced from its original scope.
+
+---
+
+## Theme C — Cluster behaviour at scale
 
 ### 2.4 DCP-based sync (instant propagation)
-- **What**: replace/augment epoch polling with Couchbase DCP streaming (e.g. `Trendyol/go-dcp`) for near-zero stub propagation latency.
-- **Why deferred**: epoch polling meets test-setup semantics at a fraction of the operational complexity (rebalance handling, stream state, failure modes).
-- **Sketch**: v1 already isolates the trigger behind the `ChangeSignal` interface (§8); a DCP signaler is a drop-in that marks the snapshot dirty on any mutation in `mappings`/`files`. Keep the resync sweep as backstop. Config: `sync_mode: poll | dcp`.
-- **Depends on**: nothing (interface exists). **Size**: M (mostly ops hardening).
+
+- **What**: replace or augment epoch polling with Couchbase DCP streaming (e.g. `Trendyol/go-dcp`)
+  for near-zero stub propagation latency.
+- **Why deferred**: epoch polling meets test-setup semantics at a fraction of the operational
+  complexity — rebalance handling, stream state, failure modes.
+- **Why it is worth revisiting**: propagation is ~1.5 s at defaults, and it is the delay a test author
+  actually feels — register a stub on one pod, and the request that follows may reach another. It is
+  the most user-visible number in the cluster story.
+- **Sketch**: v1 already isolates the trigger behind the `ChangeSignal` interface (§8), so a DCP
+  signaler is a drop-in that marks the snapshot dirty on any mutation in `mappings`.
+- **Depends on**: nothing — the interface exists. **Size**: M, mostly ops hardening.
 
 ### 2.5 Delta snapshot rebuilds & matcher index v2
-- **What**: (a) delta reloads — apply remote changes without a full `LoadAll` round-trip on every epoch change; (b) radix/prefix-bucket index over pattern stubs for very large stub sets.
-- **Why deferred**: v1 already splices admin writes locally (zero-staleness without recompile) and reuses a compile cache on reloads (SPEC §4.3/§6.2), so the remaining cost is only the `LoadAll` fetch itself; the linear pattern scan is prefiltered. S2/S7/S10 gates decide if either upgrade is ever needed.
-- **Sketch**: (a) fetch only docs changed since the last epoch (per-doc CAS/mutation-token comparison, or DCP once 2.4 lands) and patch the snapshot; (b) group pattern stubs by `LiteralPrefix` first segment into a radix tree; both preserve selection-order semantics (§5.3).
-- **Depends on**: production profiling evidence. **Size**: M each.
 
----
+- **What**: (a) delta reloads — apply remote changes without a full `LoadAll` on every epoch change;
+  (b) a radix/prefix-bucket index over pattern stubs for very large stub sets.
+- **Why deferred**: v1 already splices admin writes locally and reuses a compile cache on reloads
+  (§4.3/§6.2), so the remaining cost is narrower than it looks.
+- **Trigger, made concrete 2026-09-01**: this entry has always said it "depends on production
+  profiling evidence", which was an open-ended deferral because there is no production to profile.
+  The concrete version: pick it up when the `bench` job shows `BuildSnapshot` or `Rebuild/cold`
+  dominating at 10k stubs, or when 4.1's rig shows S7 missing its reload target. Both are now
+  measurable; neither has been measured.
+- **Sketch**: (a) fetch only docs changed since the last epoch — per-doc CAS or mutation-token
+  comparison, or DCP once 2.4 lands — and patch the snapshot; (b) group pattern stubs by literal
+  prefix so a candidate set is narrowed before any pattern runs.
+- **Depends on**: evidence from 4.1 or the bench job. **Size**: M each.
 
-## Bucket 3 — Platform & operability
+### 4.5 Rollout and cold-start behaviour at replica count
 
-### 3.1 Admin UI — shipped in v1.1.0
-- **Status**: implemented, at `/__admin/mockulus/ui/` on both listeners, compiled into the binary. Stub browser and editor, request journal, near-miss debugger, scenarios and ops. It talks only to the public admin API through `@mockulus/admin-sdk`, as this sketch proposed. Specified in SPEC §5.7 — which also defines the `/__admin/mockulus/**` extension namespace it lives in, and the one amendment to §17 it required: the static assets are served outside the admin token check, because a browser cannot put an `Authorization` header on a page load. Documented at [docs/admin-ui.md](docs/admin-ui.md).
-- **What**: read/write web UI (stub browser/editor, journal viewer, scenario states, near-miss debugger). WireMock OSS has none — this is a differentiator.
-- **Sketch**: static SPA served from the admin port (embedded via `go:embed`), talking only to the public admin API (dogfooding); no server-side session state.
-- **Depends on**: stable admin API. **Size**: L.
-
-### 3.2 OpenTelemetry tracing — shipped in v1.1.0
-- **Status**: implemented, off by default, configured by the `tracing.*` keys and nothing else — the standard `OTEL_*` environment variables are deliberately not read, so one mechanism owns the generated §13 table, the validation and the redaction. Turned off it costs one atomic load and a branch per request, so the SLOs and the allocation budget of §16 are unchanged; the hot-path guard this sketch called for is what makes that true. Specified in SPEC §14.3 and documented in [docs/operations.md](docs/operations.md).
-- **What**: optional traces for mock requests (match decision, scenario I/O, template render spans) and admin ops; W3C context propagation.
-- **Sketch**: `otelhttp`-style middleware, sampled, off by default; hot-path guard: zero cost when disabled (nil-check pattern, no always-on spans).
-- **Size**: S/M.
-
-### 3.3 Migration & tooling CLI (`mockulusctl`) — rejected in v1.2.0, superseded
-- **Status**: **rejected**, and its one load-bearing piece re-homed. The value of this entry was concentrated in `validate` — a dry-run 422 report that lets a team assess a migration before deploying anything. That is now `POST /__admin/mockulus/validate` (SPEC §5.7.2), which delivers the same answer without a second artifact to ship, version, sign and document, and which the SDK and the admin UI consume for free. The rest did not survive the question "what does this do that the API does not": `import`/`export` duplicate `POST /__admin/mappings/import` and the store drivers behind it, and `diff` had no demand behind it and no agreed notion of stub identity across deployments. Entry retained under its number so existing references stay valid.
-- **What**: one-shot commands: import a WireMock `mappings/` dir into Couchbase, export back, validate a stub corpus against the v1 support matrix (dry-run 422 report — lets teams assess migration before deploying), diff two deployments.
-- **Sketch**: same binary, subcommands; reuses `internal/stub` validation and the store drivers.
-- **Size**: S/M.
+- **What**: what happens to the store when a deployment of N replicas restarts at once. Each new pod
+  does a full `LoadAll`, so a rolling restart of a large deployment is a synchronised read storm
+  against Couchbase, at exactly the moment every pod is also failing readiness.
+- **Why it is not covered**: S6 measures cold start for *one* pod against a warm store (< 5 s, 10k
+  stubs). Nothing measures ten pods starting together, and the interaction — where each pod's own
+  load slows every other pod's — is the kind that only appears at replica count.
+- **Sketch**: measure first, on 4.1's rig or in the T4 kind lane, before deciding whether anything is
+  needed. If something is: staggered start, a shared warm snapshot, or delta loads from 2.5.
+- **Depends on**: 4.1. **Size**: S to measure, unknown to fix — which is the honest answer until it
+  is measured.
 
 ### 3.4 Multi-tenancy
-- **What**: many logical mock spaces in one deployment (tenant → scope mapping, per-tenant reset/auth/quotas).
-- **Why deferred**: D12 — namespaces + deployment-per-team give isolation with zero code; revisit only if platform-team consolidation demands it.
-- **Sketch**: tenant resolved from admin path prefix or header → per-tenant snapshot map; per-tenant epoch. Real cost is quota/blast-radius management, not routing.
+
+- **What**: many logical mock spaces in one deployment — tenant to scope mapping, per-tenant reset,
+  auth and quotas.
+- **Why deferred**: D12 — namespaces and deployment-per-team give isolation with zero code. Revisit
+  only if platform-team consolidation demands it.
+- **Sketch**: tenant resolved from an admin path prefix or header into a per-tenant snapshot map, with
+  a per-tenant epoch. The real cost is quota and blast-radius management, not routing.
 - **Size**: L.
 
-### 3.5 Local-state performance mode
-- **What**: explicit single-replica mode where scenario state and journal are in-process (no CB on the request path at all) — for laptop dev and single-pod CI, with WM-identical immediacy.
-- **Sketch**: memory driver already implements the interfaces; add a config preset (`profile: local`) and docs. Guard: refuses to start with `replicas>1` hint metric/log.
-- **Size**: S.
+### 3.5 Local-state performance mode — mostly shipped in v1.2.0
 
-### 3.6 gRPC mocking
-- **What**: WM's gRPC extension equivalent (proto-described services, message matching).
-- **Why deferred**: different protocol surface entirely; demand unproven internally.
-- **Sketch**: separate listener, proto descriptors uploaded via files API, matchers over decoded messages reusing JSON matcher tree (protojson). **Size**: L.
-
-### 3.7 Chaos & bandwidth shaping
-- **What**: beyond WM parity: bandwidth throttling, per-route error-rate injection, latency profiles applied globally or per-selector (useful for resilience game-days).
-- **Sketch**: response-pipeline middlewares configured via a mockulus-namespaced settings extension (kept out of the WM-compat surface per D2).
-- **Size**: M.
+- **Status**: the substance shipped as `profile: local`, presetting `store: memory` and
+  `journal_enabled: true` for a laptop or single-pod CI run. What remains is the guard the entry
+  asked for: refusing to start, or at least warning loudly, when the profile is set and the
+  deployment has more than one replica — where in-process scenario state silently means each replica
+  disagrees about it.
+- **Remaining size**: XS.
 
 ---
 
-## Explicit non-goals (not deferred — rejected)
+## Theme D — Remaining WireMock surface
+
+Two entries, and both introduce an outbound HTTP subsystem this server does not currently have.
+That shared cost is the main argument for doing them together, and the main argument against doing
+either casually: a proxied or webhooked request performs outbound I/O on a path that principle P1
+says does no I/O at all.
+
+### 2.1 Proxy mode (`proxyBaseUrl`)
+
+- **What**: stubs that forward to a real backend for partial mocking and gradual migration, with
+  `additionalProxyRequestHeaders`, `proxyUrlPrefixToRemove` and low-priority catch-all forwarding.
+- **Why deferred**: introduces an outbound HTTP client subsystem — pooling, timeouts, streaming,
+  hop-by-hop header hygiene, retry policy, TLS options — a different risk profile from everything in
+  v1.
+- **Worth weighing before picking it up**: proxy is the foundation record & playback sits on, and
+  record & playback is deferred by choice (below). Building 2.1 alone is defensible — pass-through is
+  useful without capture — but a large part of its value is unlocking a feature nobody has asked for.
+- **Sketch**: `internal/proxy` with a shared tuned `http.Transport`; the response definition compiles
+  to a `ProxyAction`; streaming in both directions, exempt from the body cap.
+- **Depends on**: nothing hard. **Size**: M.
+
+### 2.3 Webhooks / `postServeActions`
+
+- **What**: fire templated async HTTP calls after a stub is served, for callback and async-flow
+  simulation, with fixed and random delays.
+- **Why deferred**: an outbound execution subsystem with its own failure semantics — retries,
+  timeouts, at-most-once versus at-least-once — which must not endanger hot-path SLOs.
+- **Sketch**: bounded work queue and worker pool, dropping and counting on overflow exactly as the
+  journal does; templates reuse the §10 engine over the serve-event model; per-deployment egress
+  allowlist.
+- **Depends on**: templating, done in v1. **Size**: M.
+
+### 2.2 Record & playback (`/__admin/recordings/*`)
+
+- **Deferred by decision, 2026-09-01.** Not on cost grounds — it is genuinely large — but because it
+  serves a use this tool is not aimed at. Mockulus is for standing in for a dependency under load;
+  capturing traffic to author stubs is a different job, and WireMock does it well for teams who need
+  it. Revisit only on explicit demand.
+- **What**: capture proxied traffic and generate stub mappings — snapshot and record modes,
+  request-body criteria extraction, dedupe.
+- **Depends on**: 2.1, journal. **Size**: L.
+
+---
+
+## Theme E — New protocol surface
+
+### 3.6 gRPC mocking
+
+- **What**: WireMock's gRPC extension equivalent — proto-described services, message matching.
+- **Why deferred**: a different protocol surface entirely, and demand is unproven internally.
+- **Sketch**: separate listener, proto descriptors uploaded through the files API, matchers over
+  decoded messages reusing the JSON matcher tree via protojson.
+- **Size**: L.
+
+---
+
+## Shipped
+
+Kept for their numbers, which are cited elsewhere. Detail lives in the CHANGELOG and SPEC.
+
+| # | Entry | Shipped | Worth knowing |
+|---|---|---|---|
+| 1.1 | XML & XPath matching | v1.3.0 | Two sketch claims were wrong: there is **no** precomputed canonical form, because children pair by element name and no canonical serialisation expresses that; and the XMLUnit placeholders are a **non-goal**, not a stretch — WireMock does not interpret them. `formatXml` needed a printer written from recorded oracle bytes. Deviations #59–#62 |
+| 1.2 | Date/time matchers | v1.1.0 | The expected value's *type* selects the comparison mode |
+| 1.3 | `equalToJson` placeholders | v1 | Never actually deferred — WM interprets them by default, so parity required v1 to |
+| 1.4 | `matchesJsonSchema` | v1.1.0 | Drafts V4–2020-12; `format` asserted only under V4/V6/V7 |
+| 1.5 | Multipart + multi-value operators | v1.2.0 / v1.3.0 | The parse is memoized on the **body subject**, not `ParsedRequest` as sketched. Elements are ANDed while `matchingType` quantifies over parts; a body with no parts never matches. Deviation #63 honours `name`, which WireMock ignores — the riskiest call in v1.3.0 |
+| 1.6 | `host`, `port`, `scheme` | v1.3.0 | An oversight, not a decision — refused by name with no roadmap entry costing them. `scheme` reports what *this process* terminated; forwarding headers are deliberately not consulted. Made lazy in v1.3.1 after they were found to cost every request |
+| 3.1 | Admin UI | v1.1.0 | At `/__admin/mockulus/ui/`, embedded in the binary, talking only to the public admin API |
+| 3.2 | OpenTelemetry tracing | v1.1.0 | Off by default; `tracing.*` keys only, `OTEL_*` deliberately not read |
+
+---
+
+## Rejected
+
+### 3.3 Migration & tooling CLI (`mockulusctl`) — rejected in v1.2.0, superseded
+
+The value of this entry was concentrated in `validate` — a dry-run report letting a team assess a
+migration before deploying anything — and that shipped as `POST /__admin/mockulus/validate` (SPEC
+§5.7.2) instead. A second binary to install, version and document earned nothing the endpoint does
+not.
+
+### Explicit non-goals — rejected, not deferred
 
 | Item | Why |
 |---|---|
 | Browser/forward MITM proxying | Different product; conflicts with the in-cluster service model |
-| Java-class extensions (`extensions`, custom matchers/transformers as code) | No JVM; arbitrary code in the serving pod breaks the security posture. If extensibility is ever needed, it will be a sandboxed mechanism (e.g. WASM or CEL expressions) designed on its own merits |
-| Embedded-library mode (in-process mock for unit tests) | mockulus is a service; WireMock itself remains excellent for in-JVM unit-test use |
+| Java-class extensions (`extensions`, custom matchers/transformers as code) | No JVM; arbitrary code in the serving pod breaks the security posture |
+| Embedded-library mode (in-process mock for unit tests) | Mockulus is a service; WireMock itself remains excellent for in-JVM unit-test use |
 | Bit-identical near-miss diagnostics | Diagnostic text is out of the strict-compat surface (SPEC §6.8) |
 | Running as a stateful singleton with in-memory-only durability in production | The entire point of the project is the opposite |
 
@@ -143,6 +302,11 @@ Buckets are an ordering proposal, not a commitment; reprioritize on demand signa
 
 ## Versioning & compat promise going forward
 
-- v1.x additions must not change the behavior of any stub that registers successfully today (422 → supported is the only allowed transition).
-- The differential harness corpus is append-only; every roadmap feature lands with its corpus cases first (spec-first, WM-verified).
-- mockulus-specific API extensions (chaos, tenancy, UI endpoints) live under `/__admin/mockulus/**` — the WM-compatible surface stays a strict mirror.
+- v1.x additions must not change the behavior of any stub that registers successfully today — 422
+  becoming supported is the only allowed transition.
+- The differential harness corpus is append-only; every roadmap feature lands with its corpus cases
+  first, spec-first and WM-verified.
+- Mockulus-specific API extensions — fidelity, chaos, tenancy, UI, validation — live under
+  `/__admin/mockulus/**`. The WM-compatible surface stays a strict mirror.
+- Priorities here are a proposal, not a commitment. The 422 codes are counted by
+  `mockulus_admin_requests_total`, so demand for a deferred feature is measurable rather than argued.
