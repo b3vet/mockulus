@@ -8,6 +8,46 @@ compatibility promise, and `v1.0.0` at M6 exit. After 1.0, the behavior of the
 WireMock-compatible surface changes only in majors, and a 422 becoming a
 supported feature is a minor.
 
+## [Unreleased]
+
+### 1.3.1
+
+A patch release with no new behaviour: one performance regression from v1.3.0,
+and the gate that would have caught it.
+
+### Fixed
+
+- **`host`, `port` and `scheme` are derived on first use rather than on every
+  request.** v1.3.0 computed all three while binding a request, reasoning that
+  each is a slice of a header the request already carries. That reasoning was
+  wrong twice: it is two scans and not one, since `Host` and `Port` each walked
+  the header separately, and it was charged to every request while almost no
+  stub carries any of the three criteria. Acquiring and releasing a request —
+  which does no matching at all — measurably slowed as a result. The criteria
+  themselves were always pay-per-use, costing a nil check on a stub that does
+  not use them; the request side now matches, the way the body has always
+  resolved its charset and parsed forms only when something asks (P2, SPEC §6.4).
+  No stub behaves differently.
+- The admin UI's browser tests asserted refusals the server now grants:
+  `matchesXPath` and `equalToXml` had been standing in for "a feature mockulus
+  does not implement" and v1.3.0 implemented both. They now name `customMatcher`,
+  which is a non-goal rather than a roadmap item. A second, older failure in the
+  same lane is fixed with them — the import panel moved behind a disclosure and
+  the test never pressed it, so a file was never chosen and the assertion timed
+  out against a page that was never going to render.
+
+### Repository
+
+- **`make bench-compare` and the `bench` CI job.** SPEC §16.2 has asked for
+  microbenchmarks "tracked with `benchstat` in CI (fail > 15% regression)" since
+  v1.0, and nothing did it. The comparison is head against the base branch, with
+  the two runs interleaved so that a runner slowing partway through does not
+  charge the drift to whichever side ran second, and the threshold is applied by
+  `scripts/benchguard` — unit-tested against real benchstat output, because the
+  column carrying the comparison is not the first percentage on the row and a
+  reader that takes it finds a regression in every benchmark and a real one in
+  none.
+
 ## [1.3.0] - 2026-08-31
 
 The release that closes the request-matching gap: after it the only WireMock

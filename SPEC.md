@@ -1031,7 +1031,7 @@ S5/S9 **timing** is asserted only here, on the reference rig; the E2E gate cover
 ### 16.2 Harness & CI gate
 
 - `test/load/` k6 scripts, one per S#; `make bench` runs locally in docker compose; CI perf job runs nightly + on-demand label (plus a short S1 liveness smoke on merge to main and the full S1–S10 suite on release tags — §19.5), on a pinned runner class, comparing against the stored baseline (fail > 10% regression on RPS or p99).
-- Microbenchmarks (`go test -bench`) for: match hot path (table of stub-set shapes), template render, JSON body parse, snapshot build. Tracked with `benchstat` in CI (fail > 15% regression).
+- Microbenchmarks (`go test -bench`) for: match hot path (table of stub-set shapes), template render, JSON body parse, snapshot build. Tracked with `benchstat` in CI (fail > 15% regression), enforced by the `bench` job of `pr.yml` through `scripts/benchguard` and runnable before pushing as `make bench-compare`. The two runs are interleaved rather than taken back to back, because a runner that slows partway through would otherwise charge the whole drift to whichever side ran second. This sentence described nothing for the whole of v1.0 through v1.3.0, and v1.3.0 shipped a request-binding regression it would have caught.
 
 ### 16.3 Hot-path engineering rules (enforced in review + benchmarks)
 

@@ -92,6 +92,74 @@ jobs:
       - name: hot-path allocation budgets
         run: make test-alloc
 
+  bench:
+    name: hot-path benchmarks
+    # Only on pull requests: the comparison is head against the base branch, and
+    # a push to a branch with no base has nothing to compare with.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      # benchstat is a tool, not part of the product, and x/perf now requires a
+      # newer Go than this repo pins. `actions/setup-go` sets GOTOOLCHAIN=local
+      # so that the module below is built with exactly the pinned version, which
+      # is right for the product and wrong for a tool the product does not link:
+      # the install fails outright rather than fetching what it needs.
+      #
+      # `auto` is scoped to this one command. Everything after it — the two
+      # benchmark runs and benchguard — still builds under the pinned toolchain,
+      # so what is measured is what the repo compiles.
+      #
+      # This is also why the job passed when it was written and failed in CI: the
+      # machine it was tried on had GOTOOLCHAIN=auto, so Go quietly downloaded
+      # 1.26 and the difference never showed.
+      - name: install benchstat
+        env:
+          GOTOOLCHAIN: auto
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      # A shared runner is noisy in absolute terms, which is why this compares
+      # two builds against each other rather than against a fixed number. The
+      # two runs are interleaved rather than taken back to back: a runner that
+      # slows down partway through would otherwise charge the whole drift to
+      # whichever side ran second, and that is exactly how a laptop produces a
+      # regression that is not there.
+      - name: benchmark base and head, interleaved
+        run: |
+          set -euo pipefail
+          git worktree add /tmp/base "origin/${{ github.base_ref }}"
+          : > /tmp/base.txt
+          : > /tmp/head.txt
+          for round in 1 2 3; do
+            (cd /tmp/base && go test -run '^$' -bench . -benchmem -benchtime 200ms -count 2 ./internal/... 2>/dev/null | grep -E '^(Benchmark|goos|goarch|pkg|cpu)' >> /tmp/base.txt)
+            go test -run '^$' -bench . -benchmem -benchtime 200ms -count 2 ./internal/... 2>/dev/null | grep -E '^(Benchmark|goos|goarch|pkg|cpu)' >> /tmp/head.txt
+          done
+
+      # SPEC §16.2: fail a regression over 15%. benchstat's own exit status
+      # only reports whether it could run, so the threshold is applied by
+      # scripts/benchguard, which is unit-tested against real benchstat output —
+      # the column holding the comparison is not the first percentage on the row.
+      - name: compare, and fail over the SPEC §16.2 threshold
+        run: |
+          set -euo pipefail
+          benchstat base=/tmp/base.txt head=/tmp/head.txt | tee /tmp/cmp.txt
+          benchstat -format csv base=/tmp/base.txt head=/tmp/head.txt > /tmp/cmp.csv
+          go run ./scripts/benchguard < /tmp/cmp.csv
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: benchstat
+          path: |
+            /tmp/cmp.txt
+            /tmp/cmp.csv
+
   ui:
     name: admin UI
     runs-on: ubuntu-latest

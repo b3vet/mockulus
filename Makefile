@@ -141,6 +141,17 @@ bench: ## Run microbenchmarks with allocation counts (BENCH=<re> BENCHCOUNT=<n>)
 	$(GO) test -run '^$$' -bench '$(BENCH)' -benchmem \
 		-benchtime $(BENCHTIME) -count $(BENCHCOUNT) ./...
 
+# The comparison the CI benchmark job makes, runnable before pushing. BASE is
+# any ref; the two runs are interleaved so a machine that gets busier partway
+# through does not charge the drift to whichever side ran second.
+#
+# On a laptop you are using, read this for the direction of a change and not for
+# its size: the same build measured twice on a contended host has reported
+# numbers a factor apart. CI is the arbiter.
+.PHONY: bench-compare
+bench-compare: ## Compare hot-path benchmarks against BASE=<ref> (default main)
+	@set -eu; 	base=$${BASE:-main}; work=$$(mktemp -d); 	git worktree add -q $$work/base $$base; 	: > $$work/base.txt; : > $$work/head.txt; 	for round in 1 2 3; do 		( cd $$work/base && $(GO) test -run '^$$' -bench . -benchmem -benchtime 200ms -count 2 ./internal/... 2>/dev/null 			| grep -E '^(Benchmark|goos|goarch|pkg|cpu)' >> $$work/base.txt ); 		$(GO) test -run '^$$' -bench . -benchmem -benchtime 200ms -count 2 ./internal/... 2>/dev/null 			| grep -E '^(Benchmark|goos|goarch|pkg|cpu)' >> $$work/head.txt; 	done; 	benchstat base=$$work/base.txt head=$$work/head.txt; 	benchstat -format csv base=$$work/base.txt head=$$work/head.txt > $$work/cmp.csv; 	git worktree remove --force $$work/base; 	$(GO) run ./scripts/benchguard < $$work/cmp.csv
+
 .PHONY: lint
 lint: ## Run golangci-lint
 	golangci-lint run
