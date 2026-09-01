@@ -23,6 +23,7 @@ package main
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -73,10 +74,20 @@ func Scan(r io.Reader, threshold float64) ([]Regression, error) {
 		out       []Regression
 		column    = -1
 		measuring bool
+		compared  int
 	)
 	for {
 		row, err := reader.Read()
 		if err == io.EOF {
+			// A comparison of nothing is not a pass. An empty report means the
+			// two runs did not produce comparable benchmarks — a base branch
+			// whose benchmarks are all newly added, a filter that matched
+			// nothing — and a gate that stayed quiet through that would be
+			// green for every release after the one that broke it.
+			if compared == 0 {
+				return nil, errors.New("benchstat reported no sec/op comparisons; " +
+					"the two runs produced nothing to compare")
+			}
 			return out, nil
 		}
 		if err != nil {
@@ -104,6 +115,7 @@ func Scan(r io.Reader, threshold float64) ([]Regression, error) {
 		if strings.TrimSpace(row[0]) == "geomean" {
 			continue
 		}
+		compared++
 		percent, ok := parsePercent(row[column])
 		if ok && percent > threshold {
 			out = append(out, Regression{Name: row[0], Percent: percent})

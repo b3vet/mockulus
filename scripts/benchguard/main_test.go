@@ -87,12 +87,34 @@ A-10,1e-07,2%,5e-08,1%,-50.00%,p=0.000 n=8
 // The geomean row rolls up the table above it. Failing on it would report one
 // regression twice and name a row nobody can open.
 func TestScanIgnoresGeomean(t *testing.T) {
+	// A real row sits beside it, because a report of nothing but a geomean is an
+	// empty comparison and is refused separately.
 	rolled := `,base,,head,,,
 ,sec/op,CI,sec/op,CI,vs base,P
+A-10,1e-08,1%,1e-08,1%,,p=0.900 n=8
 geomean,2.9e-08,,3.5e-08,,+18.73%,
 `
 	if got := mustScan(t, rolled); len(got) != 0 {
 		t.Errorf("reported %v for a geomean summary row", got)
+	}
+}
+
+// A report with no sec/op rows is an error, not a pass. This is the shape a
+// gate takes when it silently stops testing anything.
+func TestScanRefusesAnEmptyComparison(t *testing.T) {
+	for _, name := range []string{"nothing at all", "headers only", "wrong metric only"} {
+		var in string
+		switch name {
+		case "nothing at all":
+			in = ""
+		case "headers only":
+			in = ",base,,head,,,\n,sec/op,CI,sec/op,CI,vs base,P\n"
+		case "wrong metric only":
+			in = ",base,,head,,,\n,B/op,CI,B/op,CI,vs base,P\nA-10,9,1%,10,1%,+11.11%,p=0.01 n=8\n"
+		}
+		if _, err := Scan(strings.NewReader(in), Threshold); err == nil {
+			t.Errorf("%s: expected an error, got a pass", name)
+		}
 	}
 }
 
