@@ -126,15 +126,22 @@ test.describe('a stub created in the browser', () => {
     await expect(editor).toBeVisible();
     await editor.click();
     await page.keyboard.press('ControlOrMeta+a');
-    // A matcher mockulus does not implement, which is the refusal the whole
-    // error surface was built for: a 422 naming the offending JSON pointer,
-    // rendered against the document rather than as a toast.
+    // A field mockulus does not implement, which is the refusal the whole error
+    // surface was built for: a 422 naming the offending JSON pointer, rendered
+    // against the document rather than as a toast.
+    //
+    // `customMatcher` deliberately, not a roadmap item. This fixture named
+    // `matchesXPath` until v1.3.0 implemented it, at which point the document
+    // registered and the test failed asserting a refusal that no longer
+    // happens. `customMatcher` names a Java class to load, which is a stated
+    // non-goal rather than a gap, so it cannot be implemented out from under
+    // this test the way the last one was.
     await page.keyboard.type(
       JSON.stringify({
         request: {
           method: 'GET',
           urlPath: STUB_PATH,
-          headers: { 'X-Trace': { matchesXPath: '/a' } },
+          customMatcher: { name: 'com.example.Matcher' },
         },
         response: { status: 200 },
       }),
@@ -158,8 +165,10 @@ test.describe('a stub created in the browser', () => {
       const listed = await admin.get('/__admin/mappings', { headers: adminHeaders() });
       playwrightExpect(listed.ok()).toBeTruthy();
       const body = (await listed.json()) as { mappings: { request?: { headers?: unknown } }[] };
-      const withXPath = body.mappings.filter((mapping) => mapping.request?.headers !== undefined);
-      playwrightExpect(withXPath).toHaveLength(0);
+      const refused = body.mappings.filter(
+        (mapping) => (mapping.request as { customMatcher?: unknown })?.customMatcher !== undefined,
+      );
+      playwrightExpect(refused).toHaveLength(0);
     } finally {
       await admin.dispose();
     }

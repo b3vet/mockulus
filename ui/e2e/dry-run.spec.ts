@@ -33,8 +33,11 @@ const BATCH = JSON.stringify({
         method: 'GET',
         urlPath: BAD_PATH,
         // A real WireMock feature mockulus does not implement, so the refusal is
-        // the catalogued 1000 rather than a schema complaint.
-        bodyPatterns: [{ equalToXml: '<a/>' }],
+        // the catalogued 1000 rather than a schema complaint. `customMatcher`
+        // is a stated non-goal rather than a roadmap item, so unlike the
+        // `equalToXml` this used to name it will not become supported and
+        // quietly turn this fixture into a valid document.
+        customMatcher: { name: 'com.example.Matcher' },
       },
       response: { status: 200 },
     },
@@ -67,6 +70,11 @@ test.describe('checking a file before importing it', () => {
 
     await page.goto(uiUrl('/stubs'));
 
+    // The import panel is behind a disclosure, so the file input does not exist
+    // until the button is pressed. Without this the locator waits out the whole
+    // timeout against a page that was never going to render it.
+    await page.getByRole('button', { name: 'Import…' }).click();
+
     await page.getByLabel('Choose a file…').setInputFiles({
       name: 'batch.json',
       mimeType: 'application/json',
@@ -81,7 +89,7 @@ test.describe('checking a file before importing it', () => {
     await expect(page.getByRole('status')).toContainText('This file would not import');
 
     // The offending mapping is named, and so is the field.
-    await expect(page.getByLabel('Rejected mappings')).toContainText('equalToXml');
+    await expect(page.getByLabel('Rejected mappings')).toContainText('customMatcher');
 
     // The claim the panel makes about itself, checked from outside it. The
     // count covers both mappings: the valid one did not land either, which is
@@ -103,6 +111,9 @@ test.describe('checking a file before importing it', () => {
         },
       ],
     });
+
+    // Same disclosure as above.
+    await page.getByRole('button', { name: 'Import…' }).click();
 
     await page.getByLabel('Choose a file…').setInputFiles({
       name: 'clean.json',
